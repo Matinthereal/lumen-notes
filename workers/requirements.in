@@ -1,0 +1,14 @@
+# Unpinned inputs. scripts/setup-workers.sh resolves these and freezes the result into requirements.txt.
+pymupdf
+faster-whisper
+openvino
+numpy
+torch
+transformers<5
+pillow
+pix2tex
+genanki
+matplotlib
+openvino-genai
+sentencepiece
+protobuf

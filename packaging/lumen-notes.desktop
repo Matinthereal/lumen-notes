@@ -1,0 +1,25 @@
+[Desktop Entry]
+Type=Application
+Name=Lumen
+GenericName=Notes
+Comment=Type or handwrite notes, with PDFs, audio and flashcards
+Exec=lumen %U
+Icon=lumen-notes
+Terminal=false
+Categories=Office;Qt;
+MimeType=application/pdf;
+Keywords=notes;typing;markdown;pen;handwriting;flashcards;
+StartupNotify=true
+StartupWMClass=lumen-notes
+X-KDE-FormFactor=desktop,tablet
+Actions=probe;backup;
+
+[Desktop Action probe]
+Name=Pen probe
+Exec=lumen --probe
+Icon=draw-freehand
+
+[Desktop Action backup]
+Name=Back up now
+Exec=lumen --backup
+Icon=document-save
