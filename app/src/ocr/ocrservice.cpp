@@ -12,6 +12,8 @@
 #include <QJsonArray>
 #include <QPainter>
 #include <QPen>
+#include <QSet>
+#include <utility>
 
 OcrService::OcrService(Database &db, Library &lib, WorkerSupervisor *worker, QObject *parent)
     : QObject(parent), m_db(db), m_lib(lib), m_worker(worker)
@@ -43,6 +45,9 @@ void OcrService::prepare()
              m_ready = e.isEmpty() && r.value("ok").toBool();
              setStatus(m_ready ? QString() : QStringLiteral("handwriting model unavailable: ") + e.value("message").toString());
              emit stateChanged();
+             const auto waiting = std::exchange(m_afterPrepare, {});
+             if (m_ready) for (const auto &run : waiting) run();
+             else if (!waiting.isEmpty()) emit failed(m_status);
              if (m_ready && !m_queue.isEmpty()) m_debounce.start();
          });
 }
@@ -76,6 +81,30 @@ void OcrService::runNext()
     recognizePage(pageId);
 }
 
+// One line of ink, black on white and about 64 px tall, the way a scanner would see it (TrOCR's diet).
+static QImage renderInkLine(const QVector<const Stroke *> &strokes, const QRectF &box)
+{
+    const PressureCurve curve = PressureCurve::forStyle(PenStyle::Classic);
+    const QRectF b = box.adjusted(-10, -10, 10, 10);
+    const qreal scale = std::clamp(64.0 / std::max(box.height(), 8.0), 1.0, 4.0);
+    QImage img(int(b.width() * scale) + 1, int(b.height() * scale) + 1, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.scale(scale, scale);
+    p.translate(-b.topLeft());
+    for (const Stroke *sp : strokes) {
+        const Stroke &s = *sp;
+        const QVector<InkPoint> pts = smoothStroke(s.points, 1.f);
+        for (int k = 1; k < pts.size(); ++k) {
+            p.setPen(QPen(Qt::black, std::max(1.2f, curve.widthFor(s.width, (pts[k - 1].pressure + pts[k].pressure) / 2)), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.drawLine(QPointF(pts[k - 1].x, pts[k - 1].y), QPointF(pts[k].x, pts[k].y));
+        }
+        if (pts.size() == 1) { p.setBrush(Qt::black); p.setPen(Qt::NoPen); p.drawEllipse(QPointF(pts[0].x, pts[0].y), s.width / 2, s.width / 2); }
+    }
+    return img;
+}
+
 void OcrService::recognizePage(qint64 pageId)
 {
     QVector<Stroke> strokes;
@@ -86,36 +115,19 @@ void OcrService::recognizePage(qint64 pageId)
     const QVector<InkLine> lines = segmentLines(strokes);
     QHash<quint64, const Stroke *> byId; for (const Stroke &s : strokes) byId.insert(s.id, &s);
     if (lines.isEmpty()) { Database::Query d(m_db, "DELETE FROM ocr_result WHERE page_id=?"); d.bind(1, pageId); d.run(); m_lib.unindex("ocr", pageId); runNext(); return; }
-    // Render each line at 2× on white, the way a scanner would see it.
-    const PressureCurve curve = PressureCurve::forStyle(PenStyle::Classic);
     QDir().mkpath(paths::cacheDir() + "/ocr");
     QJsonArray payload;
     QVector<QRectF> boxes;
     QVector<QString> idLists;
     for (int i = 0; i < lines.size(); ++i) {
         const InkLine &ln = lines[i];
-        const QRectF b = ln.box.adjusted(-10, -10, 10, 10);
-        const qreal scale = std::clamp(64.0 / std::max(ln.box.height(), 8.0), 1.0, 4.0);   // ~64 px tall lines suit TrOCR
-        QImage img(int(b.width() * scale) + 1, int(b.height() * scale) + 1, QImage::Format_RGB32);
-        img.fill(Qt::white);
-        QPainter p(&img);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.scale(scale, scale);
-        p.translate(-b.topLeft());
         QStringList ids;
+        QVector<const Stroke *> inLine;
         for (quint64 id : ln.ids) {
             ids << QString::number(id);
-            if (const Stroke *sp = byId.value(id)) {
-                const Stroke &s = *sp;
-                const QVector<InkPoint> pts = smoothStroke(s.points, 1.f);
-                for (int k = 1; k < pts.size(); ++k) {
-                    p.setPen(QPen(Qt::black, std::max(1.2f, curve.widthFor(s.width, (pts[k - 1].pressure + pts[k].pressure) / 2)), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-                    p.drawLine(QPointF(pts[k - 1].x, pts[k - 1].y), QPointF(pts[k].x, pts[k].y));
-                }
-                if (pts.size() == 1) { p.setBrush(Qt::black); p.setPen(Qt::NoPen); p.drawEllipse(QPointF(pts[0].x, pts[0].y), s.width / 2, s.width / 2); }
-            }
+            if (const Stroke *sp = byId.value(id)) inLine.append(sp);
         }
-        p.end();
+        const QImage img = renderInkLine(inLine, ln.box);
         const QString png = QStringLiteral("%1/ocr/p%2-l%3.png").arg(paths::cacheDir()).arg(pageId).arg(i);
         img.save(png);
         payload.append(QJsonObject{{"id", i}, {"png", png}});
@@ -186,4 +198,36 @@ void OcrService::latexFromImage(const QString &png)
         if (!e.isEmpty()) { emit failed(QStringLiteral("LaTeX recognition failed: ") + e.value("message").toString()); return; }
         emit latexReady(r.value("latex").toString(), png);
     });
+}
+
+void OcrService::recognizeStrokes(qint64 pageId, const QVariantList &strokeIds, const QString &token)
+{
+    QSet<quint64> wanted;
+    for (const QVariant &v : strokeIds) wanted.insert(v.toULongLong());
+    QVector<Stroke> strokes;
+    {
+        Database::Query q(m_db, "SELECT data FROM stroke_blob WHERE page_id=?"); q.bind(1, pageId);
+        if (q.step()) strokecodec::decode(q.blob(0), strokes);
+    }
+    QVector<const Stroke *> picked;
+    QRectF box;
+    for (Stroke &s : strokes)
+        if (wanted.contains(s.id) && !s.points.isEmpty()) { s.updateBounds(); picked.append(&s); box = box.united(s.bounds); }
+    if (picked.isEmpty()) { emit failed(QStringLiteral("lasso some handwriting first")); return; }
+    QDir().mkpath(paths::cacheDir() + "/ocr");
+    const QString png = QStringLiteral("%1/ocr/p%2-selection.png").arg(paths::cacheDir()).arg(pageId);
+    renderInkLine(picked, box).save(png);
+    const auto ask = [this, png, token] {
+        setStatus(QStringLiteral("reading your handwriting…"));
+        call("recognize_lines", {{"lines", QJsonArray{QJsonObject{{"id", 0}, {"png", png}}}}}, [this, token](const QJsonObject &r, const QJsonObject &e) {
+            setStatus(QString());
+            if (!e.isEmpty()) { emit failed(QStringLiteral("could not read that: ") + e.value("message").toString()); return; }
+            const QJsonArray lines = r.value("lines").toArray();
+            emit strokesRecognized(token, lines.isEmpty() ? QString() : lines.first().toObject().value("text").toString().trimmed());
+            m_idleUnload.start();
+        });
+    };
+    if (m_ready) { ask(); return; }
+    m_afterPrepare.append(ask);
+    prepare();
 }

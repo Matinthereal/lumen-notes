@@ -15,6 +15,7 @@
 #include <QQuickItem>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QJSValue>
 #include <QQmlProperty>
 #include <QQuickWindow>
 #include <QTimer>
@@ -388,6 +389,128 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
         spin(300);
     }
 
+
+    // ---- 16. Tags: lassoed handwriting becomes a tag through the OCR path, the page panel adds and
+    //          removes them (with undo), and the page browser and search narrow to a tag.
+    if (library) {
+        QObject *ocr = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            ocr = engine->rootContext()->contextProperty(QStringLiteral("ocr")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(400);
+        const qint64 inked = currentPage();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        const auto pageTagNames = [&](qint64 pid) {
+            QVariantList tags;
+            QMetaObject::invokeMethod(library, "pageTags", Q_RETURN_ARG(QVariantList, tags), Q_ARG(qint64, pid));
+            QStringList names;
+            for (const QVariant &t : tags) names << t.toMap().value(QStringLiteral("name")).toString();
+            return names;
+        };
+        if (canvas && ocr) {
+            canvas->setTool(QStringLiteral("pen"));
+            const QPointF mid = centre(canvas);
+            const auto sample = [&](TabletSample::Kind kind, QPointF at) {
+                TabletSample t;
+                t.kind = kind; t.windowPos = at;
+                t.pressure = kind == TabletSample::Kind::Release ? 0.0f : 0.6f;
+                t.buttons = kind == TabletSample::Kind::Release ? Qt::NoButton : Qt::LeftButton;
+                t.button = Qt::LeftButton;
+                t.timestampMs = quint32(g_stamp += 16);
+                canvas->tabletSample(t);
+            };
+            sample(TabletSample::Kind::Press, mid);
+            for (int i = 1; i <= 10; ++i) sample(TabletSample::Kind::Move, mid + QPointF(8.0 * i, (i % 2) * 10.0));
+            sample(TabletSample::Kind::Release, mid + QPointF(80, 0));
+            spin(200);
+            canvas->selectAll();
+            spin(300);
+            QQuickItem *pill = findOne(win, QStringLiteral("tagPill"));
+            r.check("lassoed ink offers # Tag", pill && pill->isVisible());
+            shot(win, QStringLiteral("2-tags-lasso"));
+            if (pill && pill->isVisible()) {
+                tap(win, pill);
+                const QJSValue pending = root->property("pendingTag").value<QJSValue>();
+                const QString token = pending.isObject() ? pending.property(QStringLiteral("token")).toString() : QString();
+                r.check("# Tag sends the strokes to the handwriting reader", !token.isEmpty());
+                // The recogniser needs its model, which a test machine may not have: answer for it.
+                QMetaObject::invokeMethod(ocr, "strokesRecognized", Q_ARG(QString, token), Q_ARG(QString, QStringLiteral("#Revision.")));
+                spin(250);
+                r.check("the recognised words become the page's tag", pageTagNames(inked).contains(QStringLiteral("Revision")),
+                        pageTagNames(inked).join(QLatin1Char(',')));
+            }
+        } else {
+            r.check("found the canvas and OCR service for the tag test", false);
+        }
+
+        // The page panel: add by typing, see the chips, remove with an undo.
+        root->setProperty("rightPanel", QStringLiteral("page"));
+        spin(300);
+        QQuickItem *field = findOne(win, QStringLiteral("tagField"));
+        r.check("the page panel has a field for tags", field && field->isVisible());
+        if (field) {
+            win->requestActivate();
+            waitFor([&] { return win->isActive(); }, 1500);
+            field->forceActiveFocus();
+            spin(100);
+            typeKeys(QStringLiteral("exam"));
+            chord(win, Qt::Key_Return, Qt::NoModifier);
+            spin(250);
+            r.check("a typed tag is added", pageTagNames(inked).contains(QStringLiteral("exam")), pageTagNames(inked).join(QLatin1Char(',')));
+            QQuickItem *keys = nullptr;
+            Q_UNUSED(keys);
+            if (QQmlEngine *engine = qmlEngine(root))
+                if (QObject *k = engine->rootContext()->contextProperty(QStringLiteral("keys")).value<QObject *>())
+                    QMetaObject::invokeMethod(k, "dropFocus");
+            spin(150);
+        }
+        shot(win, QStringLiteral("2-tags-panel"));
+        QQuickItem *removeExam = nullptr;
+        for (QQuickItem *chip : findAll(win, QStringLiteral("tagChip")))
+            if (chip->isVisible() && chip->property("name").toString() == QLatin1String("exam") && chip->property("removable").toBool())
+                for (QQuickItem *x : findAll(win, QStringLiteral("tagChipRemove")))
+                    if (x->parentItem() && x->parentItem()->parentItem() == chip) removeExam = x;
+        r.check("a tag chip can be removed", removeExam != nullptr);
+        if (removeExam) {
+            tap(win, removeExam);
+            spin(250);
+            r.check("removing takes the tag off", !pageTagNames(inked).contains(QStringLiteral("exam")));
+            if (QQuickItem *undo = findOne(win, QStringLiteral("toastUndo"))) {
+                tap(win, undo);
+                spin(250);
+                r.check("and Undo puts it back", pageTagNames(inked).contains(QStringLiteral("exam")));
+            }
+        }
+        root->setProperty("rightPanel", QString());
+
+        // The page browser, narrowed to a tag.
+        QMetaObject::invokeMethod(root, "showTagged", Q_ARG(QVariant, QStringLiteral("revision")));
+        waitFor([&] { return !findAll(win, QStringLiteral("browserCell")).isEmpty(); }, 3000);
+        spin(300);
+        int cells = 0;
+        for (QQuickItem *c : findAll(win, QStringLiteral("browserCell"))) if (c->isVisible()) ++cells;
+        r.check("the page browser shows the pages with a tag", cells == 1, QStringLiteral("%1 cells").arg(cells));
+        shot(win, QStringLiteral("2-tags-browser"));
+        root->setProperty("browserVisible", false);
+        spin(200);
+
+        // Search, narrowed by a tag chip.
+        chord(win, Qt::Key_K, Qt::ControlModifier);
+        spin(300);
+        QQuickItem *chipInSearch = nullptr;
+        if (QQuickItem *flow = findOne(win, QStringLiteral("searchTags")))
+            for (QQuickItem *chip : findAll(win, QStringLiteral("tagChip")))
+                if (chip->isVisible() && chip->parentItem() == flow && chip->property("name").toString() == QLatin1String("Revision")) chipInSearch = chip;
+        r.check("search offers tags to narrow it", chipInSearch != nullptr);
+        if (chipInSearch) {
+            tap(win, chipInSearch);
+            spin(250);
+            r.check("a tag chip selects in search", chipInSearch->property("selected").toBool());
+            shot(win, QStringLiteral("2-tags-search"));
+        }
+        pressEscape(win);
+        spin(150);
+    }
 }
 
 } // namespace

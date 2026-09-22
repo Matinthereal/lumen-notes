@@ -12,6 +12,7 @@ Rectangle {
     required property var shapeLayer
     required property var imageLayer
     signal toast(string message)
+    signal tagRequested()
 
     // Ink has no single object to hang a menu on, so it keeps the bar; a shape or a picture shows
     // its own options over itself when you tap it again.
@@ -162,6 +163,15 @@ Rectangle {
             border.color: danger ? Qt.alpha(Ui.danger, 0.55) : Qt.alpha(pal.text, 0.22); border.width: 1
             Text { id: at; anchors.centerIn: parent; text: parent.label; color: parent.danger ? Ui.danger : pal.windowText; font.pixelSize: Ui.small + 1 }
             TapHandler { id: bt; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
+        }
+        BarAction {
+            objectName: "tagPill"
+            visible: bar.subject === "ink"
+            label: "# Tag"
+            onClicked: bar.tagRequested()
+            ToolTip.visible: tagHover.hovered; ToolTip.delay: 600
+            ToolTip.text: "Read this handwriting and add it to the page as a tag"
+            HoverHandler { id: tagHover }
         }
         BarAction {
             label: "Duplicate"

@@ -52,7 +52,8 @@ Rectangle {
             ["Ctrl+J", "Claude"],
             ["Ctrl+Shift+H", "Read this page's handwriting"],
             ["[[ in any text", "Link to another page — tap the link to go there"],
-            ["Ctrl+Shift+L", "This page: what links here"],
+            ["Ctrl+Shift+L", "This page: its tags and what links here"],
+            ["#tag in Ctrl+K", "Search only pages with that tag"],
             ["Ctrl+Shift+C · Ctrl+Shift+R", "Flashcards · review"],
             ["Ctrl+Shift+P", "Past papers"]
         ]},

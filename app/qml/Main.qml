@@ -33,6 +33,7 @@ Window {
     property bool trashVisible: false
     property bool keysVisible: false
     property bool browserVisible: false
+    onBrowserVisibleChanged: if (!browserVisible) browserTag = ""
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
     readonly property bool tablet: tabletMode.tablet
     // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting | page).
@@ -118,11 +119,33 @@ Window {
         const info = library.page(currentPageId); if (!info.id) return
         openPage(library.createPage(library.createSection(info.notebookId, "New section")))
     }
+    // ---- Tags. Handwriting becomes a tag by the same recognition the page's OCR uses, run on just
+    // the strokes the lasso caught.
+    property var pendingTag: null
+    property string browserTag: ""
+    function tagFromSelection() {
+        if (!canvas.hasSelection || !currentPageId) return
+        pageStore.flush()                       // the recogniser reads the saved page
+        pendingTag = { token: "tag-" + Date.now(), pageId: currentPageId }
+        ocr.recognizeStrokes(currentPageId, canvas.selectionStrokeIds(), pendingTag.token)
+        toastBar.show("Reading your handwriting…", null)
+    }
+    function addTag(pageId, name) {
+        const had = library.pageTags(pageId).map(t => t.name.toLowerCase())
+        const id = library.addPageTag(pageId, name)
+        const tag = id ? library.pageTags(pageId).find(t => t.id === id) : null
+        if (!tag) { toastBar.show("That doesn't make a tag", null); return }
+        if (had.indexOf(tag.name.toLowerCase()) >= 0) { toastBar.show("Already tagged #" + tag.name, null); return }
+        toastBar.show("Tagged #" + tag.name, function() { library.removePageTag(pageId, id) })
+        canvas.selectNone()
+    }
+    function showTagged(tag) { browserTag = tag; if (currentPageId || tag.length) browserVisible = true }
+
     // A [[link]] followed from any text. The id is the link; a page since deleted says so.
     function followLink(url) {
         const id = library.linkTarget(url)
         if (id) openPage(id)
-        else toast.show("That page has been deleted", null)
+        else toastBar.show("That page has been deleted", null)
     }
     function stepPage(delta) { const id = library.nextPageId(currentPageId, delta); if (id) openPage(id) }
     function toggleLeft(name) { leftPanel = leftPanel === name ? "" : name }
@@ -140,8 +163,8 @@ Window {
         }
         function onWords(pageId, words) { if (pageId === root.currentPageId) canvas.setWords(words) }
         function onImported(sectionId, firstPageId, token) { if (firstPageId) root.openPage(firstPageId) }
-        function onExported(file, pages) { toast.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null) }
-        function onFailed(message) { toast.show(message, null) }
+        function onExported(file, pages) { toastBar.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null) }
+        function onFailed(message) { toastBar.show(message, null) }
     }
     Timer { id: rerender; interval: 250; onTriggered: { if (!pdf.pageHasPdf(root.currentPageId)) return; const want = Math.min(Math.max(canvas.zoom, 0.5), 4.0); if (Math.abs(want - root.renderedScale) / Math.max(root.renderedScale, 0.01) > 0.2) pdf.requestRender(root.currentPageId, want) } }
     FileDialog {
@@ -231,8 +254,8 @@ Window {
                 anchors.fill: parent
                 board: canvas
                 pageId: root.currentPageId
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "picture"
                     objectMenu.info = ({})
@@ -248,8 +271,8 @@ Window {
                 pageId: root.currentPageId
                 strokeColour: canvas.penColor        // a new shape uses the pen in your hand
                 strokeWidth: Math.max(1.5, canvas.penWidth)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "shape"
                     objectMenu.info = shapeLayer.selected()
@@ -374,20 +397,20 @@ Window {
                 enabled: visible && opacity > 0.5
                 onExportRequested: exportDialog.open()
                 onPictureRequested: pictureDialog.open()
-                onToast: (m) => toast.show(m, null)
+                onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
-                onShapeKindChosen: (kind) => { shapeLayer.kind = kind; canvas.tool = "shape"; toast.show("Drag to draw a " + kind, null) }
+                onShapeKindChosen: (kind) => { shapeLayer.kind = kind; canvas.tool = "shape"; toastBar.show("Drag to draw a " + kind, null) }
                 onStyleChosen: (style) => {
                     if (!root.currentPageId) return
                     canvas.pageStyle = style
                     library.setPageStyle(root.currentPageId, style)
-                    toast.show("Page style: " + style, null)
+                    toastBar.show("Page style: " + style, null)
                 }
                 onPaperChosen: (colour) => {
                     if (!root.currentPageId) return
                     library.setPagePaper(root.currentPageId, colour)
                     root.pagePaper = colour
-                    toast.show(colour.length ? "Paper colour set for this page" : "Paper back to the app default", null)
+                    toastBar.show(colour.length ? "Paper colour set for this page" : "Paper back to the app default", null)
                 }
                 // Bounded, and remembered: an unbounded drag could put the toolbar off-screen for good.
                 DragHandler {
@@ -408,8 +431,8 @@ Window {
                 sectionId: library.page(root.currentPageId).sectionId || 0
                 pageId: root.currentPageId
                 z: 6
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onTranscriptRequested: root.toggleRight("transcript")
             }
             PaperBar {
@@ -421,8 +444,8 @@ Window {
                 pageId: root.currentPageId
                 paperId: page.paperOf(page.libraryTick, root.currentPageId)
                 onOpenPage: (pid) => root.openPage(pid)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 z: 6
             }
             LatexPopup {
@@ -432,14 +455,21 @@ Window {
                     const id = textBlocks.create(root.currentPageId, where.x + where.width + 16, where.y, 260, 0, 0)
                     textBlocks.setMarkdown(id, "**= " + text + "**", 0)
                     canvas.selectNone()
-                    toast.show("Answer written on the page", null)
+                    toastBar.show("Answer written on the page", null)
                 }
                 onImprove: (png, draft) => claude.improveLatex(png, draft)
             }
             Connections {
                 target: ocr
                 function onLatexReady(latex, png) { latexPopup.latex = latex; latexPopup.png = png; latexPopup.anchorRect = canvas.selectionBounds(); latexPopup.open() }
-                function onFailed(m) { toast.show(m, null) }
+                function onFailed(m) { root.pendingTag = null; toastBar.show(m, null) }
+                function onStrokesRecognized(token, text) {
+                    const want = root.pendingTag
+                    if (!want || want.token !== token) return
+                    root.pendingTag = null
+                    if (text.trim().length) root.addTag(want.pageId, text)
+                    else toastBar.show("Nothing readable there to make a tag from", null)
+                }
             }
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
@@ -602,7 +632,7 @@ Window {
                 onOutlineChosen: (c) => { if (subject === "shape") shapeLayer.restyle(c, undefined, 0); info = subject === "shape" ? shapeLayer.selected() : ({}) }
                 onFillChosen: (c) => { shapeLayer.restyle("", c, 0); info = shapeLayer.selected() }
                 onWidthChosen: (w) => { shapeLayer.restyle("", undefined, w); info = shapeLayer.selected() }
-                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toast.show("Add the picture again to duplicate it", null)
+                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toastBar.show("Add the picture again to duplicate it", null)
                 onDeleteAsked: subject === "shape" ? shapeLayer.removeSelected() : imageLayer.removeSelected()
             }
             StyleBar {
@@ -612,12 +642,15 @@ Window {
                 shapeLayer: shapeLayer
                 imageLayer: imageLayer
                 z: 18
-                anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: toast.visible ? toast.height + 22 : 14 }
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: toastBar.visible ? toastBar.height + 22 : 14 }
                 width: implicitWidth
-                onToast: (m) => toast.show(m, null)
+                onToast: (m) => toastBar.show(m, null)
+                onTagRequested: root.tagFromSelection()
             }
             Rectangle {
-                id: toast
+                // Not `toast`: most panels declare a `toast` signal, and inside their handlers that
+                // name meant the signal, so `toast.show()` was a TypeError the moment one fired.
+                id: toastBar
                 objectName: "chrome"
                 property var undoFn: null
                 property string actionLabel: "Undo"
@@ -625,17 +658,17 @@ Window {
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: 14 }
                 width: Math.min(page.width - 40, toastRow.implicitWidth + 28); height: Ui.target + 2; radius: 10
                 color: pal.text; visible: false; z: 20
-                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toast.visible = false; else restart() }
+                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toastBar.visible = false; else restart() }
                 HoverHandler { id: toastHover }
                 RowLayout { id: toastRow; anchors.centerIn: parent; spacing: 16
                     Text { id: toastText; objectName: "toastText"; color: pal.base; font.pixelSize: Ui.text; elide: Text.ElideMiddle; Layout.maximumWidth: page.width - 200 }
                     Rectangle {
                         objectName: "toastUndo"
-                        visible: toast.undoFn !== null
+                        visible: toastBar.undoFn !== null
                         implicitWidth: undoLabel.implicitWidth + 24; implicitHeight: Ui.target - 6
                         radius: 8; color: Qt.alpha(pal.base, undoTap.pressed ? 0.35 : 0.16)
-                        Text { id: undoLabel; anchors.centerIn: parent; text: toast.actionLabel; color: pal.base; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
-                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toast.undoFn) toast.undoFn(); toast.visible = false } }
+                        Text { id: undoLabel; anchors.centerIn: parent; text: toastBar.actionLabel; color: pal.base; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
+                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toastBar.undoFn) toastBar.undoFn(); toastBar.visible = false } }
                     }
                 }
             }
@@ -669,7 +702,7 @@ Window {
                     const info = infoBeforeDelete || ({})
                     const gone = (kind === "page" && id === wasCurrent) || (kind === "section" && info.sectionId === id) || (kind === "notebook" && info.notebookId === id)
                     if (gone) root.closePage()          // no page is a fine place to be; the toast offers it back
-                    toast.show(kind + " “" + name + "” deleted", function() { library.restore(kind, id); if (kind === "page") root.openPage(id) })
+                    toastBar.show(kind + " “" + name + "” deleted", function() { library.restore(kind, id); if (kind === "page") root.openPage(id) })
                 }
                 Component.onCompleted: { root.sidebar = sidebarInst; revealPage(root.currentPageId) }
                 Component.onDestruction: if (root.sidebar === sidebarInst) root.sidebar = null
@@ -677,20 +710,20 @@ Window {
             CardsPanel {
                 anchors.fill: parent; visible: root.leftPanel === "cards"; pageId: root.currentPageId
                 onReview: root.reviewVisible = true
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             PapersPanel {
                 anchors.fill: parent; visible: root.leftPanel === "papers"
                 onOpenPage: (pid) => root.openPage(pid)
                 onOpenDashboard: (s) => { root.dashboardSubject = s; root.dashboardVisible = true }
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
         }
     }
     property var sidebar: null
-    Connections { target: pageStore; function onStorageError(message) { toast.show(message, null) } }
+    Connections { target: pageStore; function onStorageError(message) { toastBar.show(message, null) } }
     Component {
         id: rightPanelComponent
         Item {
@@ -698,19 +731,20 @@ Window {
                 anchors.fill: parent; visible: root.rightPanel === "claude"; canvas: canvas; pageId: root.currentPageId
                 sectionId: audioBar.sectionId; recordingId: audioBar.currentRecordingId
                 onOpenPage: (pid) => root.openPage(pid)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             TranscriptPanel {
                 anchors.fill: parent; visible: root.rightPanel === "transcript"; recordingId: audioBar.currentRecordingId
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             PagePanel {
                 anchors.fill: parent; visible: root.rightPanel === "page"; pageId: root.currentPageId
                 onOpenPage: (pid) => root.openPage(pid)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onShowTagged: (tag) => root.showTagged(tag)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             OcrPanel {
                 anchors.fill: parent; visible: root.rightPanel === "handwriting"; canvas: canvas; pageId: root.currentPageId
@@ -719,8 +753,8 @@ Window {
                     const id = textBlocks.create(root.currentPageId, x, y, 420, 0, 0)
                     textBlocks.setMarkdown(id, text, 0)
                 }
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
         }
     }
@@ -729,13 +763,13 @@ Window {
     ReviewPage {
         visible: root.reviewVisible; anchors.fill: parent; z: 30
         onClosed: root.reviewVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
     }
     DashboardPage { visible: root.dashboardVisible; anchors.fill: parent; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
     SettingsPage {
         visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet") }
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
     }
     // ---- The on-screen keyboard. It appears when a text field asks for input and the app is in
     // tablet mode (or you have set it to always), and it never covers the field it is filling.
@@ -768,7 +802,7 @@ Window {
     TrashPage {
         visible: root.trashVisible; anchors.fill: parent; z: 30
         onClosed: root.trashVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.trashVisible = false; root.openPage(pageId) }
     }
     PageBrowser {
@@ -776,8 +810,10 @@ Window {
         visible: root.browserVisible; anchors.fill: parent; z: 30
         sectionId: library.page(root.currentPageId).sectionId || 0
         currentPageId: root.currentPageId
+        tag: root.browserTag
+        onTagChosen: (t) => root.browserTag = t
         onClosed: root.browserVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
     }
     Onboarding {
@@ -825,11 +861,11 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }
-    Shortcut { enabled: !root.overlayUp && audio.recording; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toast.show("Marked", null) } }
-    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toast.show(on ? "Page starred" : "Star removed", null) } }
+    Shortcut { enabled: !root.overlayUp && audio.recording; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toastBar.show("Marked", null) } }
+    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toastBar.show(on ? "Page starred" : "Star removed", null) } }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: root.trashVisible = !root.trashVisible }
     Shortcut { sequences: ["Ctrl+/", "Ctrl+?"]; onActivated: root.keysVisible = !root.keysVisible }
-    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+D"; onActivated: { const id = library.duplicatePage(root.currentPageId); if (id) { root.openPage(id); toast.show("Page duplicated", null) } } }
+    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+D"; onActivated: { const id = library.duplicatePage(root.currentPageId); if (id) { root.openPage(id); toastBar.show("Page duplicated", null) } } }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+W"; onActivated: root.closePage() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+0"; onActivated: canvas.fitPage() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+1"; onActivated: canvas.fitWidth() }

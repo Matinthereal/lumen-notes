@@ -275,7 +275,7 @@ void Library::unindex(const QString &kind, qint64 pageId, qint64 refId)
     else { Database::Query q(m_db, "DELETE FROM search WHERE kind=? AND page_id=? AND ref_id=?"); q.bind(1, kind).bind(2, pageId).bind(3, refId); q.run(); }
 }
 
-QVariantList Library::search(const QString &query, int limit) const
+QVariantList Library::search(const QString &query, int limit, const QString &tag) const
 {
     QVariantList out;
     // Each word becomes a prefix term; quotes keep FTS5 syntax characters harmless.
@@ -288,8 +288,10 @@ QVariantList Library::search(const QString &query, int limit) const
     Database::Query q(m_db, "SELECT s.kind, s.page_id, s.ref_id, snippet(search, 3, '\u2039', '\u203a', '\u2026', 14), bm25(search),"
                             " p.title, sec.name, n.name FROM search s JOIN page p ON p.id=s.page_id JOIN section sec ON sec.id=p.section_id JOIN notebook n ON n.id=sec.notebook_id"
                             " WHERE search MATCH ? AND p.deleted_at IS NULL AND sec.deleted_at IS NULL AND n.deleted_at IS NULL"
+                            " AND (?='' OR p.id IN (SELECT pt.page_id FROM page_tag pt JOIN tag t ON t.id=pt.tag_id WHERE t.name=? COLLATE NOCASE))"
                             " ORDER BY bm25(search) LIMIT ?");
-    q.bind(1, terms.join(' ')).bind(2, limit);
+    const QString wantTag = normaliseTag(tag);
+    q.bind(1, terms.join(' ')).bind(2, wantTag).bind(3, wantTag).bind(4, limit);
     while (q.step())
         out.append(QVariantMap{{"kind", q.text(0)}, {"pageId", q.i64(1)}, {"refId", q.i64(2)}, {"snippet", q.text(3)}, {"score", q.f64(4)},
                                {"pageTitle", q.text(5)}, {"sectionName", q.text(6)}, {"notebookName", q.text(7)}});
@@ -398,7 +400,8 @@ qint64 Library::duplicatePage(qint64 pageId)
     for (const char *sql : {"INSERT INTO stroke_blob(page_id, schema, data, stroke_count) SELECT ?, schema, data, stroke_count FROM stroke_blob WHERE page_id=?",
                             "INSERT INTO text_block(page_id, x, y, w, markdown, created_t, recording_id, sort) SELECT ?, x, y, w, markdown, created_t, recording_id, sort FROM text_block WHERE page_id=?",
                             "INSERT INTO image(page_id, attachment, x, y, w, h) SELECT ?, attachment, x, y, w, h FROM image WHERE page_id=?",
-                            "INSERT INTO pdf_page(page_id, attachment, page_index) SELECT ?, attachment, page_index FROM pdf_page WHERE page_id=?"}) {
+                            "INSERT INTO pdf_page(page_id, attachment, page_index) SELECT ?, attachment, page_index FROM pdf_page WHERE page_id=?",
+                            "INSERT OR IGNORE INTO page_tag(page_id, tag_id) SELECT ?, tag_id FROM page_tag WHERE page_id=?"}) {
         Database::Query q(m_db, sql);
         q.bind(1, copy).bind(2, pageId);
         q.run();
@@ -586,6 +589,86 @@ QVariantList Library::linkCandidates(const QString &query, qint64 excludePageId,
     q.bind(1, excludePageId).bind(2, needle).bind(3, needle).bind(4, needle).bind(5, limit);
     while (q.step())
         out.append(QVariantMap{{"id", q.i64(0)}, {"title", q.text(1)}, {"sectionName", q.text(2)}, {"notebookName", q.text(3)}, {"colour", q.text(4)}});
+    return out;
+}
+
+// ---- page tags
+
+QString Library::normaliseTag(const QString &name)
+{
+    QString t = name;
+    t.remove(QChar(0x200b));
+    t = t.simplified();
+    while (t.startsWith(QLatin1Char('#'))) t = t.mid(1).trimmed();
+    t.remove(QRegularExpression(QStringLiteral("[.,;:!?]+$")));   // recognised handwriting often ends in a stray stop
+    return t.left(40).trimmed();
+}
+
+QVariantList Library::tags() const
+{
+    QVariantList out;
+    Database::Query q(m_db, "SELECT t.id, t.name, COUNT(*) FROM tag t JOIN page_tag pt ON pt.tag_id=t.id JOIN page p ON p.id=pt.page_id"
+                            " JOIN section s ON s.id=p.section_id JOIN notebook n ON n.id=s.notebook_id"
+                            " WHERE p.deleted_at IS NULL AND s.deleted_at IS NULL AND n.deleted_at IS NULL"
+                            " GROUP BY t.id ORDER BY t.name COLLATE NOCASE");
+    while (q.step()) out.append(QVariantMap{{"id", q.i64(0)}, {"name", q.text(1)}, {"count", q.i32(2)}});
+    return out;
+}
+
+QVariantList Library::pageTags(qint64 pageId) const
+{
+    QVariantList out;
+    Database::Query q(m_db, "SELECT t.id, t.name FROM page_tag pt JOIN tag t ON t.id=pt.tag_id WHERE pt.page_id=? ORDER BY t.name COLLATE NOCASE");
+    q.bind(1, pageId);
+    while (q.step()) out.append(QVariantMap{{"id", q.i64(0)}, {"name", q.text(1)}});
+    return out;
+}
+
+qint64 Library::addPageTag(qint64 pageId, const QString &name)
+{
+    const QString clean = normaliseTag(name);
+    if (clean.isEmpty() || page(pageId).isEmpty()) return 0;
+    qint64 tagId = 0;
+    {
+        Database::Query q(m_db, "SELECT id FROM tag WHERE name=? COLLATE NOCASE AND parent_id IS NULL ORDER BY id LIMIT 1");
+        q.bind(1, clean);
+        if (q.step()) tagId = q.i64(0);
+    }
+    if (!tagId) {
+        Database::Query q(m_db, "INSERT INTO tag(name) VALUES (?)");
+        q.bind(1, clean);
+        if (!q.run()) return 0;
+        tagId = m_db.lastInsertId();
+    }
+    Database::Query q(m_db, "INSERT OR IGNORE INTO page_tag(page_id, tag_id) VALUES (?,?)");
+    q.bind(1, pageId).bind(2, tagId);
+    q.run();
+    if (m_db.changes()) emit tagsChanged();
+    return tagId;
+}
+
+void Library::removePageTag(qint64 pageId, qint64 tagId)
+{
+    Database::Query q(m_db, "DELETE FROM page_tag WHERE page_id=? AND tag_id=?");
+    q.bind(1, pageId).bind(2, tagId);
+    q.run();
+    if (m_db.changes()) emit tagsChanged();
+}
+
+QVariantList Library::pagesWithTag(const QString &name) const
+{
+    QVariantList out;
+    Database::Query q(m_db, "SELECT p.id, p.title, s.name, n.name, n.colour, p.style, p.size_mode, p.modified, p.section_id FROM page p"
+                            " JOIN page_tag pt ON pt.page_id=p.id JOIN tag t ON t.id=pt.tag_id"
+                            " JOIN section s ON s.id=p.section_id JOIN notebook n ON n.id=s.notebook_id"
+                            " WHERE t.name=? COLLATE NOCASE AND p.deleted_at IS NULL AND s.deleted_at IS NULL AND n.deleted_at IS NULL"
+                            " ORDER BY n.sort, n.id, s.sort, s.id, p.sort, p.id");
+    q.bind(1, normaliseTag(name));
+    int i = 0;
+    while (q.step())
+        out.append(QVariantMap{{"id", q.i64(0)}, {"title", q.text(1)}, {"sectionName", q.text(2)}, {"notebookName", q.text(3)},
+                               {"colour", q.text(4)}, {"style", q.text(5)}, {"sizeMode", q.text(6)}, {"modified", q.i64(7)},
+                               {"sectionId", q.i64(8)}, {"index", i++}});
     return out;
 }
 

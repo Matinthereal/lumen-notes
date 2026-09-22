@@ -97,6 +97,7 @@ qt_add_qml_module(lumen
         qml/LinkPicker.qml
         qml/BacklinkRow.qml
         qml/PagePanel.qml
+        qml/TagChip.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp

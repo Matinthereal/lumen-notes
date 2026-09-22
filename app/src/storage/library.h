@@ -40,7 +40,7 @@ public:
     // Full-text index (FTS5): one row per (kind, page, ref). kind ∈ text|ocr|transcript|pdf.
     Q_INVOKABLE void indexText(const QString &kind, qint64 pageId, qint64 refId, const QString &text);
     Q_INVOKABLE void unindex(const QString &kind, qint64 pageId, qint64 refId = -1);
-    Q_INVOKABLE QVariantList search(const QString &query, int limit = 40) const;
+    Q_INVOKABLE QVariantList search(const QString &query, int limit = 40, const QString &tag = {}) const;
     Q_INVOKABLE void movePage(qint64 pageId, int newIndex);
     Q_INVOKABLE void remove(const QString &kind, qint64 id);
     Q_INVOKABLE void restore(const QString &kind, qint64 id);
@@ -62,6 +62,15 @@ public:
     static QString pageUrl(qint64 pageId) { return QStringLiteral("lumen://page/%1").arg(pageId); }
     static QString linkMarkdown(const QString &title, qint64 pageId);
 
+    // Page tags. A tag is a name ("#" and spacing tidied, case kept as first typed, matched without
+    // case); the tag table is shared with flashcards.
+    static QString normaliseTag(const QString &name);
+    Q_INVOKABLE QVariantList tags() const;                          // every tag on a live page, with its count
+    Q_INVOKABLE QVariantList pageTags(qint64 pageId) const;
+    Q_INVOKABLE qint64 addPageTag(qint64 pageId, const QString &name);   // the tag id, 0 if the name was empty
+    Q_INVOKABLE void removePageTag(qint64 pageId, qint64 tagId);
+    Q_INVOKABLE QVariantList pagesWithTag(const QString &name) const;
+
     Q_INVOKABLE qint64 firstPageId() const;
     Q_INVOKABLE qint64 nextPageId(qint64 pageId, int delta) const;   // ±1 within the section
     Q_INVOKABLE QString setting(const QString &key, const QString &fallback = {}) const;
@@ -72,6 +81,7 @@ public:
 signals:
     void changed();
     void linksChanged();
+    void tagsChanged();
 
 private:
     qint64 now() const;

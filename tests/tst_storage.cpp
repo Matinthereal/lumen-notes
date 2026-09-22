@@ -328,6 +328,49 @@ private slots:
         tb.remove(block);
         QVERIFY(lib.backlinks(kin).isEmpty());
     }
+    void pageTagsFilterBrowsingAndSearch() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 sec = lib.createSection(lib.createNotebook("Physics", "#000"), "Waves");
+        const qint64 a = lib.createPage(sec), b = lib.createPage(sec), c = lib.createPage(sec);
+        tb.setMarkdown(tb.create(a, 0, 0, 400), "Standing waves on a string");
+        tb.setMarkdown(tb.create(b, 0, 0, 400), "Standing waves in a pipe");
+
+        QCOMPARE(Library::normaliseTag("  ##Exam   revision. "), QStringLiteral("Exam revision"));
+        QCOMPARE(Library::normaliseTag("#"), QString());
+        QSignalSpy changed(&lib, &Library::tagsChanged);
+        const qint64 exam = lib.addPageTag(a, "#exam");
+        QVERIFY(exam > 0);
+        QCOMPARE(lib.addPageTag(b, "EXAM"), exam);                // one tag, however it is typed
+        QCOMPARE(lib.addPageTag(b, "exam"), exam);                // already there: no change, no signal
+        QCOMPARE(changed.size(), 2);
+        QCOMPARE(lib.addPageTag(a, "   "), qint64(0));
+        lib.addPageTag(c, "formulae");
+
+        QCOMPARE(lib.pageTags(a).size(), 1);
+        QCOMPARE(lib.pageTags(a)[0].toMap().value("name").toString(), QStringLiteral("exam"));
+        const QVariantList all = lib.tags();
+        QCOMPARE(all.size(), 2);
+        QCOMPARE(all[0].toMap().value("name").toString(), QStringLiteral("exam"));
+        QCOMPARE(all[0].toMap().value("count").toInt(), 2);
+
+        QCOMPARE(lib.pagesWithTag("Exam").size(), 2);
+        QCOMPARE(lib.search("standing").size(), 2);
+        QCOMPARE(lib.search("standing", 40, "formulae").size(), 0);
+        lib.removePageTag(b, exam);
+        QCOMPARE(lib.search("standing", 40, "#exam").size(), 1);
+        QCOMPARE(lib.search("standing", 40, "exam")[0].toMap().value("pageId").toLongLong(), a);
+
+        // a copy carries its tags; a page in the trash does not count
+        const qint64 copy = lib.duplicatePage(a);
+        QCOMPARE(lib.pageTags(copy).size(), 1);
+        QCOMPARE(lib.pagesWithTag("exam").size(), 2);
+        lib.remove("page", copy);
+        QCOMPARE(lib.pagesWithTag("exam").size(), 1);
+        QCOMPARE(lib.tags()[0].toMap().value("count").toInt(), 1);
+    }
     void schemaSixIndexesLinksAlreadyInText() {
         QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
         const QString path = dir.path() + "/t.db";
