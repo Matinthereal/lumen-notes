@@ -24,12 +24,21 @@ QString WorkerSupervisor::findPython()
 {
     // The venv's own path, never the resolved symlink (that lands on the bare interpreter). The
     // repo venv first, then one under the data dir for installed builds, then python3 on PATH.
-    for (const QString &venv : {QDir(workersDir()).filePath("../.venv/bin/python"),
-                                QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/lumen/venv/bin/python"})
+    // venv layout is bin/python on Unix, Scripts/python.exe on Windows (the interpreter that
+    // created the venv decides this, not the platform running this code).
+#ifdef Q_OS_WIN
+    const QString venvPython = QStringLiteral("Scripts/python.exe");
+    const QString sysPython = QStringLiteral("python");
+#else
+    const QString venvPython = QStringLiteral("bin/python");
+    const QString sysPython = QStringLiteral("python3");
+#endif
+    for (const QString &venv : {QDir(workersDir()).filePath("../.venv/" + venvPython),
+                                QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/lumen/venv/" + venvPython})
         if (QFileInfo::exists(venv))
             return QDir::cleanPath(QFileInfo(venv).absoluteFilePath());
-    const QString sys = QStandardPaths::findExecutable("python3");
-    return sys.isEmpty() ? QStringLiteral("python3") : sys;
+    const QString sys = QStandardPaths::findExecutable(sysPython);
+    return sys.isEmpty() ? sysPython : sys;
 }
 
 WorkerSupervisor::WorkerSupervisor(const QString &name, QObject *parent)

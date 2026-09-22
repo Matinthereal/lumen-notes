@@ -5,9 +5,26 @@
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <cstring>
+#ifdef Q_OS_WIN
+#include <io.h>
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 Q_LOGGING_CATEGORY(lcJournal, "lumen.journal")
+
+// Force the write above out of the OS cache and onto disk before the caller is told it landed:
+// fdatasync on Linux, FlushFileBuffers (via the CRT fd → Win32 HANDLE) on Windows.
+static bool syncToDisk(QFile &f)
+{
+#ifdef Q_OS_WIN
+    HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(int(f.handle())));
+    return h != INVALID_HANDLE_VALUE && FlushFileBuffers(h);
+#else
+    return ::fdatasync(int(f.handle())) == 0;
+#endif
+}
 
 static const char kMagic[4] = {'M', 'Y', 'N', 'J'};
 static const quint16 kVersion = 1;
@@ -44,7 +61,7 @@ bool PageJournal::open()
         m_file.write(kMagic, 4);
         m_file.write(reinterpret_cast<const char *>(&kVersion), 2);
         m_file.flush();
-        ::fdatasync(int(m_file.handle()));
+        syncToDisk(m_file);
     }
     m_file.seek(m_file.size());
     return true;
@@ -62,7 +79,7 @@ bool PageJournal::writeRecord(quint8 type, const QByteArray &payload)
     rec.append(reinterpret_cast<const char *>(&crc), 4);
     rec.append(payload);
     m_file.seek(m_file.size());
-    if (m_file.write(rec) != rec.size() || !m_file.flush() || ::fdatasync(int(m_file.handle())) != 0) {
+    if (m_file.write(rec) != rec.size() || !m_file.flush() || !syncToDisk(m_file)) {
         ++m_failures;
         qCWarning(lcJournal) << "append failed on" << m_file.fileName() << m_file.errorString();
         return false;
@@ -120,7 +137,7 @@ bool PageJournal::truncate()
     if (!open()) return false;
     if (!m_file.resize(kHeaderBytes)) return false;
     m_file.flush();
-    ::fdatasync(int(m_file.handle()));
+    syncToDisk(m_file);
     m_file.seek(kHeaderBytes);
     return true;
 }

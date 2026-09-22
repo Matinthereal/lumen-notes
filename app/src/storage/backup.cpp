@@ -36,6 +36,19 @@ Result run(const QString &dataDir, const QString &destDir, int keep)
     return r;
 }
 
+// No systemd (or no timer set up yet): due if the newest backup in destDir is a day old or older.
+// This is what drives the in-app timer on platforms without installUserTimer() below.
+bool dueForNightlyBackup(const QString &destDir)
+{
+    QDir d(destDir);
+    const QStringList files = d.entryList({"lumen-*.zip", "lumen-*.tar.gz"}, QDir::Files, QDir::Name | QDir::Reversed);
+    if (files.isEmpty()) return true;
+    const QDateTime newest = QFileInfo(d, files.first()).lastModified();
+    return newest.msecsTo(QDateTime::currentDateTime()) >= qint64(24) * 3600 * 1000;
+}
+
+#ifdef Q_OS_LINUX
+
 static QString unitDir() { return QDir::homePath() + "/.config/systemd/user"; }
 
 bool timerInstalled() { return QFileInfo::exists(unitDir() + "/lumen-backup.timer"); }
@@ -65,5 +78,7 @@ bool installUserTimer(const QString &executable, QString *error)
     if (p.exitCode() != 0) { if (error) *error = QString::fromUtf8(p.readAllStandardError()).trimmed(); return false; }
     return true;
 }
+
+#endif // Q_OS_LINUX
 
 } // namespace backup

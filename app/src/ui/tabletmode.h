@@ -8,6 +8,8 @@
 // toggled by hand (toolbar button, Ctrl+Shift+T). The hinge itself is not detectable on this
 // machine (HARDWARE.md), so the manual toggle is first-class, not a fallback. Also exposes a
 // rotate-display action through kscreen-doctor and the state of the on-screen keyboard.
+// The KWin/kscreen-doctor pieces are Linux-only and compiled out elsewhere (see tabletmode.cpp);
+// the manual toggle works everywhere.
 class TabletMode : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool tablet READ tablet WRITE setTablet NOTIFY tabletChanged)

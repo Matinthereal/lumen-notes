@@ -37,8 +37,10 @@
 #include <QDir>
 #include <QFileInfo>
 #include <cstdio>
+#ifdef Q_OS_UNIX
 #include <csignal>
 #include <atomic>
+#endif
 #include "workers/pingmeter.h"
 #include "workers/workersupervisor.h"
 
@@ -184,11 +186,27 @@ int main(int argc, char *argv[])
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(15000, &ocr, [&ocr] { ocr.prepare(); ocr.scanStale(); });
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(4000, &audio, &AudioService::prepareModels);
 
-    // Nightly backup timer (D-014): installed once, never in tests (they point LUMEN_DATA_DIR elsewhere).
+    // Nightly backup timer (D-014): never in tests (they point LUMEN_DATA_DIR elsewhere). On Linux
+    // a systemd --user timer runs `lumen --backup`, installed once. Elsewhere there is no systemd
+    // equivalent, so an in-app timer checks hourly and runs the backup itself when one is due.
+#ifdef Q_OS_LINUX
     if (qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke")) && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
         QString err;
         if (!backup::installUserTimer(QCoreApplication::applicationFilePath(), &err)) qWarning("backup timer: %s", qPrintable(err));
     }
+#else
+    if (qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke"))) {
+        auto runIfDue = [&library] {
+            const QString dest = library.setting("backup.dir", paths::backupDir());
+            if (backup::dueForNightlyBackup(dest)) backup::run(paths::dataDir(), dest, library.setting("backup.keep", "7").toInt());
+        };
+        auto *backupTimer = new QTimer(&app);
+        backupTimer->setInterval(3600000);   // checked hourly; dueForNightlyBackup gates the actual run
+        QObject::connect(backupTimer, &QTimer::timeout, &app, runIfDue);
+        backupTimer->start();
+        QTimer::singleShot(30000, &app, runIfDue);   // also catch a backup overdue at launch, once things settle
+    }
+#endif
 
     if (args.contains(QStringLiteral("--smoke")))
         QTimer::singleShot(2500, &app, &QCoreApplication::quit);
@@ -203,6 +221,8 @@ int main(int argc, char *argv[])
     }
     // --screenshot <png>: grab the window after 3.5 s and quit (headless UI checks).
     // SIGUSR1 → screenshot of the live window to $LUMEN_SHOT (default /tmp/lumen-shot.png), no quit.
+    // Unix-only: Windows has no SIGUSR1, and this is a dev convenience, not a feature to replace.
+#ifdef Q_OS_UNIX
     {
         static QQmlApplicationEngine *engineForShot = &engine;
         static std::atomic<int> shotRequests{0};
@@ -217,6 +237,7 @@ int main(int argc, char *argv[])
         });
         poll->start();
     }
+#endif
     const int shotIdx = args.indexOf(QStringLiteral("--screenshot"));
     if (shotIdx >= 0 && shotIdx + 1 < args.size()) {
         const QString shotPath = args.at(shotIdx + 1);

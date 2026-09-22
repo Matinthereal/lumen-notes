@@ -5,11 +5,15 @@ cd "$(dirname "$0")/.."
 PY="${PYTHON:-python3.13}"
 command -v "$PY" >/dev/null || { echo "need $PY (dnf install python3.13)"; exit 1; }
 [ -d .venv ] || "$PY" -m venv .venv
-.venv/bin/pip install --upgrade pip -q
+# venv layout is bin/ on Unix, Scripts/ on Windows (the interpreter that created it decides this,
+# not the shell running this script — matters under git-bash/MSYS2 on Windows).
+VENV_BIN=.venv/bin
+[ -d .venv/Scripts ] && VENV_BIN=.venv/Scripts
+"$VENV_BIN/pip" install --upgrade pip -q
 if [ -s workers/requirements.txt ] && [ "${FRESH:-0}" != "1" ]; then
-  .venv/bin/pip install -r workers/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+  "$VENV_BIN/pip" install -r workers/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 else
-  .venv/bin/pip install -r workers/requirements.in --extra-index-url https://download.pytorch.org/whl/cpu
-  .venv/bin/pip freeze > workers/requirements.txt
+  "$VENV_BIN/pip" install -r workers/requirements.in --extra-index-url https://download.pytorch.org/whl/cpu
+  "$VENV_BIN/pip" freeze > workers/requirements.txt
 fi
-echo "workers venv ready: $(.venv/bin/python --version)"
+echo "workers venv ready: $("$VENV_BIN/python" --version)"

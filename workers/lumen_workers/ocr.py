@@ -6,7 +6,8 @@ import os
 import sys
 import time
 
-os.nice(10)
+if hasattr(os, "nice"):   # no niceness concept on Windows
+    os.nice(10)
 
 from .rpc import serve  # noqa: E402
 

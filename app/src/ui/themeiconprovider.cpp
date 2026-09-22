@@ -19,7 +19,9 @@ QHash<QString, QString> &fileIndex()
         built = true;
         QStringList roots;
         for (const QString &d : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation)) roots << d + "/icons/breeze";
+#ifdef Q_OS_LINUX
         roots << "/usr/share/icons/breeze";
+#endif
         for (const QString &root : roots) {
             if (!QDir(root).exists()) continue;
             for (const char *size : {"22", "24", "32", "16", "48"}) {

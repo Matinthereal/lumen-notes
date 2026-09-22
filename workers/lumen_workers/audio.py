@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Optional
@@ -354,7 +355,9 @@ def _similarity(a: str, b: str) -> float:
 
 class Player:
     def __init__(self, notify):
-        self.sock_path = f"/tmp/lumen-mpv-{os.getpid()}.sock"
+        # mpv's JSON IPC is a Unix socket on Linux/macOS; this worker doesn't yet speak the
+        # Windows named-pipe form of --input-ipc-server, so playback stays Linux/macOS-only.
+        self.sock_path = os.path.join(tempfile.gettempdir(), f"lumen-mpv-{os.getpid()}.sock")
         ao = os.environ.get("LUMEN_MPV_AO")
         extra = [f"--ao={ao}"] if ao else []
         self.proc = subprocess.Popen(["mpv", "--no-video", "--really-quiet", "--idle=yes", "--keep-open=yes", *extra, f"--input-ipc-server={self.sock_path}"],
@@ -492,14 +495,11 @@ def probe_duration(path: str, **_: object) -> dict:
 def serve_with_notify():
     global _send
     from . import rpc
-    orig = rpc.serve
-
-    def hooked(name, handlers, argv=None):
-        return orig(name, handlers, argv)
-    # rpc.serve owns the socket; expose its send through a tiny shim
+    # This worker needs to push unsolicited notifications (level, segments, playback), which
+    # rpc.serve()'s request/response loop doesn't support, so it drives the same connection itself.
     import argparse
     ap = argparse.ArgumentParser(); ap.add_argument("--socket", required=True); args = ap.parse_args()
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); sock.connect(args.socket)
+    sock = rpc.connect(args.socket)
     lock = threading.Lock()
 
     def send(obj):

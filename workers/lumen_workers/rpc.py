@@ -1,4 +1,6 @@
-"""Newline-delimited JSON RPC over a Unix socket. The app listens; the worker connects.
+"""Newline-delimited JSON RPC over the app's QLocalServer endpoint. The app listens; the worker
+connects. That's a Unix socket on Linux/macOS and a named pipe on Windows — connect() below picks
+the one QLocalServer actually opened, so the rest of this module never has to know which.
 
 Request:  {"id": 1, "method": "ping", "params": {...}}      (id absent = notification)
 Response: {"id": 1, "result": {...}}  or  {"id": 1, "error": {"code": -32000, "message": "..."}}
@@ -14,13 +16,40 @@ import traceback
 from typing import Callable
 
 
+class _PipeTransport:
+    """Adapts a Windows named-pipe handle to the .sendall()/.recv() shape used below, so callers
+    don't need to special-case the transport."""
+
+    def __init__(self, path: str) -> None:
+        self._f = open(path, "r+b", buffering=0)
+
+    def sendall(self, data: bytes) -> None:
+        self._f.write(data)
+
+    def recv(self, n: int) -> bytes:
+        return self._f.read(n) or b""
+
+    def close(self) -> None:
+        self._f.close()
+
+
+def connect(path: str):
+    """Connect to the app's IPC endpoint. QLocalServer::listen(name) opens a Unix socket at `name`
+    on Linux/macOS and a named pipe at \\\\.\\pipe\\<name> on Windows."""
+    if sys.platform == "win32":
+        pipe = path if path.startswith("\\\\.\\pipe\\") else "\\\\.\\pipe\\" + path
+        return _PipeTransport(pipe)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(path)
+    return sock
+
+
 def serve(name: str, handlers: dict[str, Callable[..., object]], argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog=f"lumen_workers.{name}")
-    ap.add_argument("--socket", required=True, help="Unix socket path the app is listening on")
+    ap.add_argument("--socket", required=True, help="IPC endpoint the app is listening on")
     args = ap.parse_args(argv)
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(args.socket)
+    sock = connect(args.socket)
 
     def send(obj: dict) -> None:
         sock.sendall((json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8"))

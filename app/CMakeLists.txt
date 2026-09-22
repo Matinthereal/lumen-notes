@@ -39,12 +39,61 @@ qt_add_library(lumen_core STATIC
     src/ui/thumbnails.h            src/ui/thumbnails.cpp
 )
 target_include_directories(lumen_core PUBLIC src)
-find_package(Qt6 REQUIRED COMPONENTS DBus)
+
+# ---- D-Bus: tablet-mode's KWin auto-detect (tabletmode.cpp) is Linux/Plasma-only and optional —
+#      without it the manual tablet-mode toggle still works, just with no KWin auto-detect.
+if(LINUX)
+    set(LUMEN_ENABLE_DBUS_DEFAULT ON)
+else()
+    set(LUMEN_ENABLE_DBUS_DEFAULT OFF)
+endif()
+option(LUMEN_ENABLE_DBUS "Build the KWin D-Bus tablet-mode integration (Linux only)" ${LUMEN_ENABLE_DBUS_DEFAULT})
+if(LUMEN_ENABLE_DBUS)
+    find_package(Qt6 QUIET COMPONENTS DBus)
+endif()
+# Gui/Quick can pull in a Qt6::DBus target transitively even when it wasn't requested (Linux QPA
+# plugins use it), so gate on the option too — not just on the target existing.
+if(LUMEN_ENABLE_DBUS AND TARGET Qt6::DBus)
+    target_link_libraries(lumen_core PUBLIC Qt6::DBus)
+    target_compile_definitions(lumen_core PUBLIC LUMEN_HAVE_DBUS)
+else()
+    message(STATUS "Qt6::DBus not built: KWin tablet-mode auto-detect is off, the manual toggle still works")
+endif()
+
 # The on-screen keyboard for tablet mode runs in-process (QT_IM_MODULE=qtvirtualkeyboard).
 find_package(Qt6 QUIET COMPONENTS VirtualKeyboard)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
-target_link_libraries(lumen_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Quick Qt6::DBus PkgConfig::SQLITE3)
+
+# ---- SQLite: the system library via pkg-config, or a bundled amalgamation when that isn't
+#      available (no pkg-config sqlite3 package on Windows) or when forced with LUMEN_BUNDLED_SQLITE.
+option(LUMEN_BUNDLED_SQLITE "Fetch and build the SQLite amalgamation instead of the system library" OFF)
+if(NOT LUMEN_BUNDLED_SQLITE)
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SQLITE3 IMPORTED_TARGET sqlite3)
+    endif()
+endif()
+if(NOT TARGET PkgConfig::SQLITE3)
+    if(NOT LUMEN_BUNDLED_SQLITE)
+        message(STATUS "system sqlite3 not found via pkg-config: building the bundled amalgamation instead")
+    endif()
+    enable_language(C)   # the amalgamation is plain C; the project itself only enables CXX above
+    include(FetchContent)
+    FetchContent_Declare(lumen_sqlite3
+        URL https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip
+        URL_HASH SHA3_256=628a44cfe82c66aed1ccbbe85a562d2e33ebe64b3288981ed76285612227934e
+    )
+    FetchContent_MakeAvailable(lumen_sqlite3)
+    add_library(lumen_bundled_sqlite3 STATIC ${lumen_sqlite3_SOURCE_DIR}/sqlite3.c)
+    target_include_directories(lumen_bundled_sqlite3 PUBLIC ${lumen_sqlite3_SOURCE_DIR})
+    # FTS5 is the schema's search index (schema.cpp); WAL is a runtime PRAGMA, not a build flag.
+    target_compile_definitions(lumen_bundled_sqlite3 PUBLIC SQLITE_ENABLE_FTS5 SQLITE_THREADSAFE=1)
+    if(UNIX)
+        target_link_libraries(lumen_bundled_sqlite3 PUBLIC ${CMAKE_DL_LIBS})
+    endif()
+    add_library(PkgConfig::SQLITE3 ALIAS lumen_bundled_sqlite3)
+endif()
+
+target_link_libraries(lumen_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Quick PkgConfig::SQLITE3)
 target_compile_definitions(lumen_core PUBLIC
     LUMEN_PROMPTS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/prompts"
     LUMEN_WORKERS_SOURCE_DIR="${LUMEN_WORKERS_SOURCE_DIR}"
