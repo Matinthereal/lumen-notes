@@ -524,6 +524,54 @@ int uitest::run(QQuickWindow *win, QObject *root)
         waitFor([&] { return currentPage() > 0 && !root->property("pageTyped").toBool(); }, 3000);
     };
 
+    // ---- 12e. Tooltips by touch: holding a control with a finger or the pen shows what it does and
+    // does not do it; a tap still does it; a hold that means something (the sidebar menu) still does.
+    const auto holdTipChecks = [&] {
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        spin(250);
+        QQuickItem *notebooks = nullptr;
+        for (QQuickItem *b : findAll(win, QStringLiteral("railButton")))
+            if (b->property("tip").toString().startsWith(QLatin1String("Notebooks"))) notebooks = b;
+        // The bubble is a Popup, so it is a QObject child of the window's root, not an item in the tree.
+        const auto bubbleSays = [&](const QString &what) {
+            QObject *b = root->findChild<QObject *>(QStringLiteral("holdTip"));
+            return b && b->property("visible").toBool() && b->property("text").toString().startsWith(what);
+        };
+        if (notebooks && canFinger()) {
+            fingerTap(win, notebooks, 800);
+            r.check("a finger hold on a rail button shows its tooltip", bubbleSays(QStringLiteral("Notebooks")));
+            r.check("and does not press the button", root->property("leftPanel").toString() == QLatin1String("notebooks"));
+            spin(1800);
+            r.check("the hold tooltip goes away after the finger lifts", !bubbleSays(QStringLiteral("Notebooks")));
+            fingerTap(win, notebooks, 120);
+            r.check("a finger tap on the same button still works", root->property("leftPanel").toString().isEmpty());
+            fingerTap(win, notebooks, 120);
+            const QPointF at = centre(notebooks);
+            penAt(win, QEvent::TabletPress, at, Qt::LeftButton);
+            spin(800);
+            penAt(win, QEvent::TabletRelease, at, Qt::NoButton);
+            spin(200);
+            r.check("a pen hold shows the tooltip too", bubbleSays(QStringLiteral("Notebooks")));
+            r.check("and does not press the button either", root->property("leftPanel").toString() == QLatin1String("notebooks"));
+            pressEscape(win);
+        } else {
+            r.check("found the Notebooks rail button and a touch device", false);
+        }
+        revealCurrent(win, root);
+        if (QQuickItem *row = pageRow(win, false); row && canFinger()) {
+            fingerTap(win, row, 900);
+            r.check("a finger hold on a sidebar row still opens its menu", sheetOpen(win));
+            pressEscape(win);
+        }
+    };
+    // LUMEN_UITEST_ONLY=holdtips runs just these, for working on them without the 7-minute sweep.
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("holdtips")) {
+        ensurePage();
+        holdTipChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+
     // ---- 0. The window is opaque while a shape is selected and the page is zoomed in (the maker
     //         saw the desktop through the app doing exactly that).
     {
@@ -1207,6 +1255,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
         canvas->setTool(QStringLiteral("pen"));
         spin(200);
     }
+
+    // ---- 12e. Tooltips by touch (above).
+    holdTipChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

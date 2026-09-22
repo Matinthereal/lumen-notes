@@ -86,6 +86,7 @@ Item {
             // Record: hold to start, tap to stop.
             Rectangle {
                 id: recButton
+                property bool holdAction: true      // holding is how a recording starts: no hold tip here
                 implicitWidth: Ui.target; implicitHeight: Ui.target; radius: Ui.target / 2
                 color: audio.recording ? Ui.danger : (recHover.hovered ? Qt.alpha(Ui.danger, 0.15) : "transparent")
                 border.color: Ui.danger; border.width: 2

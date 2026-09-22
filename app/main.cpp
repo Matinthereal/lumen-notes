@@ -1,7 +1,9 @@
 #include <QGuiApplication>
+#include <QCursor>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlExpression>
 #include <QQuickWindow>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -27,6 +29,7 @@
 #include "media/shapes.h"
 #include "ui/thumbnails.h"
 #include "ui/uitest.h"
+#include "ui/holdtips.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -119,6 +122,7 @@ int main(int argc, char *argv[])
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
     TabletEventFilter tabletFilter;
     KeyInjector keys;
+    HoldTips holdTips;
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("theme"), new ThemeIconProvider);
@@ -141,6 +145,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("shapes"), &shapes);
     engine.rootContext()->setContextProperty(QStringLiteral("maths"), &maths);
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
+    engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     const bool probeMode = app.arguments().contains(QStringLiteral("--probe"));
@@ -168,6 +173,7 @@ int main(int argc, char *argv[])
         if (args.contains(QStringLiteral("--fullscreen"))) win->showFullScreen();
         else if (args.contains(QStringLiteral("--maximized"))) win->showMaximized();
         tabletFilter.attachWindow(win);
+        holdTips.attachWindow(win);
         if (probeMode) {
             if (auto *probe = win->findChild<PenProbeItem *>(QStringLiteral("penProbe")))
                 tabletFilter.setSink(probe);
@@ -220,6 +226,19 @@ int main(int argc, char *argv[])
     const int shotIdx = args.indexOf(QStringLiteral("--screenshot"));
     if (shotIdx >= 0 && shotIdx + 1 < args.size()) {
         const QString shotPath = args.at(shotIdx + 1);
+        QCursor::setPos(-1000, -1000);      // the offscreen cursor starts over the rail and hovers a tooltip up
+        // --shot-js <expr> (repeatable): evaluated against the window at 2 s, to put the UI in the
+        // state worth looking at — a panel open, a mode on — before the grab.
+        for (int i = 0; i + 1 < args.size(); ++i) {
+            if (args.at(i) != QLatin1String("--shot-js")) continue;
+            const QString js = args.at(i + 1);
+            QTimer::singleShot(2000 + i, &app, [&engine, js] {
+                QObject *rootObj = engine.rootObjects().constFirst();
+                QQmlExpression expr(qmlContext(rootObj), rootObj, js);
+                expr.evaluate();
+                if (expr.hasError()) qWarning("shot-js: %s", qPrintable(expr.error().toString()));
+            });
+        }
         QTimer::singleShot(3500, &app, [&engine, shotPath] {
             if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
                 if (auto *c = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas")))

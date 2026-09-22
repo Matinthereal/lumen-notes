@@ -53,6 +53,11 @@ target_link_libraries(tst_canvas PRIVATE lumen_core Qt6::Test Qt6::Quick)
 add_test(NAME canvas COMMAND tst_canvas)
 set_tests_properties(canvas PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+qt_add_executable(tst_holdtips tst_holdtips.cpp)
+target_link_libraries(tst_holdtips PRIVATE lumen_core Qt6::Test Qt6::Quick Qt6::Qml)
+add_test(NAME holdtips COMMAND tst_holdtips)
+set_tests_properties(holdtips PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # The app itself must start, show the probe, ping the worker and exit cleanly — headless.
 add_test(NAME app_smoke COMMAND lumen --smoke)
 set_tests_properties(app_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1;LUMEN_DATA_DIR=${CMAKE_BINARY_DIR}/smoke-data" TIMEOUT 60)

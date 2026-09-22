@@ -22,6 +22,7 @@ Rectangle {
 
     component RailButton: Rectangle {
         id: btn
+        objectName: "railButton"
         property string icon
         property string tip
         property bool on: false

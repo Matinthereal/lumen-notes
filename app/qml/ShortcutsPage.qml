@@ -39,7 +39,8 @@ Rectangle {
             ["Ctrl+0 · Ctrl+1", "Fit the page · fit the width"],
             ["Ctrl+= · Ctrl+-", "Zoom in · out"],
             ["Ctrl+Shift+G", "Add a picture"],
-            ["Hold a row in the sidebar", "Rename, delete, duplicate, close"]
+            ["Hold a row in the sidebar", "Rename, delete, duplicate, close"],
+            ["Hold any button", "Shows what it does, without doing it"]
         ]},
         { title: "Recording and transcript", keys: [
             ["Ctrl+R", "Start recording (or hold the red button)"],

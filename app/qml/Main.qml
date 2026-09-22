@@ -765,6 +765,7 @@ Window {
         onToast: (m) => toast.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
     }
+    HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
         onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1") }

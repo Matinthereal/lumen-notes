@@ -37,6 +37,7 @@ qt_add_library(lumen_core STATIC
     src/ui/tabletmode.h            src/ui/tabletmode.cpp
     src/ui/backuptool.h            src/ui/backuptool.cpp
     src/ui/thumbnails.h            src/ui/thumbnails.cpp
+    src/ui/holdtips.h              src/ui/holdtips.cpp
 )
 target_include_directories(lumen_core PUBLIC src)
 find_package(Qt6 REQUIRED COMPONENTS DBus)
@@ -94,6 +95,7 @@ qt_add_qml_module(lumen
         qml/Onboarding.qml
         qml/ProbePage.qml
         qml/Readout.qml
+        qml/HoldTip.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp
