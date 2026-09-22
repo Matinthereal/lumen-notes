@@ -51,6 +51,8 @@ Rectangle {
             ["Ctrl+\\", "Notebooks panel"],
             ["Ctrl+J", "Claude"],
             ["Ctrl+Shift+H", "Read this page's handwriting"],
+            ["[[ in any text", "Link to another page — tap the link to go there"],
+            ["Ctrl+Shift+L", "This page: what links here"],
             ["Ctrl+Shift+C · Ctrl+Shift+R", "Flashcards · review"],
             ["Ctrl+Shift+P", "Past papers"]
         ]},

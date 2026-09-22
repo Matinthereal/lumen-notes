@@ -35,7 +35,7 @@ Window {
     property bool browserVisible: false
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
     readonly property bool tablet: tabletMode.tablet
-    // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting).
+    // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting | page).
     property string leftPanel: "notebooks"
     property string rightPanel: ""
 
@@ -117,6 +117,12 @@ Window {
     function newSection() {
         const info = library.page(currentPageId); if (!info.id) return
         openPage(library.createPage(library.createSection(info.notebookId, "New section")))
+    }
+    // A [[link]] followed from any text. The id is the link; a page since deleted says so.
+    function followLink(url) {
+        const id = library.linkTarget(url)
+        if (id) openPage(id)
+        else toast.show("That page has been deleted", null)
     }
     function stepPage(delta) { const id = library.nextPageId(currentPageId, delta); if (id) openPage(id) }
     function toggleLeft(name) { leftPanel = leftPanel === name ? "" : name }
@@ -254,12 +260,14 @@ Window {
                 id: textLayer; anchors.fill: parent; canvas: canvas; pageId: root.currentPageId
                 visible: !root.pageTyped
                 recordingT: function() { return audio.recording ? audio.nowMs() : 0 }
+                onPageLinkActivated: (url) => root.followLink(url)
             }
             TypedPage {
                 id: typedPage
                 anchors { fill: parent; bottomMargin: (audioBar.visible ? audioBar.height : 0) + Ui.keyboardInset }
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
+                onPageLinkActivated: (url) => root.followLink(url)
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.
@@ -438,11 +446,12 @@ Window {
             // page itself, and never longer than the space it has.
             Text {
                 anchors { left: parent.left; top: parent.top; leftMargin: 14; topMargin: 14 }
-                width: Math.min(implicitWidth, page.width * 0.4)
+                // …and never under the bar centred at the top of the page.
+                width: Math.max(0, Math.min(implicitWidth, page.width * 0.4, (page.width - (root.pageTyped ? typedPage.barWidth : toolbar.width)) / 2 - 28))
                 elide: Text.ElideMiddle
                 text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
                 color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
-                visible: root.currentPageId > 0 && !canvas.inking
+                visible: root.currentPageId > 0 && !canvas.inking && width >= 60
             }
             Text {
                 anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
@@ -697,6 +706,12 @@ Window {
                 onToast: (m) => toast.show(m, null)
                 onToastAction: (m, label, fn) => toast.show(m, fn, label)
             }
+            PagePanel {
+                anchors.fill: parent; visible: root.rightPanel === "page"; pageId: root.currentPageId
+                onOpenPage: (pid) => root.openPage(pid)
+                onToast: (m) => toast.show(m, null)
+                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+            }
             OcrPanel {
                 anchors.fill: parent; visible: root.rightPanel === "handwriting"; canvas: canvas; pageId: root.currentPageId
                 onInsertText: (text, x, y) => {
@@ -829,6 +844,7 @@ Window {
     Shortcut { sequence: "Ctrl+\\"; onActivated: root.toggleLeft("notebooks") }
     Shortcut { sequence: "Ctrl+J"; onActivated: root.toggleRight("claude") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+H"; onActivated: root.toggleRight("handwriting") }
+    Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+L"; onActivated: root.toggleRight("page") }
     Shortcut { sequence: "Ctrl+Shift+C"; onActivated: root.toggleLeft("cards") }
     Shortcut { sequence: "Ctrl+Shift+P"; onActivated: root.toggleLeft("papers") }
     Shortcut { sequence: "Ctrl+Shift+R"; onActivated: root.reviewVisible = !root.reviewVisible }

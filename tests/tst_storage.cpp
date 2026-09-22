@@ -1,6 +1,7 @@
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QSignalSpy>
 #include "ink/inkdocument.h"
 #include "storage/database.h"
 #include "storage/journal.h"
@@ -131,17 +132,18 @@ private slots:
         QVERIFY(lib.search("\"unbalanced (syntax").isEmpty());
         // text blocks: CRUD, FTS, edit timeline
         TextBlocks tb(db, lib);
+        const int welcomeBlocks = tb.list(p1).size();          // the seeded welcome page already has its text
         const qint64 b1 = tb.create(p1, 100, 120, 380, 0, 0);
-        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), 1);
+        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), welcomeBlocks + 1);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set", 1500);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set, finished", 4200);
         QVERIFY(tb.block(b1).value("markdown").toString().endsWith("finished"));
         QCOMPARE(lib.search("suvat").size(), 1);
         QCOMPARE(lib.search("suvat")[0].toMap().value("refId").toLongLong(), b1);
-        QVERIFY(tb.list(p1)[0].toMap().value("editTimes").toString().contains("4200"));
+        QVERIFY(tb.list(p1).last().toMap().value("editTimes").toString().contains("4200"));
         tb.setGeometry(b1, 50, 60, 500); QCOMPARE(tb.block(b1).value("w").toDouble(), 500.0);
         QVERIFY(tb.pageText(p1).contains("Kinematics"));
-        tb.remove(b1); QCOMPARE(tb.list(p1).size(), 0); QCOMPARE(lib.search("suvat").size(), 0);
+        tb.remove(b1); QCOMPARE(tb.list(p1).size(), welcomeBlocks); QCOMPARE(lib.search("suvat").size(), 0);
         QCOMPARE(lib.page(lib.createPage(pure1)).value("style").toString(), QStringLiteral("lined"));
     }
     void truncatedBlobKeepsWhatDecodes() {
@@ -272,6 +274,80 @@ private slots:
         lib.rename("page", good, QStringLiteral("Mine"));
         lib.suggestTitle(good, QStringLiteral("Something else entirely"));
         QCOMPARE(lib.page(good).value("title").toString(), QStringLiteral("Mine"));   // never overrides yours
+    }
+    void pageLinksFollowTheIdAndSurviveARename() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QCOMPARE(ensureSchema(db), kSchemaVersion);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 sec = lib.createSection(lib.createNotebook("Physics", "#000"), "Mechanics");
+        const qint64 kin = lib.createPage(sec), forces = lib.createPage(sec);
+        lib.rename("page", kin, "Kinematics");
+        lib.rename("page", forces, "Forces");
+
+        // [[Title]] typed in full becomes a link by id, whatever the case you typed it in
+        const QString typed = QStringLiteral("See [[kinematics]] for *suvat*, and [[No such page]].");
+        const QString resolved = lib.resolveLinks(typed);
+        QCOMPARE(resolved, QStringLiteral("See [Kinematics](lumen://page/%1) for *suvat*, and [[No such page]].").arg(kin));
+        const qint64 block = tb.create(forces, 0, 0, 400);
+        QSignalSpy linked(&lib, &Library::linksChanged);
+        tb.setMarkdown(block, resolved);
+        QCOMPARE(linked.size(), 1);
+        tb.setMarkdown(block, resolved + " ");                  // same links: nothing to re-index
+        QCOMPARE(linked.size(), 1);
+
+        QVariantList back = lib.backlinks(kin);
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(back[0].toMap().value("id").toLongLong(), forces);
+        QCOMPARE(back[0].toMap().value("context").toString(), QStringLiteral("See Kinematics for suvat, and [[No such page]]."));
+        QVERIFY(lib.backlinks(forces).isEmpty());
+        QCOMPARE(lib.linkTarget(QStringLiteral("lumen://page/%1").arg(kin)), kin);
+        QCOMPARE(lib.linkTarget(QStringLiteral("lumen://page/987654")), qint64(0));
+        QCOMPARE(lib.linkTarget(QStringLiteral("https://example.org")), qint64(0));
+
+        // Rename the target: the link still points at it, and the linking text now says the new name.
+        lib.rename("page", kin, "Motion [1D]");
+        const QString after = tb.block(block).value("markdown").toString();
+        QVERIFY2(after.contains(QStringLiteral("[Motion \\[1D\\]](lumen://page/%1)").arg(kin)), qPrintable(after));
+        QCOMPARE(lib.backlinks(kin).size(), 1);
+        QCOMPARE(lib.search("motion").size(), 1);
+        QCOMPARE(lib.resolveLinks(QStringLiteral("[Old name](lumen://page/%1)").arg(kin)), QStringLiteral("[Motion \\[1D\\]](lumen://page/%1)").arg(kin));
+
+        // Autocomplete: titled pages matching the words, never the page you are on
+        const QVariantList some = lib.linkCandidates("mot", forces);
+        QCOMPARE(some.size(), 1);
+        QCOMPARE(some[0].toMap().value("title").toString(), QStringLiteral("Motion [1D]"));
+        for (const QVariant &v : lib.linkCandidates("", kin)) QVERIFY(v.toMap().value("id").toLongLong() != kin);
+        QCOMPARE(lib.pageByTitle("FORCES"), forces);
+
+        // A copy of the linking page links too; a deleted one stops counting.
+        const qint64 copy = lib.duplicatePage(forces);
+        QCOMPARE(lib.backlinks(kin).size(), 2);
+        lib.remove("page", copy);
+        QCOMPARE(lib.backlinks(kin).size(), 1);
+        tb.remove(block);
+        QVERIFY(lib.backlinks(kin).isEmpty());
+    }
+    void schemaSixIndexesLinksAlreadyInText() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        const QString path = dir.path() + "/t.db";
+        qint64 a = 0, b = 0;
+        {
+            Database db; QVERIFY(db.open(path)); QCOMPARE(ensureSchema(db), kSchemaVersion);
+            Library lib(db);
+            const qint64 sec = lib.createSection(lib.createNotebook("N", "#000"), "S");
+            a = lib.createPage(sec); b = lib.createPage(sec);
+            // what a version-5 file looks like: the link is in the text, the index does not exist yet
+            QVERIFY(db.exec(QStringLiteral("INSERT INTO text_block(page_id, x, y, w, markdown) VALUES (%1, 0, 0, 400, 'go to [A](lumen://page/%2) now')").arg(b).arg(a)));
+            QVERIFY(db.exec("DROP TABLE page_link"));
+            QVERIFY(db.exec("UPDATE schema_version SET version=5"));
+        }
+        Database db; QVERIFY(db.open(path));
+        QCOMPARE(ensureSchema(db), 6);
+        Library lib(db);
+        const QVariantList back = lib.backlinks(a);
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(back[0].toMap().value("id").toLongLong(), b);
     }
 };
 QTEST_GUILESS_MAIN(TstStorage)

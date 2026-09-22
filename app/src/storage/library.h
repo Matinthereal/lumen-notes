@@ -50,6 +50,18 @@ public:
     Q_INVOKABLE qint64 duplicatePage(qint64 pageId);                 // ink, text, pictures and PDF page with it
     Q_INVOKABLE void movePageToSection(qint64 pageId, qint64 sectionId);
 
+    // [[page]] links. In text a link is [Title](lumen://page/<id>): the id is what it follows, so a
+    // rename never breaks it, and the label is refreshed to the current title whenever it is shown.
+    void syncLinks(qint64 blockId, qint64 pageId, const QString &markdown);   // re-index one block's links
+    Q_INVOKABLE QVariantList backlinks(qint64 pageId) const;                  // pages whose text links here
+    Q_INVOKABLE QVariantList linkCandidates(const QString &query, qint64 excludePageId = 0, int limit = 8) const;
+    Q_INVOKABLE QString resolveLinks(const QString &markdown) const;          // fresh labels; [[Title]] → a link
+    Q_INVOKABLE qint64 linkTarget(const QString &url) const;                  // 0 unless it names a live page
+    Q_INVOKABLE qint64 pageByTitle(const QString &title) const;
+    Q_INVOKABLE QString displayTitle(qint64 pageId) const;                    // title without the auto mark
+    static QString pageUrl(qint64 pageId) { return QStringLiteral("lumen://page/%1").arg(pageId); }
+    static QString linkMarkdown(const QString &title, qint64 pageId);
+
     Q_INVOKABLE qint64 firstPageId() const;
     Q_INVOKABLE qint64 nextPageId(qint64 pageId, int delta) const;   // ±1 within the section
     Q_INVOKABLE QString setting(const QString &key, const QString &fallback = {}) const;
@@ -59,6 +71,7 @@ public:
 
 signals:
     void changed();
+    void linksChanged();
 
 private:
     qint64 now() const;

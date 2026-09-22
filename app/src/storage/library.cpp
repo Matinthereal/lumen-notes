@@ -5,6 +5,15 @@
 #include <algorithm>
 #include "paths.h"
 #include <QRegularExpression>
+#include <QSet>
+#include <tuple>
+
+// A [[page]] link as stored in Markdown: [label](lumen://page/<id>), label escapes allowed.
+static const QRegularExpression &storedLink()
+{
+    static const QRegularExpression re(QStringLiteral("\\[((?:[^\\]\\\\\\n]|\\\\.)*)\\]\\(lumen://page/(\\d+)\\)"));
+    return re;
+}
 
 Library::Library(Database &db, QObject *parent) : QObject(parent), m_db(db) {}
 
@@ -124,6 +133,25 @@ void Library::rename(const QString &kind, qint64 id, const QString &name)
     QString clean = name; clean.remove(QChar(0x200b));
     Database::Query q(m_db, QStringLiteral("UPDATE %1 SET %2=? WHERE id=?").arg(tableFor(kind), col));
     q.bind(1, clean).bind(2, id); q.run();
+    if (kind == QLatin1String("page")) {
+        // Links follow the id, so they already work; this only keeps the words in the linking text
+        // (and what search finds there) in step with the new name.
+        QVector<std::tuple<qint64, qint64, QString>> sources;
+        {
+            Database::Query l(m_db, "SELECT DISTINCT b.id, b.page_id, b.markdown FROM page_link k JOIN text_block b ON b.id=k.block_id WHERE k.dst_page=?");
+            l.bind(1, id);
+            while (l.step()) sources.append({l.i64(0), l.i64(1), l.text(2)});
+        }
+        for (const auto &[block, page, markdown] : sources) {
+            const QString fresh = resolveLinks(markdown);
+            if (fresh == markdown) continue;
+            Database::Query u(m_db, "UPDATE text_block SET markdown=? WHERE id=?");
+            u.bind(1, fresh).bind(2, block); u.run();
+            indexText(QStringLiteral("text"), page, block, fresh);
+            suggestTitle(page, fresh);              // only ever touches a title the app chose
+        }
+        if (!sources.isEmpty()) emit linksChanged();
+    }
     emit changed();
 }
 void Library::tidyAutomaticTitles()
@@ -154,6 +182,7 @@ void Library::suggestTitle(qint64 pageId, const QString &text)
     QString line;
     for (const QString &l : text.split('\n')) {
         QString t = l.trimmed();
+        t.replace(storedLink(), QStringLiteral("\\1"));     // a [[link]] reads as its words
         t.remove(QRegularExpression("^#+\\s*"));
         t.remove(QRegularExpression("[*_`$]"));
         t.replace(QRegularExpression("\\s+"), QStringLiteral(" "));
@@ -374,6 +403,13 @@ qint64 Library::duplicatePage(qint64 pageId)
         q.bind(1, copy).bind(2, pageId);
         q.run();
     }
+    QVector<QPair<qint64, QString>> copiedText;
+    {
+        Database::Query q(m_db, "SELECT id, markdown FROM text_block WHERE page_id=?");
+        q.bind(1, copy);
+        while (q.step()) copiedText.append({q.i64(0), q.text(1)});
+    }
+    for (const auto &[block, markdown] : copiedText) syncLinks(block, copy, markdown);
     emit changed();
     return copy;
 }
@@ -404,6 +440,153 @@ int Library::purgeDeleted(int olderThanDays)
     }
     if (n) emit changed();
     return n;
+}
+
+// ---- [[page]] links
+
+
+QString Library::linkMarkdown(const QString &title, qint64 pageId)
+{
+    QString label = title;
+    label.remove(QChar(0x200b));
+    for (const QChar c : {QChar('\\'), QChar('['), QChar(']'), QChar('*'), QChar('_'), QChar('`')})
+        label.replace(c, QStringLiteral("\\") + c);
+    return QStringLiteral("[%1](%2)").arg(label.trimmed().isEmpty() ? QStringLiteral("Untitled page") : label, pageUrl(pageId));
+}
+
+QString Library::displayTitle(qint64 pageId) const
+{
+    Database::Query q(m_db, "SELECT title FROM page WHERE id=?");
+    q.bind(1, pageId);
+    if (!q.step()) return {};
+    QString t = q.text(0);
+    t.remove(QChar(0x200b));
+    return t;
+}
+
+qint64 Library::pageByTitle(const QString &title) const
+{
+    QString want = title.trimmed();
+    want.remove(QChar(0x200b));
+    if (want.isEmpty()) return 0;
+    Database::Query q(m_db, "SELECT p.id FROM page p JOIN section s ON s.id=p.section_id JOIN notebook n ON n.id=s.notebook_id"
+                            " WHERE replace(p.title, char(8203), '')=? COLLATE NOCASE AND p.deleted_at IS NULL AND s.deleted_at IS NULL"
+                            " AND n.deleted_at IS NULL ORDER BY p.modified DESC, p.id DESC LIMIT 1");
+    q.bind(1, want);
+    return q.step() ? q.i64(0) : 0;
+}
+
+qint64 Library::linkTarget(const QString &url) const
+{
+    static const QRegularExpression re(QStringLiteral("^lumen://page/(\\d+)$"));
+    const auto m = re.match(url.trimmed());
+    if (!m.hasMatch()) return 0;
+    const qint64 id = m.captured(1).toLongLong();
+    return page(id).isEmpty() ? 0 : id;
+}
+
+QString Library::resolveLinks(const QString &markdown) const
+{
+    if (!markdown.contains(QLatin1String("[["))  && !markdown.contains(QLatin1String("lumen://page/"))) return markdown;
+    QString out;
+    qsizetype at = 0;
+    for (auto it = storedLink().globalMatch(markdown); it.hasNext();) {
+        const auto m = it.next();
+        out += markdown.mid(at, m.capturedStart() - at);
+        const qint64 id = m.captured(2).toLongLong();
+        const QString title = displayTitle(id);
+        out += title.isEmpty() && page(id).isEmpty() ? m.captured(0) : linkMarkdown(title, id);   // a vanished page keeps its old words
+        at = m.capturedEnd();
+    }
+    out += markdown.mid(at);
+    // [[Title]] typed out in full becomes a link when a page of that name exists.
+    static const QRegularExpression wiki(QStringLiteral("\\[\\[([^\\[\\]\\n]+)\\]\\]"));
+    QString done;
+    at = 0;
+    for (auto it = wiki.globalMatch(out); it.hasNext();) {
+        const auto m = it.next();
+        done += out.mid(at, m.capturedStart() - at);
+        const qint64 id = pageByTitle(m.captured(1));
+        done += id ? linkMarkdown(displayTitle(id), id) : m.captured(0);
+        at = m.capturedEnd();
+    }
+    done += out.mid(at);
+    return done;
+}
+
+void Library::syncLinks(qint64 blockId, qint64 pageId, const QString &markdown)
+{
+    QSet<qint64> want;
+    for (auto it = storedLink().globalMatch(markdown); it.hasNext();) {
+        const qint64 id = it.next().captured(2).toLongLong();
+        if (id != pageId) want.insert(id);
+    }
+    QSet<qint64> have;
+    {
+        Database::Query q(m_db, "SELECT dst_page FROM page_link WHERE block_id=?");
+        q.bind(1, blockId);
+        while (q.step()) have.insert(q.i64(0));
+    }
+    if (want == have) return;
+    { Database::Query d(m_db, "DELETE FROM page_link WHERE block_id=?"); d.bind(1, blockId); d.run(); }
+    Database::Query ins(m_db, "INSERT OR IGNORE INTO page_link(block_id, src_page, dst_page) SELECT ?, ?, id FROM page WHERE id=?");
+    for (qint64 id : std::as_const(want)) { ins.reset(); ins.bind(1, blockId).bind(2, pageId).bind(3, id); ins.run(); }
+    emit linksChanged();
+}
+
+// The line of the linking text that holds the link, as plain words: what you would want to see in
+// a "Linked from" list to remember why the two pages are connected.
+static QString linkContext(const QString &markdown, qint64 dst)
+{
+    const QString url = Library::pageUrl(dst) + QLatin1Char(')');
+    for (QString line : markdown.split(QLatin1Char('\n'))) {
+        if (!line.contains(url)) continue;
+        line.replace(storedLink(), QStringLiteral("\\1"));
+        line.remove(QRegularExpression(QStringLiteral("^\\s*(#+|[-*+]|\\d+[.)])\\s+(\\[[ xX]\\]\\s+)?")));
+        line.remove(QRegularExpression(QStringLiteral("[*_`]|\\\\(?=[\\[\\]*_`\\\\])")));
+        line = line.simplified();
+        return line.size() > 140 ? line.left(139) + QChar(0x2026) : line;
+    }
+    return {};
+}
+
+QVariantList Library::backlinks(qint64 pageId) const
+{
+    QVariantList out;
+    QSet<qint64> seen;
+    Database::Query q(m_db, "SELECT p.id, p.title, s.name, n.name, n.colour, b.markdown FROM page_link k JOIN text_block b ON b.id=k.block_id"
+                            " JOIN page p ON p.id=k.src_page JOIN section s ON s.id=p.section_id JOIN notebook n ON n.id=s.notebook_id"
+                            " WHERE k.dst_page=? AND p.deleted_at IS NULL AND s.deleted_at IS NULL AND n.deleted_at IS NULL"
+                            " ORDER BY p.modified DESC, p.id, b.sort, b.id");
+    q.bind(1, pageId);
+    while (q.step()) {
+        const qint64 id = q.i64(0);
+        if (seen.contains(id)) continue;
+        seen.insert(id);
+        QString title = q.text(1);
+        title.remove(QChar(0x200b));
+        out.append(QVariantMap{{"id", id}, {"title", title}, {"sectionName", q.text(2)}, {"notebookName", q.text(3)},
+                               {"colour", q.text(4)}, {"context", linkContext(q.text(5), pageId)}});
+    }
+    return out;
+}
+
+QVariantList Library::linkCandidates(const QString &query, qint64 excludePageId, int limit) const
+{
+    QVariantList out;
+    const QString needle = query.trimmed();
+    // Titled pages only: a link is named after its page. Prefix matches first, then the pages you
+    // opened most recently.
+    Database::Query q(m_db, "SELECT p.id, replace(p.title, char(8203), '') AS t, s.name, n.name, n.colour FROM page p"
+                            " JOIN section s ON s.id=p.section_id JOIN notebook n ON n.id=s.notebook_id"
+                            " LEFT JOIN setting o ON o.key='opened.'||p.id"
+                            " WHERE p.deleted_at IS NULL AND s.deleted_at IS NULL AND n.deleted_at IS NULL AND p.id<>?"
+                            " AND length(t) > 0 AND (?='' OR instr(lower(t), lower(?)) > 0)"
+                            " ORDER BY (instr(lower(t), lower(?)) = 1) DESC, CAST(COALESCE(o.value,'0') AS INTEGER) DESC, p.modified DESC LIMIT ?");
+    q.bind(1, excludePageId).bind(2, needle).bind(3, needle).bind(4, needle).bind(5, limit);
+    while (q.step())
+        out.append(QVariantMap{{"id", q.i64(0)}, {"title", q.text(1)}, {"sectionName", q.text(2)}, {"notebookName", q.text(3)}, {"colour", q.text(4)}});
+    return out;
 }
 
 qint64 Library::firstPageId() const

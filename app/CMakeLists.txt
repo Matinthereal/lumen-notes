@@ -94,6 +94,9 @@ qt_add_qml_module(lumen
         qml/Onboarding.qml
         qml/ProbePage.qml
         qml/Readout.qml
+        qml/LinkPicker.qml
+        qml/BacklinkRow.qml
+        qml/PagePanel.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp

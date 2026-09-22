@@ -51,6 +51,7 @@ void TextBlocks::setMarkdown(qint64 id, const QString &markdown, qint64 tMs)
     q.run();
     Database::Query t(m_db, "UPDATE page SET modified=? WHERE id=?"); t.bind(1, QDateTime::currentSecsSinceEpoch()).bind(2, b.value("pageId").toLongLong()); t.run();
     m_lib.indexText("text", b.value("pageId").toLongLong(), id, markdown);
+    m_lib.syncLinks(id, b.value("pageId").toLongLong(), markdown);
     m_lib.suggestTitle(b.value("pageId").toLongLong(), markdown);
 }
 
@@ -68,6 +69,7 @@ void TextBlocks::remove(qint64 id)
     const QVariantMap b = block(id);
     if (b.isEmpty()) return;
     m_lib.unindex("text", b.value("pageId").toLongLong(), id);
+    m_lib.syncLinks(id, b.value("pageId").toLongLong(), QString());
     Database::Query q(m_db, "DELETE FROM text_block WHERE id=?"); q.bind(1, id); q.run();
     emit changed(b.value("pageId").toLongLong());
 }

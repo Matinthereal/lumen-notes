@@ -296,6 +296,100 @@ QQuickItem *sheetAction(QQuickWindow *w, const QString &label)
     return nullptr;
 }
 
+// LUMEN_UITEST_SHOTS=<dir>: keep a picture of the window at the moments worth looking at.
+void shot(QQuickWindow *w, const QString &name)
+{
+    const QString dir = qEnvironmentVariable("LUMEN_UITEST_SHOTS");
+    if (dir.isEmpty()) return;
+    QDir().mkpath(dir);
+    spin(250);
+    w->grabWindow().save(dir + QLatin1Char('/') + name + QStringLiteral(".png"));
+}
+
+// The page, notebook and navigation features: links, tags, split view, presentation and the rest.
+// Also runnable on its own with LUMEN_UITEST_ONLY=pages.
+void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
+{
+    const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    QObject *library = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root))
+        library = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
+
+    // ---- 15. [[page]] links: typing [[ offers pages, the pick is a real link, the target lists the
+    //          source under "Linked from", both directions can be followed, and a rename keeps it.
+    if (library) {
+        QObject *textBlocks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+        spin(400);
+        const qint64 target = currentPage();
+        QMetaObject::invokeMethod(library, "rename", Q_ARG(QString, QStringLiteral("page")), Q_ARG(qlonglong, target), Q_ARG(QString, QStringLiteral("Uitest target")));
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+        spin(400);
+        const qint64 source = currentPage();
+        QQuickItem *editor = findOne(win, QStringLiteral("typedEditor"));
+        if (editor && source != target) {
+            win->requestActivate();
+            waitFor([&] { return win->isActive(); }, 1500);
+            editor->forceActiveFocus();
+            spin(100);
+            typeKeys(QStringLiteral("see [[uitest ta"));
+            spin(300);
+            QList<QQuickItem *> rows;
+            for (QQuickItem *row : findAll(win, QStringLiteral("linkPickerRow"))) if (row->isVisible()) rows << row;
+            r.check("typing [[ offers pages to link to", !rows.isEmpty());
+            shot(win, QStringLiteral("1-links-picker"));
+            chord(win, Qt::Key_Return, Qt::NoModifier);
+            spin(1000);                                   // past the autosave delay
+            QString saved;
+            if (textBlocks) QMetaObject::invokeMethod(textBlocks, "pageText", Q_RETURN_ARG(QString, saved), Q_ARG(qint64, source));
+            const QString url = QStringLiteral("lumen://page/%1").arg(target);
+            r.check("the pick is saved as a link by page id", saved.contains(QStringLiteral("[Uitest target](") + url + QLatin1Char(')')), saved.left(200));
+            QVariantList back;
+            QMetaObject::invokeMethod(library, "backlinks", Q_RETURN_ARG(QVariantList, back), Q_ARG(qint64, target));
+            r.check("the target knows what links to it", back.size() == 1 && back[0].toMap().value(QStringLiteral("id")).toLongLong() == source);
+
+            // A tap on the link's words opens the page it names.
+            QRectF at;
+            QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, at), Q_ARG(int, 6));
+            tap(win, nullptr, Qt::LeftButton, editor->mapToScene(at.center()));
+            waitFor([&] { return currentPage() == target; }, 2000);
+            r.check("tapping a link follows it", currentPage() == target, QStringLiteral("page %1, wanted %2").arg(currentPage()).arg(target));
+            spin(300);
+            QQuickItem *row = findOne(win, QStringLiteral("backlinkRow"));
+            r.check("the linked page shows where it is linked from", row && row->isVisible());
+            root->setProperty("rightPanel", QStringLiteral("page"));
+            shot(win, QStringLiteral("1-links-backlinks"));
+            root->setProperty("rightPanel", QString());
+            spin(150);
+            row = findOne(win, QStringLiteral("backlinkRow"));
+            if (row && row->isVisible()) {
+                tap(win, row);
+                waitFor([&] { return currentPage() == source; }, 2000);
+                r.check("and that list leads back", currentPage() == source);
+            }
+            // Renaming the target keeps the link, and the linking text says the new name.
+            QMetaObject::invokeMethod(library, "rename", Q_ARG(QString, QStringLiteral("page")), Q_ARG(qlonglong, target), Q_ARG(QString, QStringLiteral("Renamed target")));
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, target));
+            spin(200);
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, source));
+            spin(300);
+            QString reloaded;
+            if (QQuickItem *tp = findOne(win, QStringLiteral("typedPage")))
+                if (QObject *fmtObj = tp->property("formatter").value<QObject *>())
+                    QMetaObject::invokeMethod(fmtObj, "markdown", Q_RETURN_ARG(QString, reloaded));
+            shot(win, QStringLiteral("1-links-rendered"));
+            r.check("a renamed page's links keep working and show the new name", reloaded.contains(QStringLiteral("[Renamed target](") + url + QLatin1Char(')')), reloaded.left(200));
+        } else {
+            r.check("found a typed editor for the link test", false);
+        }
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+    }
+
+}
+
 } // namespace
 
 int uitest::run(QQuickWindow *win, QObject *root)
@@ -314,6 +408,17 @@ int uitest::run(QQuickWindow *win, QObject *root)
     spin(400);
 
     const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("pages")) {
+        waitFor([&] { return currentPage() > 0; }, 3000);
+        if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        pageFeatures(win, root, r);
+        r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
+                g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
+        qInstallMessageHandler(g_previous);
+        qInfo("UITEST %s (%d failure%s)", r.failures ? "FAILED" : "OK", r.failures, r.failures == 1 ? "" : "s");
+        return r.failures;
+    }
 
     // Start is either the last page reopened, or — after a deliberate close last time — the empty
     // state. Both are correct; anything else is not.
@@ -1208,6 +1313,8 @@ int uitest::run(QQuickWindow *win, QObject *root)
         spin(200);
     }
 
+    pageFeatures(win, root, r);
+
     // ---- 13. Tap every control there is, in both postures.
     {
         const int windowsBefore = QGuiApplication::topLevelWindows().size();
@@ -1223,7 +1330,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
             // Panels have to be open for their controls to exist at all.
             for (const QString &left : {QStringLiteral("notebooks"), QStringLiteral("cards"), QStringLiteral("papers")}) {
-                for (const QString &right : {QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting")}) {
+                for (const QString &right : {QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting"), QStringLiteral("page")}) {
                     root->setProperty("leftPanel", left);
                     root->setProperty("rightPanel", right);
                     spin(220);
