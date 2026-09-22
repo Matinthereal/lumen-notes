@@ -2,6 +2,11 @@
 feeding 16 kHz PCM to faster-whisper for live transcription; re-transcribes the finished file with a
 larger model; plays back through mpv's JSON IPC so seek/pause are exact. Nothing here blocks the app.
 
+Linux/macOS capture and device listing go through pactl + ffmpeg's pulse input, unchanged. Windows
+has neither, so the real-microphone path there goes through sounddevice/PortAudio instead (see the
+_Windows* helpers below); ffmpeg is still what writes the Opus file and what the tests feed with
+lavfi/file inputs via `input_args` on every platform.
+
 Notifications to the app (no id): level {rms}, segments {recording, pass, segments:[{t0,t1,text}]},
 status {text}, playback {position_ms, playing}.
 """
@@ -11,6 +16,7 @@ import collections
 import json
 import math
 import os
+import queue
 import shutil
 import socket
 import subprocess
@@ -28,6 +34,7 @@ SAMPLE_RATE = 16000
 _send = None          # set by serve_with_notify
 _state: dict = {"rec": None, "player": None, "monitor": None, "models": {}, "backend": "cpu", "speed": 1.0}
 _model_lock = threading.Lock()
+_WINDOWS = sys.platform == "win32"
 
 
 # ---------------------------------------------------------------- models
@@ -54,6 +61,8 @@ def prepare(models_dir: str, live_model: str = "small.en", **_: object) -> dict:
 def sources(**_: object) -> dict:
     """Microphones, best first. A source whose every port is 'not available' (an empty jack) only
     delivers a DC pop — that is how the maker's first recordings ended up silent."""
+    if _WINDOWS:
+        return _sources_windows()
     out, default = [], ""
     try:
         system_default = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, timeout=5).stdout.strip()
@@ -80,6 +89,8 @@ def sources(**_: object) -> dict:
 
 def check(source: str = "default", seconds: float = 1.2, input_args: Optional[list] = None, **_: object) -> dict:
     """Capture briefly and report the level after DC removal: is this microphone alive?"""
+    if _WINDOWS and input_args is None:
+        return _check_windows(source, seconds)
     inp = input_args or ["-f", "pulse", "-i", source]
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", *inp, "-t", str(seconds), "-af", "highpass=f=100",
            "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"]
@@ -102,11 +113,169 @@ def check(source: str = "default", seconds: float = 1.2, input_args: Optional[li
     return {"ok": db >= -70, "verdict": verdict, "rms_db": round(db, 1)}
 
 
+# ---------------------------------------------------------------- Windows capture (PortAudio)
+#
+# ffmpeg has no pulse input on Windows and no portable equivalent worth scripting (dshow needs
+# device names ffmpeg and PortAudio don't agree on), so the real-microphone path there is built on
+# sounddevice/PortAudio instead: it lists input devices and captures raw PCM directly. ffmpeg is
+# still used, but only downstream, to encode that PCM into the Opus file -- the same job it does on
+# Linux, just fed from a pipe instead of from pulse.
+
+def _resolve_windows_device(source: str):
+    """sources_windows() hands out the PortAudio device index as `name`; accept that, a device
+    name substring, or "default"/"" for whatever PortAudio calls the default input."""
+    if not source or source == "default":
+        return None
+    try:
+        return int(source)
+    except ValueError:
+        return source
+
+
+def _sources_windows() -> dict:
+    try:
+        import sounddevice as sd
+        devices = sd.query_devices()
+        try:
+            default_idx = sd.default.device[0]
+        except Exception:
+            default_idx = None
+        out = []
+        for idx, d in enumerate(devices):
+            if d.get("max_input_channels", 0) <= 0:
+                continue
+            name = d.get("name") or f"input {idx}"
+            internal = any(k in name.lower() for k in ("internal", "built-in", "realtek", "laptop"))
+            is_default = idx == default_idx
+            score = (1 if internal else 0) + (0.5 if is_default else 0)
+            out.append({"name": str(idx), "description": name, "available": True, "internal": internal, "default": False, "score": score})
+        out.sort(key=lambda x: -x["score"])
+        if out:
+            out[0]["default"] = True
+        return {"sources": out, "default": out[0]["name"] if out else "default"}
+    except Exception as exc:   # PortAudio missing or no input devices: fall back to "default"
+        return {"sources": [{"name": "default", "description": f"Default microphone ({exc.__class__.__name__})",
+                              "available": True, "internal": True, "default": True, "score": 1}], "default": "default"}
+
+
+def _check_windows(source: str, seconds: float) -> dict:
+    try:
+        import sounddevice as sd
+        device = _resolve_windows_device(source)
+        frames = max(1, int(seconds * SAMPLE_RATE))
+        rec = sd.rec(frames, samplerate=SAMPLE_RATE, channels=1, dtype="int16", device=device)
+        sd.wait()
+    except Exception as exc:
+        return {"ok": False, "verdict": f"no data from this microphone: {exc.__class__.__name__}: {exc}"[:150], "rms_db": -99.0}
+    pcm = rec.reshape(-1).astype(np.float32) / 32768.0
+    if len(pcm) < SAMPLE_RATE // 4:
+        return {"ok": False, "verdict": "no data from this microphone", "rms_db": -99.0}
+    tail = pcm[len(pcm) // 3:]                        # skip the opening pop
+    tail = tail - float(np.mean(tail))                # DC removal stands in for ffmpeg's highpass=f=100
+    rms = float(np.sqrt(np.mean(tail * tail))) or 1e-9
+    db = 20 * math.log10(rms)
+    if db < -70:
+        verdict = "silent — this input carries no sound"
+    elif db < -55:
+        verdict = "very quiet — check the microphone or speak closer"
+    else:
+        verdict = "alive"
+    return {"ok": db >= -70, "verdict": verdict, "rms_db": round(db, 1)}
+
+
+class _WindowsCapture:
+    """Stands in for the ffmpeg Popen that Monitor/Recording use everywhere else: raw 16 kHz mono
+    PCM from a Windows input device via sounddevice, exposed the same way -- .stdout.read(n),
+    .stderr, .send_signal()/.wait()/.kill(). With `out_path` given (Recording), the same audio is
+    also fed to an ffmpeg encoder that writes the Opus file, the other job the Linux ffmpeg does."""
+
+    def __init__(self, source: str, out_path: Optional[str] = None):
+        import sounddevice as sd
+        device = _resolve_windows_device(source)
+        r, w = os.pipe()
+        self._w = w
+        self.stdout = os.fdopen(r, "rb")
+        self._encoder = None
+        self.stderr: list = []
+        if out_path is not None:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                   "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-i", "pipe:0",
+                   "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "24k", "-f", "ogg", "-y", out_path]
+            self._encoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            self.stderr = self._encoder.stderr
+        # PortAudio's callback runs on its own realtime thread and must return fast, so it only
+        # queues bytes; a separate thread does the (potentially blocking) pipe/ffmpeg writes.
+        self._q: queue.Queue[Optional[bytes]] = queue.Queue()
+        threading.Thread(target=self._feed, daemon=True).start()
+
+        def callback(indata, frames, time_info, status):
+            try:
+                self._q.put_nowait(bytes(indata))
+            except queue.Full:
+                pass
+        self._stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", device=device,
+                                       callback=callback, blocksize=SAMPLE_RATE // 10)
+        self._stream.start()
+
+    def _feed(self):
+        while True:
+            data = self._q.get()
+            if data is None:
+                return
+            try:
+                os.write(self._w, data)
+            except OSError:
+                pass
+            if self._encoder is not None:
+                try:
+                    self._encoder.stdin.write(data)
+                except (BrokenPipeError, OSError):
+                    pass
+
+    def _stop_stream(self):
+        try:
+            self._stream.stop()
+            self._stream.close()
+        except Exception:
+            pass
+        self._q.put(None)
+        try:
+            os.close(self._w)
+        except OSError:
+            pass
+
+    def send_signal(self, _sig=None):
+        """The graceful stop: Recording.stop() sends SIGINT on Linux to end pulse capture cleanly;
+        here it just means stop the stream and close the encoder's stdin so ffmpeg finalises the
+        Opus file itself, same as reaching end-of-input does on Linux."""
+        self._stop_stream()
+        if self._encoder is not None:
+            try:
+                self._encoder.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+    def wait(self, timeout=None):
+        if self._encoder is not None:
+            self._encoder.wait(timeout=timeout)
+
+    def kill(self):
+        self._stop_stream()
+        if self._encoder is not None:
+            try:
+                self._encoder.kill()
+            except Exception:
+                pass
+
+
 class Monitor:
     """Mic check: levels from a source without recording anything (stops when a recording starts)."""
     def __init__(self, source: str, notify):
-        self.proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "pulse", "-i", source,
-                                      "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if _WINDOWS:
+            self.proc = _WindowsCapture(source)
+        else:
+            self.proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "pulse", "-i", source,
+                                          "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.notify = notify
         self.stop_flag = threading.Event()
         threading.Thread(target=self._read, daemon=True).start()
@@ -166,12 +335,15 @@ class Recording:
         self.done = threading.Event()
         self.segments: list[dict] = []
         self.lock = threading.Lock()          # before any thread starts: the transcriber takes it on its first line
-        inp = input_args or ["-f", "pulse", "-i", source]
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", *inp,
-               "-map", "0:a", "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "24k", "-f", "ogg", "-y", out_path,
-               "-map", "0:a", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.err_tail = collections.deque(maxlen=20)
+        if _WINDOWS and input_args is None:
+            self.proc = _WindowsCapture(source, out_path)
+        else:
+            inp = input_args or ["-f", "pulse", "-i", source]
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", *inp,
+                   "-map", "0:a", "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "24k", "-f", "ogg", "-y", out_path,
+                   "-map", "0:a", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1"]
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         threading.Thread(target=self._drain_stderr, daemon=True).start()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
@@ -355,20 +527,31 @@ def _similarity(a: str, b: str) -> float:
 
 class Player:
     def __init__(self, notify):
-        # mpv's JSON IPC is a Unix socket on Linux/macOS; this worker doesn't yet speak the
-        # Windows named-pipe form of --input-ipc-server, so playback stays Linux/macOS-only.
-        self.sock_path = os.path.join(tempfile.gettempdir(), f"lumen-mpv-{os.getpid()}.sock")
+        # mpv's JSON IPC is a Unix socket on Linux/macOS and a named pipe on Windows (mpv wants the
+        # full \\.\pipe\... path, unlike QLocalServer's bare name). rpc.connect() already speaks
+        # both ends of that same distinction for the app's own IPC, so it's reused here rather than
+        # duplicating the AF_UNIX/named-pipe branch.
+        if _WINDOWS:
+            self.sock_path = r"\\.\pipe\lumen-mpv-%d" % os.getpid()
+        else:
+            self.sock_path = os.path.join(tempfile.gettempdir(), f"lumen-mpv-{os.getpid()}.sock")
         ao = os.environ.get("LUMEN_MPV_AO")
         extra = [f"--ao={ao}"] if ao else []
         self.proc = subprocess.Popen(["mpv", "--no-video", "--really-quiet", "--idle=yes", "--keep-open=yes", *extra, f"--input-ipc-server={self.sock_path}"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(50):
-            if os.path.exists(self.sock_path):
+        from .rpc import connect as _ipc_connect
+        self.sock = None
+        last_exc: Optional[Exception] = None
+        for _ in range(50):                     # mpv needs a moment to open its IPC endpoint
+            try:
+                self.sock = _ipc_connect(self.sock_path)
                 break
-            time.sleep(0.05)
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(self.sock_path)
-        self.sock.settimeout(2.0)
+            except OSError as exc:
+                last_exc = exc
+                time.sleep(0.05)
+        if self.sock is None:
+            raise last_exc or OSError(f"mpv IPC endpoint never appeared: {self.sock_path}")
+        self.sock.settimeout(2.0)               # no-op on Windows' named-pipe transport -- see rpc.py
         self.buf = b""
         self.notify = notify
         self.file = None

@@ -12,3 +12,4 @@ matplotlib
 openvino-genai
 sentencepiece
 protobuf
+sounddevice   # Windows mic listing + capture (audio.py); PortAudio wheels cover every platform, harmless elsewhere

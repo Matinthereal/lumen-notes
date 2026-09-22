@@ -32,6 +32,11 @@ class _PipeTransport:
     def close(self) -> None:
         self._f.close()
 
+    def settimeout(self, _timeout: float) -> None:
+        # A synchronous named-pipe handle has no per-call read timeout without overlapped I/O;
+        # callers that set one (e.g. audio.py's mpv IPC) just get a blocking read instead.
+        pass
+
 
 def connect(path: str):
     """Connect to the app's IPC endpoint. QLocalServer::listen(name) opens a Unix socket at `name`
