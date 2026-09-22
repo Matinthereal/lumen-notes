@@ -131,17 +131,18 @@ private slots:
         QVERIFY(lib.search("\"unbalanced (syntax").isEmpty());
         // text blocks: CRUD, FTS, edit timeline
         TextBlocks tb(db, lib);
+        const int seeded = tb.list(p1).size();              // the welcome page is typed, so it starts with a block
         const qint64 b1 = tb.create(p1, 100, 120, 380, 0, 0);
-        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), 1);
+        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), seeded + 1);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set", 1500);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set, finished", 4200);
         QVERIFY(tb.block(b1).value("markdown").toString().endsWith("finished"));
         QCOMPARE(lib.search("suvat").size(), 1);
         QCOMPARE(lib.search("suvat")[0].toMap().value("refId").toLongLong(), b1);
-        QVERIFY(tb.list(p1)[0].toMap().value("editTimes").toString().contains("4200"));
+        QVERIFY(tb.list(p1)[seeded].toMap().value("editTimes").toString().contains("4200"));
         tb.setGeometry(b1, 50, 60, 500); QCOMPARE(tb.block(b1).value("w").toDouble(), 500.0);
         QVERIFY(tb.pageText(p1).contains("Kinematics"));
-        tb.remove(b1); QCOMPARE(tb.list(p1).size(), 0); QCOMPARE(lib.search("suvat").size(), 0);
+        tb.remove(b1); QCOMPARE(tb.list(p1).size(), seeded); QCOMPARE(lib.search("suvat").size(), 0);
         QCOMPARE(lib.page(lib.createPage(pure1)).value("style").toString(), QStringLiteral("lined"));
     }
     void truncatedBlobKeepsWhatDecodes() {
