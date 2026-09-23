@@ -14,6 +14,7 @@
 #include <QPen>
 #include <QSet>
 #include <utility>
+#include <memory>
 
 OcrService::OcrService(Database &db, Library &lib, WorkerSupervisor *worker, QObject *parent)
     : QObject(parent), m_db(db), m_lib(lib), m_worker(worker)
@@ -23,6 +24,13 @@ OcrService::OcrService(Database &db, Library &lib, WorkerSupervisor *worker, QOb
         if (cb) cb(r, e);
     });
     connect(worker, &WorkerSupervisor::stateChanged, this, &OcrService::stateChanged);
+    connect(worker, &WorkerSupervisor::progressed, this, [this](int id, const QString &stage, double fraction, const QString &text) {
+        if (id != m_pageRequest && !(m_preparing && stage == QLatin1String("downloading"))) return;
+        m_progress = fraction;
+        if (stage == QLatin1String("downloading")) setStatus(QStringLiteral("downloading the handwriting model (first use only)…"));
+        else if (id == m_pageRequest && !text.isEmpty()) setStatus(QStringLiteral("reading handwriting — %1…").arg(text));
+        emit stateChanged();
+    });
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(10000);   // ten quiet seconds after the last save
     connect(&m_debounce, &QTimer::timeout, this, &OcrService::runNext);
@@ -31,7 +39,40 @@ OcrService::OcrService(Database &db, Library &lib, WorkerSupervisor *worker, QOb
     connect(&m_idleUnload, &QTimer::timeout, this, [this] { if (m_queue.isEmpty() && !m_running && m_ready) { call("unload", {}, [](const QJsonObject &, const QJsonObject &) {}); m_ready = false; emit stateChanged(); } });
 }
 
-void OcrService::call(const QString &method, const QJsonObject &params, Callback cb) { m_pending.insert(m_worker->request(method, params), std::move(cb)); }
+int OcrService::call(const QString &method, const QJsonObject &params, Callback cb)
+{
+    const int id = m_worker->request(method, params);
+    m_pending.insert(id, std::move(cb));
+    return id;
+}
+
+static bool wasCancelled(const QJsonObject &e) { return e.value("code").toInt() == WorkerSupervisor::CancelledCode; }
+
+// The worker runs without the AI add-on but cannot load a model: either it never started (-4) or
+// the import inside the request failed.
+bool OcrService::notInstalled(const QJsonObject &e) const
+{
+    return e.value("code").toInt() == -4 || !m_worker->missing().isEmpty() || e.value("message").toString().startsWith(QLatin1String("No module named"));
+}
+
+QString OcrService::addOnHint() { return QStringLiteral("Handwriting recognition needs the AI add-on — see Settings › Background services"); }
+
+void OcrService::cancel()
+{
+    m_queue.clear();
+    m_debounce.stop();
+    if (m_pageRequest) m_worker->cancel(m_pageRequest);
+    emit stateChanged();
+}
+
+void OcrService::cancelLatex()
+{
+    if (!m_latexId) return;
+    m_worker->cancel(m_latexId);
+    m_latexId = 0;            // whatever it answers now is not wanted
+    setStatus(QString());
+    emit stateChanged();
+}
 void OcrService::setStatus(const QString &s) { if (m_status == s) return; m_status = s; emit stateChanged(); }
 
 void OcrService::prepare()
@@ -43,7 +84,7 @@ void OcrService::prepare()
          [this](const QJsonObject &r, const QJsonObject &e) {
              m_preparing = false;
              m_ready = e.isEmpty() && r.value("ok").toBool();
-             setStatus(m_ready ? QString() : QStringLiteral("handwriting model unavailable: ") + e.value("message").toString());
+             setStatus(m_ready ? QString() : notInstalled(e) ? addOnHint() : QStringLiteral("handwriting model unavailable: ") + e.value("message").toString());
              emit stateChanged();
              const auto waiting = std::exchange(m_afterPrepare, {});
              if (m_ready) for (const auto &run : waiting) run();
@@ -135,9 +176,13 @@ void OcrService::recognizePage(qint64 pageId)
         idLists.append(ids.join(','));
     }
     m_running = true;
+    m_progress = 0;
     setStatus(QStringLiteral("reading handwriting on page %1 (%2 lines)…").arg(pageId).arg(lines.size()));
-    call("recognize_lines", {{"lines", payload}}, [this, pageId, boxes, idLists](const QJsonObject &r, const QJsonObject &e) {
+    m_pageRequest = call("recognize_lines", {{"lines", payload}}, [this, pageId, boxes, idLists](const QJsonObject &r, const QJsonObject &e) {
         m_running = false;
+        m_pageRequest = 0;
+        m_progress = -1;
+        if (wasCancelled(e)) { setStatus(QString()); emit stateChanged(); return; }
         if (!e.isEmpty()) { setStatus(QString()); emit failed(e.value("message").toString()); runNext(); return; }
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         m_db.begin();
@@ -192,12 +237,19 @@ void OcrService::correct(qint64 resultId, const QString &text)
 void OcrService::latexFromImage(const QString &png)
 {
     if (png.isEmpty()) { emit failed("lasso some handwritten maths first"); return; }
+    if (m_latexId) m_worker->cancel(m_latexId);        // a new lasso replaces the one still being read
     setStatus(QStringLiteral("reading the maths…"));
-    call("latex", {{"png", png}}, [this, png](const QJsonObject &r, const QJsonObject &e) {
+    auto self = std::make_shared<int>(0);
+    *self = m_latexId = call("latex", {{"png", png}}, [this, png, self](const QJsonObject &r, const QJsonObject &e) {
+        if (*self != m_latexId) return;                // cancelled, or replaced by a newer lasso
+        m_latexId = 0;
         setStatus(QString());
-        if (!e.isEmpty()) { emit failed(QStringLiteral("LaTeX recognition failed: ") + e.value("message").toString()); return; }
+        emit stateChanged();
+        if (wasCancelled(e)) return;
+        if (!e.isEmpty()) { emit failed(notInstalled(e) ? addOnHint() : QStringLiteral("LaTeX recognition failed: ") + e.value("message").toString()); return; }
         emit latexReady(r.value("latex").toString(), png);
     });
+    emit stateChanged();
 }
 
 void OcrService::recognizeStrokes(qint64 pageId, const QVariantList &strokeIds, const QString &token)

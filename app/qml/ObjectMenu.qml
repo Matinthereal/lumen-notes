@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Lumen
 
 // The options for the thing you have selected, floating just above it: outline colour, fill,
-// thickness, duplicate, delete. Opened by a double tap on a selected shape or picture — the way
+// thickness, trim and turn for a picture, duplicate, delete. Opened by a double tap on a selected shape or picture — the way
 // every drawing app does it — so the page is not permanently fenced in by a bar.
 Popup {
     id: menu
@@ -16,6 +16,9 @@ Popup {
     signal widthChosen(real width)
     signal duplicateAsked()
     signal deleteAsked()
+    signal cropAsked()
+    signal rotateAsked()
+    signal resetAsked()
 
     SystemPalette { id: pal }
     modal: false
@@ -111,6 +114,10 @@ Popup {
                 Text { id: t; anchors.centerIn: parent; text: parent.label; color: parent.danger ? Ui.danger : pal.windowText; font.pixelSize: Ui.small + 1 }
                 TapHandler { id: press; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
             }
+            MenuAction { visible: menu.subject === "picture"; label: "Trim…"; onClicked: { menu.cropAsked(); menu.close() } }
+            MenuAction { visible: menu.subject === "picture"; label: "Turn"; onClicked: menu.rotateAsked() }
+            MenuAction { visible: menu.subject === "picture" && (menu.info.cropW < 1 || menu.info.cropH < 1 || (menu.info.rotation || 0) !== 0)
+                         label: "Original"; onClicked: { menu.resetAsked(); menu.close() } }
             MenuAction { label: "Duplicate"; onClicked: { menu.duplicateAsked(); menu.close() } }
             MenuAction { label: "Delete"; danger: true; onClicked: { menu.deleteAsked(); menu.close() } }
             Item { Layout.fillWidth: true }

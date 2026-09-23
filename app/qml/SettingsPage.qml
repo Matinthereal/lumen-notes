@@ -11,9 +11,11 @@ Rectangle {
     objectName: "chrome"
     required property var canvas
     signal closed()
+    signal handChanged(bool left)
     signal toast(string message)
     signal toastAction(string message, string actionLabel, var fn)
     property int paperTick: 0
+    property int handTick: 0
     property int keyboardTick: 0
     SystemPalette { id: pal }
     // A Rectangle accepts no buttons, so without this a drag here would draw ink on the page behind.
@@ -50,6 +52,14 @@ Rectangle {
                 RowL { Lbl { text: "Highlighter opacity" } Slider { from: 0.15; to: 0.6; stepSize: 0.05; value: Number(library.setting("pen.highlighterOpacity", "0.35")); Layout.preferredWidth: 220; onMoved: { canvas.highlighterOpacity = value; page.save("pen.highlighterOpacity", value) } } }
 
                 Section { text: "Touch" }
+                RowL { Lbl { text: "Writing hand" }
+                       Repeater { model: [["Right", "0"], ["Left", "1"]]
+                                  delegate: Button { required property var modelData; objectName: "handButton"; text: modelData[0]; font.pixelSize: 11
+                                                     implicitHeight: Ui.target
+                                                     highlighted: page.handTick >= 0 && library.setting("ui.leftHanded", "0") === modelData[1]
+                                                     onClicked: { page.save("ui.leftHanded", modelData[1]); page.handTick++; page.handChanged(modelData[1] === "1") } } }
+                       Text { text: "Moves the tool rail, the page arrows and the panels to the other side, out from under your hand."
+                              color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true } }
                 RowL { Lbl { text: "Ignore touch after the pen leaves (ms)" } Slider { from: 0; to: 1500; stepSize: 50; value: Number(library.setting("touch.palmMs", "500")); Layout.preferredWidth: 220; onMoved: { canvas.palmRejectMs = value; page.save("touch.palmMs", value) } } Text { text: canvas.palmRejectMs + " ms"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 RowL { Lbl { text: "Eraser size (px)" } Slider { from: 6; to: 40; stepSize: 1; value: Number(library.setting("pen.eraserRadius", "12")); Layout.preferredWidth: 220; onMoved: { canvas.eraserRadius = value; page.save("pen.eraserRadius", value) } } }
 
@@ -87,19 +97,12 @@ Rectangle {
                 Text { text: "This laptop exposes no hinge switch or accelerometer to Linux, so tablet mode and rotation are yours to set (HARDWARE.md)."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
                 Section { text: "Background services" }
-
-                RowL { Lbl { text: "Helper processes" }
-
-                       Text { text: pingWorker.state + (pingWorker.restarts > 0 ? " · restarted " + pingWorker.restarts + "×" : "")
-
-                              color: pingWorker.state === "ready" ? Ui.good : Ui.warning; font.pixelSize: Ui.small + 1 }
-
-                       Button { text: "Restart"; font.pixelSize: 11; onClicked: { pingWorker.restart(); page.toast("Restarting the helper") } } }
-
-                Text { text: "PDF, audio, handwriting, LaTeX, cards and Claude each run on demand and restart themselves after a crash."
-
-                       color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
-
+                ServicesSection {
+                    id: services
+                    Layout.fillWidth: true
+                    onToast: (m) => page.toast(m)
+                    Connections { target: page; function onVisibleChanged() { if (page.visible) services.checkAll() } }
+                }
 
                 Section { text: "Transcription" }
                 RowL { Lbl { text: "Live model" } ComboBox { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }

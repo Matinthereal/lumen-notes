@@ -35,6 +35,9 @@ Window {
     property bool browserVisible: false
     onBrowserVisibleChanged: if (!browserVisible) browserTag = ""
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
+    // Which hand writes: a left-hander covers the left of the screen, so the rail, the page arrows
+    // and the page's name move to the right and the panels swap sides with them.
+    property bool leftHanded: library.setting("ui.leftHanded", "0") === "1"
     readonly property bool tablet: tabletMode.tablet
     // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting | page).
     property string leftPanel: "notebooks"
@@ -43,6 +46,7 @@ Window {
     SystemPalette { id: pal }
     color: pal.window
     Binding { target: Ui; property: "tablet"; value: root.tablet }
+    Binding { target: Ui; property: "leftHanded"; value: root.leftHanded }
     Binding { target: Ui; property: "dark"; value: (0.299 * pal.window.r + 0.587 * pal.window.g + 0.114 * pal.window.b) < 0.5 }
 
     function applySavedSettings() {
@@ -313,6 +317,7 @@ Window {
     }
     FileDialog { id: importDialog; property var notebookId: 0; title: "Import PDF as a section"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: pdf.importAsSection(selectedFile, notebookId, "") }
     FileDialog { id: exportDialog; title: "Export section as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: { const info = library.page(root.currentPageId); if (info.id) pdf.exportPages("section", info.sectionId, selectedFile) } }
+    FileDialog { id: exportPageDialog; title: "Export this page as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: if (root.currentPageId) pdf.exportPages("page", root.currentPageId, selectedFile) }
     SearchPalette {
         id: search; parent: Overlay.overlay
         onOpenResult: (pageId, kind, refId) => { root.openPage(pageId); if (kind === "ocr") Qt.callLater(() => { for (const r of ocr.results(pageId)) if (r.id === refId) canvas.flashRect(Qt.rect(r.x, r.y, r.w, r.h)) }) }
@@ -327,6 +332,9 @@ Window {
         anchors.fill: parent
         visible: !root.probeMode
         spacing: 0
+        // Mirroring the top row alone flips which edge the rail and each panel sit on. It is not
+        // inherited: nothing inside a panel should read right to left.
+        LayoutMirroring.enabled: root.leftHanded
 
         Rail {
             id: rail
@@ -381,7 +389,7 @@ Window {
                 visible: root.currentPageId > 0 && !root.pageTyped
                 // While presenting, the pen belongs to the laser overlay, not to the page.
                 enabled: visible && !root.presenting
-                topInset: root.presenting ? 8 : (toolbar.visible ? toolbar.height + 20 : 16)
+                topInset: root.presenting ? 8 : (toolbar.visible ? toolbar.height + 20 + pageInfo.height + 6 : 16)   // room for the page's name under the toolbar
                 bottomInset: root.presenting ? 8 : (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
                 onTopInsetChanged: if (root.currentPageId) fitPage()
                 // The paper has its own colour so that ink written under one theme stays visible
@@ -403,7 +411,7 @@ Window {
                 onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "picture"
-                    objectMenu.info = ({})
+                    objectMenu.info = imageLayer.selectedInfo()
                     objectMenu.openOver(imageLayer.mapToItem(objectMenu.parent, where.x, where.y, where.width, where.height))
                 }
             }
@@ -436,8 +444,8 @@ Window {
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
                 presenting: root.presenting
-                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
                 onPageLinkActivated: (url) => root.followLink(url)
+                infoHeight: pageInfo.height + 4
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.
@@ -469,7 +477,8 @@ Window {
                 // Both tablet overlays live inside `page`: at Window level they were siblings of the
                 // whole page and painted over the toolbar, the arrows, the style bar and the toast.
                 visible: root.tablet && !root.probeMode && root.rightPanel.length > 0; active: visible
-                anchors { right: parent.right; top: parent.top; bottom: parent.bottom; margins: 8
+                anchors { right: root.leftHanded ? undefined : parent.right; left: root.leftHanded ? parent.left : undefined
+                          top: parent.top; bottom: parent.bottom; margins: 8
                           topMargin: toolbar.visible ? toolbar.height + 22 : 8
                           bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.rightPanel
@@ -479,7 +488,8 @@ Window {
             Loader {
                 id: leftOverlay
                 visible: root.tablet && root.leftPanel.length > 0; active: visible
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: 8; bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          top: parent.top; bottom: parent.bottom; margins: 8; bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.panel
                 sourceComponent: leftPanelComponent
                 z: 5
@@ -506,16 +516,20 @@ Window {
             }
             NavArrow {
                 objectName: "chrome"; icon: "go-previous"; z: 6
-                enabledLook: root.currentPageId > 0 && page.pageIndex > 0
+                // In tablet mode the notebooks panel overlays this same edge: an arrow on top of it
+                // is both unreadable and in the way.
+                enabledLook: root.currentPageId > 0 && page.pageIndex > 0 && !leftOverlay.visible
                 // Off the bottom corners: that is where the writing hand sits and where a right-hander
                 // occludes the screen (Vogel et al., CHI 2009). Mid-height on the free-hand side.
-                anchors { left: parent.left; verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: -34 }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: -34 }
                 onClicked: root.stepPage(-1)
             }
             NavArrow {
                 objectName: "chrome"; icon: "go-next"; z: 6
-                enabledLook: root.currentPageId > 0 && page.pageIndex >= 0 && page.pageIndex < page.pageList.length - 1
-                anchors { left: parent.left; verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: 34 }
+                enabledLook: root.currentPageId > 0 && page.pageIndex >= 0 && page.pageIndex < page.pageList.length - 1 && !leftOverlay.visible
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: 34 }
                 onClicked: root.stepPage(1)
             }
             Rectangle {
@@ -533,7 +547,6 @@ Window {
             Toolbar {
                 id: toolbar
                 visible: root.currentPageId > 0 && !root.pageTyped && !root.presenting
-                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
                 canvas: canvas
                 pageId: root.currentPageId
                 tablet: root.tablet
@@ -545,6 +558,7 @@ Window {
                 enabled: visible && opacity > 0.5
                 onExportRequested: exportDialog.open()
                 onPresentRequested: root.startPresenting()
+                onExportPageRequested: exportPageDialog.open()
                 onPictureRequested: pictureDialog.open()
                 onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
@@ -609,6 +623,21 @@ Window {
                 }
                 onImprove: (png, draft) => claude.improveLatex(png, draft)
             }
+            // Reading lasso'd maths takes a few seconds the first time: show it under the lasso,
+            // where the LaTeX will appear.
+            ProgressChip {
+                id: latexProgress
+                objectName: "chrome"
+                visible: ocr.latexBusy && root.currentPageId > 0
+                readonly property rect box: visible ? canvas.selectionBounds() : Qt.rect(0, 0, 0, 0)
+                readonly property point under: Qt.point(box.x * canvas.zoom + canvas.pan.x, (box.y + box.height) * canvas.zoom + canvas.pan.y)
+                x: Math.max(8, Math.min(page.width - width - 8, under.x))
+                y: Math.max(8, Math.min((styleBar.visible ? styleBar.y : audioBar.y) - height - 8, under.y + 12))   // never under the style bar
+                z: 19
+                text: "Reading the maths…"
+                cancelTip: "Stop reading the maths"
+                onCancelRequested: ocr.cancelLatex()
+            }
             Connections {
                 target: ocr
                 function onLatexReady(latex, png) { latexPopup.latex = latex; latexPopup.png = png; latexPopup.anchorRect = canvas.selectionBounds(); latexPopup.open() }
@@ -623,7 +652,9 @@ Window {
             }
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
-            // page itself, and never longer than the space it has. The way back sits beside it.
+            // page itself, and never longer than the space it has. It sits under the pen toolbar or
+            // the typed page's format bar, which are as wide as the desk and used to hide it. The way
+            // back sits beside it.
             component HistoryButton: Rectangle {
                 property string icon
                 property string tip
@@ -639,14 +670,13 @@ Window {
                 ToolTip.visible: histHover.hovered; ToolTip.delay: 600; ToolTip.text: tip
             }
             Row {
-                id: crumbRow
+                id: pageInfo
                 objectName: "chrome"
-                anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 8 }
-                spacing: 6
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          top: parent.top; leftMargin: 14; rightMargin: 14
+                          topMargin: toolbar.visible ? toolbar.height + 16 : (root.pageTyped ? typedPage.barBottom + 8 : 14) }
+                spacing: 10
                 visible: root.currentPageId > 0 && !canvas.inking && !root.presenting
-                // What the buttons take, worked out from the stacks: reading it off the Row's own
-                // width would make the label's width depend on the label.
-                readonly property real buttonsWidth: (root.backStack.length > 0 ? Ui.target - 2 : 0) + (root.forwardStack.length > 0 ? Ui.target - 2 : 0)
                 HistoryButton {
                     objectName: "navBack"
                     visible: root.backStack.length > 0
@@ -661,16 +691,59 @@ Window {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(0, Math.min(implicitWidth, page.width * 0.4,
-                                                (page.width - (root.pageTyped ? typedPage.barWidth : toolbar.width)) / 2 - 28 - crumbRow.buttonsWidth))
+                    width: Math.min(implicitWidth, page.width * 0.4)
+                    horizontalAlignment: root.leftHanded ? Text.AlignRight : Text.AlignLeft
                     elide: Text.ElideMiddle
-                    text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
+                    text: root.pageLabel
                     color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
-                    visible: width >= 60
+                }
+                // Is my work safe? Answered where you are looking, without a dialog: the page is
+                // saved as you write, and this says when a copy of everything last left the app.
+                Rectangle {
+                    id: saveState
+                    objectName: "chrome"
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: saveRow.implicitWidth + 20; implicitHeight: Ui.target - 14
+                    radius: height / 2
+                    color: saveTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (saveHover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                    border.color: Qt.alpha(pal.text, Ui.hairline); border.width: 1
+                    readonly property double backedUp: backupTool.lastBackup
+                    readonly property string ago: {
+                        if (!backedUp) return "no backup yet"
+                        const mins = Math.max(0, Math.round((Date.now() / 1000 - backedUp) / 60))
+                        if (mins < 60) return "backed up " + mins + " min ago"
+                        const hours = Math.round(mins / 60)
+                        return hours < 48 ? "backed up " + hours + " h ago" : "backed up " + Math.round(hours / 24) + " days ago"
+                    }
+                    Row {
+                        id: saveRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 7; height: 7; radius: 3.5
+                            color: pageStore.dirty ? Ui.warning : Ui.good
+                        }
+                        Text {
+                            text: pageStore.dirty ? "Saving…" : "Saved"
+                            color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small
+                        }
+                    }
+                    HoverHandler { id: saveHover }
+                    ToolTip.visible: saveHover.hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: "Every page is saved on this computer as you write — " + saveState.ago
+                                  + ". Tap to make a backup copy now."
+                    TapHandler {
+                        id: saveTap
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: toastBar.show(saveState.ago + " · " + backupTool.folder, function() { toastBar.show(backupTool.runNow(), null) }, "Back up now")
+                    }
                 }
             }
             Text {
-                anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          bottom: audioBar.top; margins: 8 }
                 visible: root.showStats
                 text: canvas.stats + "  ·  touch ignored " + canvas.touchIgnored + "  ·  zoom " + Math.round(canvas.zoom * 100) + "%"
                 color: pal.text; font.pixelSize: 12; font.family: "monospace"
@@ -724,9 +797,7 @@ Window {
                     implicitHeight: Ui.target + 8
                     radius: 10
                     color: primary ? pal.highlight : "transparent"
-                    // The theme's highlightedText measured 1.96:1 on this highlight; pick the
-                    // readable one from the accent's own luminance instead (WCAG 1.4.3 wants 4.5).
-                    readonly property color onAccent: (0.299 * pal.highlight.r + 0.587 * pal.highlight.g + 0.114 * pal.highlight.b) > 0.5 ? pal.window : pal.windowText
+                    readonly property color onAccent: Ui.onAccent(pal.highlight)
                     border.color: primary ? "transparent" : Qt.alpha(pal.text, 0.25)
                     border.width: primary ? 0 : 1
                     opacity: tap.pressed ? 0.75 : 1
@@ -897,6 +968,9 @@ Window {
                 onOutlineChosen: (c) => { if (subject === "shape") shapeLayer.restyle(c, undefined, 0); info = subject === "shape" ? shapeLayer.selected() : ({}) }
                 onFillChosen: (c) => { shapeLayer.restyle("", c, 0); info = shapeLayer.selected() }
                 onWidthChosen: (w) => { shapeLayer.restyle("", undefined, w); info = shapeLayer.selected() }
+                onCropAsked: imageLayer.startCrop()
+                onRotateAsked: { imageLayer.rotateSelected(); info = imageLayer.selectedInfo() }
+                onResetAsked: imageLayer.resetSelected()
                 onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toastBar.show("Add the picture again to duplicate it", null)
                 onDeleteAsked: subject === "shape" ? shapeLayer.removeSelected() : imageLayer.removeSelected()
             }
@@ -1082,6 +1156,7 @@ Window {
     SettingsPage {
         visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onHandChanged: (left) => root.leftHanded = left
         onToast: (m) => toastBar.show(m, null)
     }
     // ---- The on-screen keyboard. It appears when a text field asks for input and the app is in
@@ -1131,9 +1206,11 @@ Window {
         onOpenBeside: (pageId) => { root.browserVisible = false; root.openSplit(pageId) }
         onPresent: (pageId) => { root.browserVisible = false; root.openPage(pageId); root.startPresenting() }
     }
+    HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
-        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1") }
+        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1"); root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onHandChosen: (left) => root.leftHanded = left
     }
 
     // ================================================================ shortcuts (Goodnotes-shaped)

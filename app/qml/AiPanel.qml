@@ -150,6 +150,18 @@ Rectangle {
             }
         }
 
+        // Claude can take a minute: say so where you pressed Send, count the seconds, offer a way out.
+        ProgressChip {
+            id: claudeProgress
+            visible: claude.busy
+            property int seconds: 0
+            Layout.fillWidth: true
+            text: seconds < 2 ? "Waiting for Claude…" : "Waiting for Claude — " + seconds + " s"
+            cancelTip: "Stop waiting — nothing is saved"
+            onCancelRequested: claude.cancel()
+            onVisibleChanged: seconds = 0
+            Timer { interval: 1000; repeat: true; running: claudeProgress.visible; onTriggered: claudeProgress.seconds++ }
+        }
         // Prompt preview → Send (never sent silently)
         Rectangle {
             visible: ai.pendingFeature.length > 0

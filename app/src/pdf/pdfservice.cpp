@@ -6,6 +6,10 @@
 #include "storage/paths.h"
 #include "storage/strokecodec.h"
 #include "workers/workersupervisor.h"
+#include <QDir>
+#include <QImage>
+#include <QTransform>
+#include <algorithm>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QLoggingCategory>
@@ -124,6 +128,24 @@ void PdfService::requestWords(qint64 pageId)
     });
 }
 
+// A trimmed or turned picture is stored whole: the export needs the pixels as they look on the
+// page, so they are written out once beside the other cached renders and that file is sent.
+static QString exportablePicture(const QString &path, const QRectF &crop, int rotation, qint64 id)
+{
+    if (rotation % 360 == 0 && crop == QRectF(0, 0, 1, 1)) return path;
+    QImage img(path);
+    if (img.isNull()) return path;
+    if (rotation % 360 != 0) img = img.transformed(QTransform().rotate(rotation), Qt::SmoothTransformation);
+    const QRect box(qRound(crop.x() * img.width()), qRound(crop.y() * img.height()),
+                    std::max(1, qRound(crop.width() * img.width())), std::max(1, qRound(crop.height() * img.height())));
+    img = img.copy(box.intersected(img.rect()));
+    QDir().mkpath(paths::cacheDir() + QStringLiteral("/export"));
+    const QString key = QStringLiteral("%1|%2|%3|%4|%5").arg(rotation).arg(crop.x()).arg(crop.y()).arg(crop.width()).arg(crop.height());
+    const QString out = QStringLiteral("%1/export/pic-%2-%3.png").arg(paths::cacheDir()).arg(id).arg(QString::number(qHash(key), 16));
+    if (!QFileInfo::exists(out) && !img.save(out, "PNG")) return path;
+    return out;
+}
+
 QJsonObject PdfService::pagePayload(qint64 pageId) const
 {
     const QVariantMap info = m_lib.page(pageId);
@@ -152,11 +174,14 @@ QJsonObject PdfService::pagePayload(qint64 pageId) const
     pg.insert("polys", polys);
     QJsonArray pics;
     {
-        Database::Query im(m_db, "SELECT i.attachment, a.mime, i.x, i.y, i.w, i.h FROM image i JOIN attachment a ON a.sha256=i.attachment WHERE i.page_id=? ORDER BY i.id");
+        Database::Query im(m_db, "SELECT i.attachment, a.mime, i.x, i.y, i.w, i.h, i.crop_x, i.crop_y, i.crop_w, i.crop_h, i.rotation, i.id"
+                                 " FROM image i JOIN attachment a ON a.sha256=i.attachment WHERE i.page_id=? ORDER BY i.id");
         im.bind(1, pageId);
-        while (im.step())
-            pics.append(QJsonObject{{"path", attachments::pathFor(im.text(0), im.text(1))},
+        while (im.step()) {
+            const QRectF crop(im.f64(6), im.f64(7), im.f64(8), im.f64(9));
+            pics.append(QJsonObject{{"path", exportablePicture(attachments::pathFor(im.text(0), im.text(1)), crop, im.i32(10), im.i64(11))},
                                     {"x", im.f64(2)}, {"y", im.f64(3)}, {"w", im.f64(4)}, {"h", im.f64(5)}});
+        }
     }
     pg.insert("images", pics);
     QJsonArray blocks;

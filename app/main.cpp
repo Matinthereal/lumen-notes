@@ -1,7 +1,10 @@
 #include <QGuiApplication>
+#include <QCursor>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlExpression>
+#include <QMouseEvent>
 #include <QQuickWindow>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -29,6 +32,7 @@
 #include "ui/thumbnails.h"
 #include "ui/uitest.h"
 #include "ui/splitbinder.h"
+#include "ui/holdtips.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -125,7 +129,12 @@ int main(int argc, char *argv[])
     Images images(db);
     Shapes shapes(db);
     MathsService maths(mathsWorker);
-    TabletMode tabletMode;
+    // A test or offscreen run must never reach the desktop the maker is working in: no KWin D-Bus,
+    // no kscreen-doctor, no systemd timer.
+    const bool liveSession = QGuiApplication::platformName() != QLatin1String("offscreen")
+                             && QGuiApplication::platformName() != QLatin1String("minimal")
+                             && !args.contains(QStringLiteral("--uitest")) && !args.contains(QStringLiteral("--smoke"));
+    TabletMode tabletMode(liveSession);
     BackupTool backupTool(library);
     NotebookTool notebookTool(db, library);
     Thumbnails thumbnails(db);
@@ -134,6 +143,7 @@ int main(int argc, char *argv[])
     TabletEventFilter tabletFilter;
     KeyInjector keys;
     SplitBinder splitBinder(tabletFilter, splitStore);
+    HoldTips holdTips;
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("theme"), new ThemeIconProvider);
@@ -159,6 +169,10 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("shapes"), &shapes);
     engine.rootContext()->setContextProperty(QStringLiteral("maths"), &maths);
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
+    engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
+    // Every helper, in the order Settings › Background services lists them.
+    engine.rootContext()->setContextProperty(QStringLiteral("workers"), QVariant::fromValue(QList<QObject *>{
+        &pdfWorker, &audioWorker, &ocrWorker, &mathsWorker, &latexWorker, &cardsWorker, &claudeWorker, &pingWorker}));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     const bool probeMode = app.arguments().contains(QStringLiteral("--probe"));
@@ -186,6 +200,7 @@ int main(int argc, char *argv[])
         if (args.contains(QStringLiteral("--fullscreen"))) win->showFullScreen();
         else if (args.contains(QStringLiteral("--maximized"))) win->showMaximized();
         tabletFilter.attachWindow(win);
+        holdTips.attachWindow(win);
         if (probeMode) {
             if (auto *probe = win->findChild<PenProbeItem *>(QStringLiteral("penProbe")))
                 tabletFilter.setSink(probe);
@@ -203,16 +218,17 @@ int main(int argc, char *argv[])
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(15000, &ocr, [&ocr] { ocr.prepare(); ocr.scanStale(); });
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(4000, &audio, &AudioService::prepareModels);
 
-    // Nightly backup timer (D-014): never in tests (they point LUMEN_DATA_DIR elsewhere). On Linux
+    // Nightly backup timer (D-014): never in tests (they point LUMEN_DATA_DIR elsewhere) or headless
+    // runs. On Linux
     // a systemd --user timer runs `lumen --backup`, installed once. Elsewhere there is no systemd
     // equivalent, so an in-app timer checks hourly and runs the backup itself when one is due.
 #ifdef Q_OS_LINUX
-    if (qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke")) && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
+    if (liveSession && qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke")) && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
         QString err;
         if (!backup::installUserTimer(QCoreApplication::applicationFilePath(), &err)) qWarning("backup timer: %s", qPrintable(err));
     }
 #else
-    if (qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke"))) {
+    if (liveSession && qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke"))) {
         auto runIfDue = [&library] {
             const QString dest = library.setting("backup.dir", paths::backupDir());
             if (backup::dueForNightlyBackup(dest)) backup::run(paths::dataDir(), dest, library.setting("backup.keep", "7").toInt());
@@ -258,7 +274,30 @@ int main(int argc, char *argv[])
     const int shotIdx = args.indexOf(QStringLiteral("--screenshot"));
     if (shotIdx >= 0 && shotIdx + 1 < args.size()) {
         const QString shotPath = args.at(shotIdx + 1);
-        QTimer::singleShot(3500, &app, [&engine, shotPath] {
+        // The offscreen cursor sits at the window's corner, over the rail, and hovers a tooltip up
+        // that nobody asked for. Move it off and tell the window, so hover handlers let go.
+        QTimer::singleShot(1500, &app, [&engine] {
+            if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
+                QCursor::setPos(-1000, -1000);
+                QMouseEvent away(QEvent::MouseMove, QPointF(-1000, -1000), QPointF(-1000, -1000), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(win, &away);
+            }
+        });
+        // --shot-js <expr> (repeatable): evaluated against the window at 2 s, to put the UI in the
+        // state worth looking at — a panel open, a mode on — before the grab.
+        for (int i = 0; i + 1 < args.size(); ++i) {
+            if (args.at(i) != QLatin1String("--shot-js")) continue;
+            const QString js = args.at(i + 1);
+            QTimer::singleShot(2000 + i, &app, [&engine, js] {
+                QObject *rootObj = engine.rootObjects().constFirst();
+                QQmlExpression expr(qmlContext(rootObj), rootObj, js);
+                expr.evaluate();
+                if (expr.hasError()) qWarning("shot-js: %s", qPrintable(expr.error().toString()));
+            });
+        }
+        const int delayIdx = args.indexOf(QStringLiteral("--shot-delay"));    // ms; catch something short-lived
+        const int shotDelay = delayIdx >= 0 && delayIdx + 1 < args.size() ? args.at(delayIdx + 1).toInt() : 3500;
+        QTimer::singleShot(shotDelay, &app, [&engine, shotPath] {
             if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
                 if (auto *c = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas")))
                     qInfo("screenshot: canvas %gx%g zoom %g pan %g,%g strokes %d", c->width(), c->height(), c->zoom(), c->pan().x(), c->pan().y(), c->strokeCount());

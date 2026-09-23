@@ -30,6 +30,9 @@ class AudioService : public QObject {
     Q_PROPERTY(qint64 playbackDurationMs READ playbackDurationMs NOTIFY playbackChanged)
     Q_PROPERTY(QString backend READ backend NOTIFY stateChanged)
     Q_PROPERTY(bool listening READ listening NOTIFY stateChanged)   // the live transcriber is up
+    Q_PROPERTY(bool transcribing READ transcribing NOTIFY stateChanged)  // the re-pass is running
+    Q_PROPERTY(qreal progress READ progress NOTIFY stateChanged)          // through the re-pass, 0..1 or -1
+    Q_PROPERTY(bool preparing READ preparing NOTIFY stateChanged)        // the live model is loading
 public:
     AudioService(Database &db, Library &lib, WorkerSupervisor *worker, QObject *parent = nullptr);
 
@@ -49,6 +52,10 @@ public:
     qint64 playbackDurationMs() const { return m_playbackDurationMs; }
     QString backend() const { return m_backend; }
     bool listening() const { return m_listening; }
+    bool transcribing() const { return m_repassRequest != 0; }
+    qreal progress() const { return m_progress; }
+    bool preparing() const { return m_preparing; }
+    Q_INVOKABLE void cancelRetranscribe();
 
     Q_INVOKABLE void refreshSources();
     Q_INVOKABLE void monitor(bool on);          // mic-check levels without recording
@@ -97,7 +104,7 @@ signals:
 
 private:
     using Callback = std::function<void(const QJsonObject &, const QJsonObject &)>;
-    void call(const QString &method, const QJsonObject &params, Callback cb = {});
+    int call(const QString &method, const QJsonObject &params, Callback cb = {});
     void onNotification(const QString &method, const QJsonObject &params);
     void storeSegments(qint64 recordingId, const QJsonArray &segs, const QString &pass, bool replace);
     void setStatus(const QString &s);
@@ -117,7 +124,9 @@ private:
     QString m_tempPath;
     qreal m_level = 0;
     QString m_status;
-    bool m_modelReady = false;
+    bool m_modelReady = false, m_preparing = false;
+    int m_repassRequest = 0;
+    qreal m_progress = -1;
     QVariantList m_sources;
     QString m_source = QStringLiteral("default");
     QString m_backend = QStringLiteral("cpu");

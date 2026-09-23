@@ -1,11 +1,12 @@
 #include "tabletmode.h"
+#include <QInputDevice>
 #include <QLoggingCategory>
+#include <QPointingDevice>
 #include <QVariant>
 #if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
-#include <QGuiApplication>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
@@ -13,16 +14,10 @@
 
 Q_LOGGING_CATEGORY(lcTablet, "lumen.tablet")
 
-#if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
-// An offscreen instance — the tests, the screenshots — has no display of its own, so it must not
-// follow, query or rotate the desktop's: no KWin D-Bus and no kscreen-doctor from it, ever.
-static bool onRealDisplay() { return QGuiApplication::platformName() != QLatin1String("offscreen"); }
-#endif
-
-TabletMode::TabletMode(QObject *parent) : QObject(parent)
+TabletMode::TabletMode(bool liveSession, QObject *parent) : QObject(parent), m_live(liveSession)
 {
+    if (!m_live) { qCInfo(lcTablet) << "headless: tablet mode and rotation stay inside the app"; return; }
 #if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
-    if (!onRealDisplay()) return;
     queryKwin();
     QDBusConnection::sessionBus().connect(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"),
                                           QStringLiteral("tabletModeChanged"), this, SLOT(onKwinTabletChanged(bool)));
@@ -51,6 +46,7 @@ void TabletMode::setTablet(bool v)
 #if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
 void TabletMode::queryKwin()
 {
+    if (!m_live) return;
     QDBusInterface kwin(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"), QDBusConnection::sessionBus());
     if (!kwin.isValid()) { m_kwinAvailable = false; return; }
     const QVariant avail = kwin.property("tabletModeAvailable"), mode = kwin.property("tabletMode");
@@ -62,15 +58,15 @@ void TabletMode::queryKwin()
 
 void TabletMode::rotateDisplay(const QString &to)
 {
-    if (!onRealDisplay()) return;
-    QProcess::startDetached(QStringLiteral("kscreen-doctor"), {QStringLiteral("output.eDP-1.rotation.%1").arg(to == "none" ? "normal" : to)});
+    if (m_live)
+        QProcess::startDetached(QStringLiteral("kscreen-doctor"), {QStringLiteral("output.eDP-1.rotation.%1").arg(to == "none" ? "normal" : to)});
     m_rotation = to;
     emit rotationChanged();
 }
 
 void TabletMode::refreshRotation()
 {
-    if (!onRealDisplay()) return;
+    if (!m_live) return;
     // Asynchronous: kscreen-doctor can hang without a running KWin (tests, offscreen).
     auto *p = new QProcess(this);
     connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
@@ -104,3 +100,22 @@ void TabletMode::refreshRotation() { }
 void TabletMode::onKwinTabletChanged(bool) { }
 void TabletMode::onPropertiesChanged(const QString &, const QVariantMap &, const QStringList &) { }
 #endif
+
+// Which of the ways to write this machine actually has. Asked once, on the first run: the answer
+// decides whether new pages start typed or handwritten and whether the on-screen keyboard is
+// wanted at all.
+bool TabletMode::penAvailable()
+{
+    for (const QInputDevice *d : QInputDevice::devices())
+        if (d->type() == QInputDevice::DeviceType::Stylus || d->type() == QInputDevice::DeviceType::Puck
+            || d->type() == QInputDevice::DeviceType::Airbrush)
+            return true;
+    return false;
+}
+
+bool TabletMode::touchAvailable()
+{
+    for (const QInputDevice *d : QInputDevice::devices())
+        if (d->type() == QInputDevice::DeviceType::TouchScreen) return true;
+    return false;
+}

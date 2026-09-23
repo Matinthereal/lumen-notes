@@ -12,6 +12,7 @@ Rectangle {
     property bool tablet: false
     signal exportRequested()
     signal presentRequested()
+    signal exportPageRequested()
     signal pictureRequested()
     signal presetsChanged()
     signal paperChosen(string colour)
@@ -170,6 +171,7 @@ Rectangle {
             delegate: Rectangle {
                 required property int index
                 readonly property string key: "pen.favourite." + index
+                readonly property bool holdAction: true     // hold stores the pen: no hold tip here
                 property var preset: null
                 function reloadPreset() { preset = JSON.parse(library.setting(key, "null")) }
                 Component.onCompleted: reloadPreset()
@@ -216,7 +218,7 @@ Rectangle {
         IconButton { icon: "edit-undo"; tip: "Undo (Ctrl+Z, or double-press the pen button)"; enabledLook: canvas.canUndo; onClicked: canvas.undo() }
         IconButton { icon: "edit-redo"; tip: "Redo (Ctrl+Shift+Z)"; enabledLook: canvas.canRedo; onClicked: canvas.redo() }
         Sep {}
-        Pill { label: Math.round(canvas.zoom * 100) + "%"; tip: "Tap: fit page (Ctrl+0) · long-press: fit width (Ctrl+1)"
+        Pill { readonly property bool holdAction: true; label: Math.round(canvas.zoom * 100) + "%"; tip: "Tap: fit page (Ctrl+0) · long-press: fit width (Ctrl+1)"
                onClicked: canvas.fitPage(); onLongPressed: canvas.fitWidth() }
         Sep {}
         Pill { visible: canvas.hasSelection; label: "∑ LaTeX"; tip: "Convert the lasso'd maths to an editable LaTeX block (Ctrl+M)"; onClicked: bar.latexRequested() }
@@ -250,6 +252,7 @@ Rectangle {
             { label: "Paper colour…", icon: "color-picker", action: () => paperMenu.openFrom(moreButton) },
             { label: "Clear the page (undoable)", icon: "edit-clear-all", action: () => canvas.clearAll() },
             { label: "Present this section (F5)", icon: "view-presentation", action: () => bar.presentRequested() },
+            { label: "Export this page as PDF", icon: "document-export", action: () => bar.exportPageRequested() },
             { label: "Export this section as PDF", icon: "document-export", action: () => bar.exportRequested() }
         ]
     }

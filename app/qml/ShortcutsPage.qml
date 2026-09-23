@@ -43,7 +43,8 @@ Rectangle {
             ["Ctrl+= · Ctrl+-", "Zoom in · out"],
             ["Ctrl+Shift+G", "Add a picture"],
             ["Hold a notebook in the sidebar", "Rename, new section, import PDF, export as a .lumen file"],
-            ["Hold a row in the sidebar", "Rename, delete, duplicate, close"]
+            ["Hold a row in the sidebar", "Rename, delete, duplicate, close"],
+            ["Hold any button", "Shows what it does, without doing it"]
         ]},
         { title: "Recording and transcript", keys: [
             ["Ctrl+R", "Start recording (or hold the red button)"],

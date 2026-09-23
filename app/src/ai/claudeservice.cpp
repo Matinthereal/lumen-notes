@@ -24,7 +24,14 @@ ClaudeService::ClaudeService(Database &db, Library &lib, TextBlocks &blocks, Aud
     QTimer::singleShot(8000, this, &ClaudeService::refreshStatus);   // first status check starts the worker on demand
 }
 
-void ClaudeService::call(const QString &method, const QJsonObject &params, Callback cb) { m_pending.insert(m_worker->request(method, params), std::move(cb)); }
+int ClaudeService::call(const QString &method, const QJsonObject &params, Callback cb)
+{
+    const int id = m_worker->request(method, params);
+    m_pending.insert(id, std::move(cb));
+    return id;
+}
+
+void ClaudeService::cancel() { if (m_runRequest) m_worker->cancel(m_runRequest); }
 void ClaudeService::setBusy(bool b) { if (m_busy == b) return; m_busy = b; emit busyChanged(); }
 void ClaudeService::setOnline(bool v) { m_online = v; m_lib.setSetting("claude.online", v ? "1" : "0"); emit statusChanged(); }
 
@@ -132,9 +139,11 @@ void ClaudeService::send(const QString &feature, const QString &prompt, const QV
     if (!m_available) { emit failed(feature, m_reason.isEmpty() ? "Claude is not available" : m_reason); return; }
     setBusy(true);
     const bool allowRead = meta.value("allowRead").toBool();
-    call("run", {{"prompt", prompt}, {"feature", feature}, {"allow_web", m_online}, {"allow_read", allowRead}, {"log_dir", paths::claudeLogDir()}},
+    m_runRequest = call("run", {{"prompt", prompt}, {"feature", feature}, {"allow_web", m_online}, {"allow_read", allowRead}, {"log_dir", paths::claudeLogDir()}},
          [this, feature, meta, prompt](const QJsonObject &r, const QJsonObject &e) {
+             m_runRequest = 0;
              setBusy(false);
+             if (e.value("code").toInt() == WorkerSupervisor::CancelledCode) { emit failed(feature, QStringLiteral("Stopped — nothing was saved")); return; }
              const bool ok = e.isEmpty() && r.value("ok").toBool();
              Database::Query q(m_db, "INSERT INTO claude_log(at, feature, prompt_chars, response_chars, ok, path) VALUES (?,?,?,?,?,?)");
              q.bind(1, QDateTime::currentSecsSinceEpoch()).bind(2, feature).bind(3, prompt.size()).bind(4, r.value("text").toString().size()).bind(5, ok ? 1 : 0).bind(6, r.value("log").toString());

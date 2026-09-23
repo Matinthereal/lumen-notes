@@ -86,6 +86,10 @@ int ensureSchema(Database &db)
         db.exec("ALTER TABLE text_block ADD COLUMN edit_times TEXT NOT NULL DEFAULT '[]'");
         db.exec("ALTER TABLE page ADD COLUMN starred INTEGER NOT NULL DEFAULT 0");
         db.exec("ALTER TABLE page ADD COLUMN paper TEXT NOT NULL DEFAULT ''");
+        for (const char *col : {"crop_x REAL NOT NULL DEFAULT 0", "crop_y REAL NOT NULL DEFAULT 0",
+                                "crop_w REAL NOT NULL DEFAULT 1", "crop_h REAL NOT NULL DEFAULT 1",
+                                "rotation INTEGER NOT NULL DEFAULT 0"})
+            db.exec(QStringLiteral("ALTER TABLE image ADD COLUMN %1").arg(QLatin1String(col)));
         db.exec(QStringLiteral("INSERT INTO schema_version(version) VALUES (%1)").arg(kSchemaVersion));
         version = kSchemaVersion;
     }
@@ -126,6 +130,23 @@ int ensureSchema(Database &db)
         }
         db.exec("UPDATE schema_version SET version=6");
         version = 6;
+    }
+    if (version < 7) {   // 2026-09-23: pictures are cropped and turned without touching the original file
+        // A file can already have some of these: a build where this was migration 6 wrote them.
+        QStringList have;
+        {
+            Database::Query q(db, "PRAGMA table_info(image)");
+            while (q.step()) have << q.text(1);
+        }
+        for (const char *col : {"crop_x REAL NOT NULL DEFAULT 0", "crop_y REAL NOT NULL DEFAULT 0",
+                                "crop_w REAL NOT NULL DEFAULT 1", "crop_h REAL NOT NULL DEFAULT 1",
+                                "rotation INTEGER NOT NULL DEFAULT 0"}) {
+            const QString def = QLatin1String(col);
+            if (have.contains(def.section(QLatin1Char(' '), 0, 0))) continue;
+            if (!db.exec(QStringLiteral("ALTER TABLE image ADD COLUMN %1").arg(def))) { db.rollback(); return 0; }
+        }
+        db.exec("UPDATE schema_version SET version=7");
+        version = 7;
     }
     if (!db.commit()) return 0;
     return version;

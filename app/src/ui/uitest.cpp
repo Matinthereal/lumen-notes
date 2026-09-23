@@ -20,6 +20,7 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QDir>
+#include <QFile>
 #include <QPointingDevice>
 #include <QTabletEvent>
 #include <QImage>
@@ -292,6 +293,17 @@ bool sheetOpen(QQuickWindow *w)
 {
     QQuickItem *content = findOne(w, QStringLiteral("actionSheetContent"));
     return content && content->isVisible();
+}
+
+
+// Any item in the window showing this text — the object menu's actions are plain Text items.
+QQuickItem *itemWithText(QQuickItem *from, const QString &text)
+{
+    if (from->property("text").toString() == text && from->isVisible()) return from;
+    const auto kids = from->childItems();
+    for (QQuickItem *k : kids)
+        if (QQuickItem *hit = itemWithText(k, text)) return hit;
+    return nullptr;
 }
 
 QQuickItem *sheetAction(QQuickWindow *w, const QString &label)
@@ -1069,6 +1081,393 @@ int uitest::run(QQuickWindow *win, QObject *root)
         waitFor([&] { return currentPage() > 0 && !root->property("pageTyped").toBool(); }, 3000);
     };
 
+    // ---- 12e. Tooltips by touch: holding a control with a finger or the pen shows what it does and
+    // does not do it; a tap still does it; a hold that means something (the sidebar menu) still does.
+    const auto holdTipChecks = [&] {
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        spin(250);
+        QQuickItem *notebooks = nullptr;
+        for (QQuickItem *b : findAll(win, QStringLiteral("railButton")))
+            if (b->property("tip").toString().startsWith(QLatin1String("Notebooks"))) notebooks = b;
+        // The bubble is a Popup, so it is a QObject child of the window's root, not an item in the tree.
+        const auto bubbleSays = [&](const QString &what) {
+            QObject *b = root->findChild<QObject *>(QStringLiteral("holdTip"));
+            return b && b->property("visible").toBool() && b->property("text").toString().startsWith(what);
+        };
+        if (notebooks && canFinger()) {
+            fingerTap(win, notebooks, 800);
+            r.check("a finger hold on a rail button shows its tooltip", bubbleSays(QStringLiteral("Notebooks")));
+            r.check("and does not press the button", root->property("leftPanel").toString() == QLatin1String("notebooks"));
+            spin(1800);
+            r.check("the hold tooltip goes away after the finger lifts", !bubbleSays(QStringLiteral("Notebooks")));
+            fingerTap(win, notebooks, 120);
+            r.check("a finger tap on the same button still works", root->property("leftPanel").toString().isEmpty());
+            fingerTap(win, notebooks, 120);
+            const QPointF at = centre(notebooks);
+            penAt(win, QEvent::TabletPress, at, Qt::LeftButton);
+            spin(800);
+            penAt(win, QEvent::TabletRelease, at, Qt::NoButton);
+            spin(200);
+            r.check("a pen hold shows the tooltip too", bubbleSays(QStringLiteral("Notebooks")));
+            r.check("and does not press the button either", root->property("leftPanel").toString() == QLatin1String("notebooks"));
+            pressEscape(win);
+        } else {
+            r.check("found the Notebooks rail button and a touch device", false);
+        }
+        revealCurrent(win, root);
+        if (QQuickItem *row = pageRow(win, false); row && canFinger()) {
+            fingerTap(win, row, 900);
+            r.check("a finger hold on a sidebar row still opens its menu", sheetOpen(win));
+            pressEscape(win);
+        }
+    };
+    // ---- 12f. Slow work shows itself where it was asked for, and can be stopped. Reading lasso'd
+    // maths is the case to drive: its chip sits under the lasso, and the worker is slow to start.
+    const auto progressChecks = [&] {
+        ensurePage();
+        QObject *ocr = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            ocr = engine->rootContext()->contextProperty(QStringLiteral("ocr")).value<QObject *>();
+        const QString png = QDir::temp().filePath(QStringLiteral("lumen-uitest-maths.png"));
+        QImage sum(160, 60, QImage::Format_RGB32);
+        sum.fill(Qt::white);
+        sum.save(png);
+        const auto latexChip = [&]() -> QQuickItem * {
+            QList<QQuickItem *> stack{win->contentItem()};
+            while (!stack.isEmpty()) {
+                QQuickItem *i = stack.takeLast();
+                if (QByteArray(i->metaObject()->className()).startsWith("ProgressChip") && i->isVisible()
+                    && i->property("text").toString().contains(QLatin1String("maths"))) return i;
+                stack << i->childItems();
+            }
+            return nullptr;
+        };
+        if (ocr) {
+            // Checked before the event loop runs again: a worker that is already up and lacks the
+            // maths model answers within milliseconds, and the chip rightly goes with the answer.
+            QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
+            QQuickItem *chip = latexChip();
+            r.check("reading maths shows a progress chip", chip != nullptr);
+            QQuickItem *stop = nullptr;
+            if (chip) { QList<QQuickItem *> found; gather(chip, QStringLiteral("progressCancel"), found); stop = found.value(0); }
+            r.check("the chip can stop it, with a finger-sized button", stop && stop->width() >= 40 && stop->height() >= 40);
+            if (chip) {
+                QMetaObject::invokeMethod(chip, "cancelRequested");
+                r.check("Stop takes the chip away", !latexChip() && !ocr->property("latexBusy").toBool());
+            }
+            // Without the AI add-on the same request must end in a plain explanation, not a stack trace.
+            QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
+            waitFor([&] { return !ocr->property("latexBusy").toBool(); }, 20000);
+            r.check("the chip goes when the work ends", !latexChip());
+            QQuickItem *toastText = findOne(win, QStringLiteral("toastText"));
+            const QString said = toastText ? toastText->property("text").toString() : QString();
+            if (said.contains(QLatin1String("AI add-on")))
+                r.check("a missing add-on is explained, with where to go", said.contains(QLatin1String("Background services")), said);
+            else
+                qInfo("UITEST note  the maths reader is installed here; the add-on message was not exercised (%s)", qPrintable(said.left(80)));
+        } else {
+            r.check("the OCR service is available to QML", false);
+        }
+        QFile::remove(png);
+    };
+    // ---- 12g. Settings › Background services: one row per helper, each with a state a person can
+    // read and a Restart that works; the add-on banner exactly when an AI package is missing.
+    const auto servicesChecks = [&] {
+        root->setProperty("settingsVisible", true);
+        spin(300);
+        const QList<QQuickItem *> rows = findAll(win, QStringLiteral("serviceRow"));
+        r.check("the services panel lists every helper", rows.size() == 8, QStringLiteral("%1 rows").arg(rows.size()));
+        const QVariantList workers = qmlEngine(root) ? qmlEngine(root)->rootContext()->contextProperty(QStringLiteral("workers")).toList() : QVariantList();
+        const QStringList known{QStringLiteral("ready"), QStringLiteral("busy"), QStringLiteral("loading model"), QStringLiteral("starting"),
+                                QStringLiteral("not installed"), QStringLiteral("crashed"), QStringLiteral("stopped")};
+        // Opening Settings asks each helper what it has; give them time to say.
+        waitFor([&] { for (const QVariant &v : workers) if (v.value<QObject *>()->property("status").toString() == QLatin1String("starting")) return false; return true; }, 20000);
+        QStringList odd, summary;
+        bool aiMissing = false;
+        for (const QVariant &v : workers) {
+            QObject *w = v.value<QObject *>();
+            const QString status = w->property("status").toString();
+            summary << w->property("name").toString() + "=" + status;
+            if (!known.contains(status)) odd << status;
+            const QStringList gone = w->property("missing").toStringList() + w->property("missingOptional").toStringList();
+            for (const char *ai : {"torch", "transformers", "PIL", "pix2tex", "faster_whisper"})
+                if (gone.contains(QLatin1String(ai)) && (w->property("name") == QLatin1String("ocr") || w->property("name") == QLatin1String("audio"))) aiMissing = true;
+        }
+        qInfo("UITEST note  services: %s", qPrintable(summary.join(QStringLiteral(", "))));
+        r.check("every helper reports a state a person can read", odd.isEmpty(), odd.join(QStringLiteral(", ")));
+        r.check("no helper is left starting after the check", !summary.join(QLatin1Char(' ')).contains(QLatin1String("=starting")));
+        QQuickItem *banner = findOne(win, QStringLiteral("addOnBanner"));
+        r.check("the add-on banner shows exactly when an AI package is missing", banner && banner->isVisible() == aiMissing,
+                QStringLiteral("missing=%1 banner=%2").arg(aiMissing).arg(banner && banner->isVisible()));
+        int restarted = 0;
+        for (QQuickItem *b : findAll(win, QStringLiteral("serviceRestart"))) {
+            if (!b->isVisible() || !b->isEnabled()) continue;
+            // Settings scrolls: bring the button into view the way a finger would.
+            for (QQuickItem *up = b->parentItem(); up; up = up->parentItem()) {
+                if (!up->inherits("QQuickFlickable")) continue;
+                QQuickItem *content = up->property("contentItem").value<QQuickItem *>();
+                const qreal want = b->mapToItem(content, QPointF(0, 0)).y() - up->height() / 2;
+                const qreal most = std::max<qreal>(0, up->property("contentHeight").toReal() - up->height());
+                up->setProperty("contentY", std::clamp<qreal>(want, 0, most));
+                spin(60);
+                break;
+            }
+            const QRectF box = b->mapRectToScene(QRectF(0, 0, b->width(), b->height()));
+            if (!QRectF(0, 0, win->width(), win->height()).contains(box.center())) continue;
+            r.check("a Restart button is finger-sized", b->height() >= 40);
+            tap(win, b);
+            ++restarted;
+        }
+        r.check("Restart can be pressed", restarted > 0);
+        waitFor([&] { for (const QVariant &v : workers) if (v.value<QObject *>()->property("status").toString() == QLatin1String("starting")) return false; return true; }, 20000);
+        root->setProperty("settingsVisible", false);
+        spin(200);
+    };
+    // ---- 12h. Left-handed mode: the rail, the panels and the page arrows change sides, and the
+    // choice is remembered.
+    const auto handChecks = [&] {
+        ensurePage();
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        root->setProperty("leftHanded", false);
+        spin(250);
+        QQuickItem *rail = findOne(win, QStringLiteral("rail"));
+        QQuickItem *sidebar = findOne(win, QStringLiteral("sidebarList"));
+        const auto middleOf = [&](QQuickItem *i) { return i ? i->mapToScene(QPointF(i->width() / 2, i->height() / 2)).x() : -1; };
+        const qreal railRight = middleOf(rail), sideRight = middleOf(sidebar);
+        root->setProperty("leftHanded", true);
+        spin(400);
+        r.check("left-handed puts the rail on the other side", middleOf(rail) > win->width() / 2 && railRight < win->width() / 2,
+                QStringLiteral("%1 → %2").arg(railRight).arg(middleOf(rail)));
+        r.check("and the notebooks panel follows it", middleOf(findOne(win, QStringLiteral("sidebarList"))) > win->width() / 2 && sideRight < win->width() / 2);
+        QQuickItem *page = findOne(win, QStringLiteral("pageArea"));
+        int arrows = 0, onTheRight = 0;
+        for (QQuickItem *i : findAll(win, QStringLiteral("chrome"))) {
+            if (!i->isVisible() || !page || !page->isAncestorOf(i)) continue;
+            if (qAbs(i->width() - i->height()) > 2 || i->width() < 40) continue;       // the round page arrows
+            ++arrows;
+            if (i->mapToScene(QPointF(i->width() / 2, 0)).x() > win->width() / 2) ++onTheRight;
+        }
+        r.check("and the page arrows move over with them", arrows > 0 && arrows == onTheRight, QStringLiteral("%1 of %2 on the right").arg(onTheRight).arg(arrows));
+        // The setting is what the app reads at start, so it has to be written, not just applied.
+        if (QQmlEngine *engine = qmlEngine(root))
+            if (QObject *lib = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>()) {
+                QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("1")));
+                QString saved;
+                QMetaObject::invokeMethod(lib, "setting", Q_RETURN_ARG(QString, saved), Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("0")));
+                r.check("the writing hand is stored in the settings", saved == QLatin1String("1"), saved);
+                QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("0")));
+            }
+        root->setProperty("leftHanded", false);
+        spin(300);
+        r.check("and right-handed puts everything back", middleOf(findOne(win, QStringLiteral("rail"))) < win->width() / 2);
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("hand")) {
+        handChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+    // ---- 12i. A picture can be trimmed and turned, and the file it came from is untouched.
+    const auto pictureChecks = [&] {
+        ensurePage();
+        QObject *images = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            images = engine->rootContext()->contextProperty(QStringLiteral("images")).value<QObject *>();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        if (!images || !canvas) { r.check("the pictures service and canvas are there", false); return; }
+        const QString png = QDir::temp().filePath(QStringLiteral("lumen-uitest-photo.png"));
+        QImage photo(200, 100, QImage::Format_RGB32);
+        photo.fill(Qt::darkCyan);
+        photo.save(png);
+        QFile original(png);
+        original.open(QIODevice::ReadOnly);
+        const QByteArray originalBytes = original.readAll();
+        original.close();
+
+        canvas->setTool(QStringLiteral("lasso"));
+        qint64 id = 0;
+        QMetaObject::invokeMethod(images, "insertFile", Q_RETURN_ARG(qint64, id), Q_ARG(qint64, currentPage()),
+                                  Q_ARG(QUrl, QUrl::fromLocalFile(png)), Q_ARG(double, 80), Q_ARG(double, 80), Q_ARG(double, 240));
+        r.check("a picture lands on the page", id > 0);
+        if (!id) return;
+        spin(300);
+        const auto shot = [&](const char *key) {
+            QVariantMap m;
+            QMetaObject::invokeMethod(images, "image", Q_RETURN_ARG(QVariantMap, m), Q_ARG(qint64, id));
+            return m.value(QLatin1String(key)).toDouble();
+        };
+        const QPointF middle = canvas->mapToScene(canvas->toScreen(QPointF(80 + shot("w") / 2, 80 + shot("h") / 2)));
+        tap(win, canvas, Qt::LeftButton, middle);           // select it
+        tap(win, canvas, Qt::LeftButton, middle);
+        tap(win, canvas, Qt::LeftButton, middle);           // and again: its options
+        spin(300);
+        QQuickItem *trim = itemWithText(win->contentItem(), QStringLiteral("Trim…"));
+        r.check("a picture's options offer Trim", trim != nullptr);
+        if (!trim) return;
+        tap(win, trim);
+        spin(250);
+        const QList<QQuickItem *> grips = findAll(win, QStringLiteral("cropGrip"));
+        r.check("trimming shows four corners to drag", grips.size() == 4, QStringLiteral("%1 grips").arg(grips.size()));
+        QQuickItem *topLeft = nullptr;
+        for (QQuickItem *g : grips) {
+            const QPointF c = centre(g);
+            if (!topLeft || c.x() + c.y() < centre(topLeft).x() + centre(topLeft).y()) topLeft = g;
+        }
+        if (topLeft) {
+            const QPointF from = centre(topLeft);
+            sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+            for (int i = 1; i <= 6; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(6, 4) * i, Qt::LeftButton); spin(16); }
+            sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(36, 24), Qt::LeftButton);
+            spin(120);
+        }
+        const double widthBefore = shot("w");
+        QQuickItem *done = findOne(win, QStringLiteral("cropDone"));
+        r.check("and a finger-sized Trim to finish", done && done->height() >= 40);
+        if (done) { tap(win, done); spin(300); }
+        r.check("trimming takes a piece off the picture", shot("cropW") < 0.999 && shot("w") < widthBefore,
+                QStringLiteral("cropW=%1 w=%2 (was %3)").arg(shot("cropW")).arg(shot("w")).arg(widthBefore));
+        r.check("and no grips are left on the page", findAll(win, QStringLiteral("cropGrip")).isEmpty()
+                || !findAll(win, QStringLiteral("cropGrip")).first()->isVisible());
+
+        // Turn it: the crop turns with it and the sides swap.
+        const double wasW = shot("w"), wasH = shot("h");
+        tap(win, canvas, Qt::LeftButton, middle);
+        tap(win, canvas, Qt::LeftButton, middle);
+        spin(250);
+        QQuickItem *turn = itemWithText(win->contentItem(), QStringLiteral("Turn"));
+        r.check("a picture's options offer Turn", turn != nullptr);
+        if (turn) {
+            tap(win, turn);
+            spin(250);
+            QVariantMap m;
+            QMetaObject::invokeMethod(images, "image", Q_RETURN_ARG(QVariantMap, m), Q_ARG(qint64, id));
+            r.check("turning the picture turns it a quarter", m.value(QStringLiteral("rotation")).toInt() == 90);
+            r.check("and swaps its sides", qAbs(m.value(QStringLiteral("w")).toDouble() - wasH) < 0.01
+                                        && qAbs(m.value(QStringLiteral("h")).toDouble() - wasW) < 0.01);
+        }
+        pressEscape(win);
+        QFile after(png);
+        after.open(QIODevice::ReadOnly);
+        r.check("and the picture file itself is never written", after.readAll() == originalBytes);
+        after.close();
+        QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, id));
+        QFile::remove(png);
+        spin(150);
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("picture")) {
+        pictureChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+    // ---- 12j. The first run sets itself up from what the machine has, the page says whether it is
+    // saved, and a single page can be exported on its own.
+    const auto polishChecks = [&] {
+        QObject *lib = nullptr, *tabletMode = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root)) {
+            lib = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
+            tabletMode = engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>();
+        }
+        if (!lib || !tabletMode) { r.check("the library and tablet-mode services are there", false); return; }
+        const auto setting = [&](const QString &key, const QString &fallback) {
+            QString out;
+            QMetaObject::invokeMethod(lib, "setting", Q_RETURN_ARG(QString, out), Q_ARG(QString, key), Q_ARG(QString, fallback));
+            return out;
+        };
+        const bool pen = tabletMode->property("penAvailable").toBool();
+        const bool touch = tabletMode->property("touchAvailable").toBool();
+        qInfo("UITEST note  this machine reports pen=%d touch=%d", pen, touch);
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QString()));
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QString()));
+        root->setProperty("onboardingVisible", true);
+        spin(400);
+        QQuickItem *typed = findOne(win, QStringLiteral("setupTyped"));
+        QQuickItem *ink = findOne(win, QStringLiteral("setupInk"));
+        QQuickItem *start = findOne(win, QStringLiteral("onboardingStart"));
+        r.check("the first run offers the kind of page to start with", typed && ink && start);
+        if (!typed || !ink || !start) { root->setProperty("onboardingVisible", false); return; }
+        r.check("and picks the one this machine suits", (pen ? ink : typed)->property("on").toBool(),
+                QStringLiteral("typed=%1 ink=%2").arg(typed->property("on").toBool()).arg(ink->property("on").toBool()));
+        r.check("its choices are finger-sized", start->height() >= 40 && typed->height() >= 40);
+        tap(win, typed);
+        spin(100);
+        r.check("a choice can be changed", typed->property("on").toBool() && !ink->property("on").toBool());
+        tap(win, start);
+        spin(300);
+        r.check("Start puts the first run away", !root->property("onboardingVisible").toBool());
+        r.check("and writes what was chosen", setting(QStringLiteral("page.sizeMode"), QString()) == QLatin1String("typed"),
+                setting(QStringLiteral("page.sizeMode"), QStringLiteral("(unset)")));
+        const bool touchNow = tabletMode->property("touchAvailable").toBool();
+        r.check("and the on-screen keyboard follows the machine",
+                setting(QStringLiteral("keyboard.mode"), QString()) == (touchNow ? QLatin1String("tablet") : QLatin1String("never")),
+                setting(QStringLiteral("keyboard.mode"), QStringLiteral("(unset)")));
+        // Put back what the rest of the run expects: handwritten pages and the default keyboard.
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QStringLiteral("a4")));
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QStringLiteral("tablet")));
+        root->setProperty("keyboardMode", QStringLiteral("tablet"));
+
+        // The save indicator: it says Saved when nothing is waiting, and Saving… while it is.
+        ensurePage();
+        spin(200);
+        QQuickItem *saved = itemWithText(win->contentItem(), QStringLiteral("Saved"));
+        QQuickItem *saving = itemWithText(win->contentItem(), QStringLiteral("Saving…"));
+        r.check("the page says whether it is saved", saved || saving);
+
+        // Export just this page: the page menu offers it, next to exporting the whole section.
+        QQuickItem *overflow = nullptr;
+        for (QQuickItem *i : findAll(win, QStringLiteral("chrome")))
+            for (QQuickItem *k : i->childItems())
+                if (k->property("tip").toString().startsWith(QLatin1String("Page style"))) overflow = k;
+        if (!overflow) {
+            QList<QQuickItem *> stack{win->contentItem()};
+            while (!stack.isEmpty()) {
+                QQuickItem *item = stack.takeLast();
+                if (item->property("tip").toString().startsWith(QLatin1String("Page style")) && item->isVisible()) { overflow = item; break; }
+                stack << item->childItems();
+            }
+        }
+        r.check("the toolbar has its page menu", overflow != nullptr);
+        if (overflow) {
+            // On a narrow window the toolbar scrolls; its last button can be off the edge.
+            for (QQuickItem *up = overflow->parentItem(); up; up = up->parentItem()) {
+                if (!up->inherits("QQuickFlickable")) continue;
+                up->setProperty("contentX", std::max<qreal>(0, up->property("contentWidth").toReal() - up->width()));
+                spin(120);
+                break;
+            }
+        }
+        if (overflow && QRectF(0, 0, win->width(), win->height()).contains(centre(overflow))) {
+            tap(win, overflow);
+            spin(300);
+            QStringList offered;
+            for (QQuickItem *t : findAll(win, QStringLiteral("actionSheetLabel"))) offered << t->property("text").toString();
+            r.check("the page menu offers exporting this page on its own", sheetAction(win, QStringLiteral("Export this page as PDF")) != nullptr,
+                    offered.join(QStringLiteral(" | ")));
+            r.check("and still offers the whole section", sheetAction(win, QStringLiteral("Export this section as PDF")) != nullptr);
+            pressEscape(win);
+            spin(150);
+        }
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("polish")) {
+        polishChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+    // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
+        progressChecks();
+        servicesChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("holdtips")) {
+        ensurePage();
+        holdTipChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+
     // ---- 0. The window is opaque while a shape is selected and the page is zoomed in (the maker
     //         saw the desktop through the app doing exactly that).
     {
@@ -1754,6 +2153,24 @@ int uitest::run(QQuickWindow *win, QObject *root)
     }
 
     pageFeatures(win, root, r);
+
+    // ---- 12e. Tooltips by touch (above).
+    holdTipChecks();
+
+    // ---- 12f. (above)
+    progressChecks();
+
+    // ---- 12g. (above)
+    servicesChecks();
+
+    // ---- 12h. (above)
+    handChecks();
+
+    // ---- 12i. (above)
+    pictureChecks();
+
+    // ---- 12j. (above)
+    polishChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

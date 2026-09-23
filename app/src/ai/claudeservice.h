@@ -39,6 +39,7 @@ public:
     Q_INVOKABLE void prepareAsk(const QString &question);
     Q_INVOKABLE void improveLatex(const QString &imagePath, const QString &draft);   // sends straight away (the button is the consent)
     Q_INVOKABLE void send(const QString &feature, const QString &prompt, const QVariantMap &meta);
+    Q_INVOKABLE void cancel();                         // stops the claude CLI mid-answer
     Q_INVOKABLE QString promptTemplate(const QString &name) const;
     Q_INVOKABLE QVariantList recentLog(int limit = 20) const;
 
@@ -53,7 +54,7 @@ signals:
 
 private:
     using Callback = std::function<void(const QJsonObject &, const QJsonObject &)>;
-    void call(const QString &method, const QJsonObject &params, Callback cb);
+    int call(const QString &method, const QJsonObject &params, Callback cb);
     QString fill(const QString &tmpl, const QVariantMap &vars) const;
     QString subjectFor(qint64 pageId) const;
     void setBusy(bool b);
@@ -66,5 +67,6 @@ private:
     QString m_promptsDir;
     QHash<int, Callback> m_pending;
     bool m_available = false, m_busy = false, m_online = false;
+    int m_runRequest = 0;
     QString m_version, m_reason;
 };

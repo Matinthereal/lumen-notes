@@ -28,7 +28,8 @@ from typing import Optional
 
 import numpy as np
 
-from .rpc import serve
+from . import rpc
+from .rpc import check_cancelled, progress
 
 SAMPLE_RATE = 16000
 _send = None          # set by serve_with_notify
@@ -54,6 +55,7 @@ def prepare(models_dir: str, live_model: str = "small.en", **_: object) -> dict:
     _state["models_dir"] = models_dir
     _state["live_model"] = live_model
     t = time.time()
+    progress(None, "loading", f"loading the {live_model} speech model")
     _model(live_model)
     return {"ok": True, "seconds": round(time.time() - t, 1), "model": live_model}
 
@@ -470,12 +472,20 @@ def transcribe_file(path: str, model: str = "large-v3-turbo", **_: object) -> di
         os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
     except Exception:
         pass
+    if model not in _state["models"]:
+        progress(None, "loading", f"loading the {model} speech model")
     m = _model(model)
     segs, info = m.transcribe(path, language="en", beam_size=3, vad_filter=True)
-    out = [{"t0": int(s.start * 1000), "t1": int(s.end * 1000), "text": s.text.strip()} for s in segs]
-    if model not in (_state.get("live_model") or "small.en",) and "large" in model:
-        with _model_lock:                       # ~1 GB of RAM back until the next re-pass
-            _state["models"].pop(model, None)
+    out = []
+    try:
+        for s in segs:             # a generator: each step transcribes the next stretch of audio
+            check_cancelled()
+            out.append({"t0": int(s.start * 1000), "t1": int(s.end * 1000), "text": s.text.strip()})
+            progress(s.end / info.duration if info.duration else None, "transcribing", "transcribing")
+    finally:
+        if model not in (_state.get("live_model") or "small.en",) and "large" in model:
+            with _model_lock:                       # ~1 GB of RAM back until the next re-pass
+                _state["models"].pop(model, None)
     return {"segments": out, "duration_ms": int((info.duration or 0) * 1000), "model": model}
 
 
@@ -677,9 +687,7 @@ def probe_duration(path: str, **_: object) -> dict:
 
 def serve_with_notify():
     global _send
-    from . import rpc
-    # This worker needs to push unsolicited notifications (level, segments, playback), which
-    # rpc.serve()'s request/response loop doesn't support, so it drives the same connection itself.
+    # Our own loop rather than rpc.serve: long calls run on threads so levels and playback keep flowing.
     import argparse
     ap = argparse.ArgumentParser(); ap.add_argument("--socket", required=True); args = ap.parse_args()
     sock = rpc.connect(args.socket)
@@ -692,10 +700,11 @@ def serve_with_notify():
     def notify(method, params):
         send({"method": method, "params": params})
     _send = notify
+    rpc.set_sender(send)
     handlers = {"prepare": prepare, "sources": sources, "check": check, "monitor": monitor, "monitor_stop": monitor_stop, "start": start, "stop": stop, "transcribe_file": transcribe_file,
                 "benchmark": benchmark, "play": play, "pause": pause, "seek": seek, "position": position,
                 "stop_playback": stop_playback, "playback_speed": playback_speed, "probe_duration": probe_duration}
-    send({"method": "hello", "params": {"worker": "audio", "python": sys.version.split()[0]}})
+    send(rpc.hello("audio", requires=["numpy"], optional=["faster_whisper"]))
     buf = b""
     while True:
         chunk = sock.recv(1 << 16)
@@ -711,6 +720,9 @@ def serve_with_notify():
             except json.JSONDecodeError:
                 continue
             rid, method, params = req.get("id"), req.get("method"), req.get("params") or {}
+            if method == "cancel":
+                rpc.cancel(params.get("id"))
+                continue
             if method == "shutdown":
                 stop_playback()
                 rec = _state.get("rec")
@@ -727,14 +739,10 @@ def serve_with_notify():
                 continue
             # long calls (transcribe_file, benchmark, prepare) run on a thread so playback/level keep flowing
             def run(h=h, rid=rid, params=params):
-                try:
-                    result = h(**params)
-                except Exception as exc:
-                    if rid is not None:
-                        send({"id": rid, "error": {"code": -32000, "message": str(exc)}})
-                    return
-                if rid is not None:
-                    send({"id": rid, "result": result if isinstance(result, dict) else {"value": result}})
+                reply = rpc.answer(rid, h, params)
+                if reply is not None:
+                    reply.get("error", {}).pop("trace", None)
+                    send(reply)
             if method in ("transcribe_file", "benchmark", "prepare"):
                 threading.Thread(target=run, daemon=True).start()
             else:

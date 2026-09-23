@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from .rpc import serve
+from .rpc import Cancelled, check_cancelled, progress, serve
 
 
 def _cli() -> list[str] | None:
@@ -62,11 +62,29 @@ def run(prompt: str, feature: str = "", allow_web: bool = False, allow_read: boo
     else:
         cmd += ["--disallowedTools", "Bash,Edit,Write,WebSearch,WebFetch"]
     t0 = time.time()
-    try:
-        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout_s,
-                           env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"})
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"Claude took longer than {timeout_s} s"}
+    progress(None, "asking", "waiting for Claude")
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"})
+    # Wait in short slices so a cancel from the app can stop the CLI rather than wait it out.
+    out, err_text = "", ""
+    pending = prompt
+    while True:
+        try:
+            out, err_text = p.communicate(input=pending, timeout=0.25)
+            break
+        except subprocess.TimeoutExpired:
+            pending = None
+            try:
+                check_cancelled()
+            except Cancelled:
+                p.kill()
+                p.communicate()
+                raise
+            if time.time() - t0 > timeout_s:
+                p.kill()
+                p.communicate()
+                return {"ok": False, "error": f"Claude took longer than {timeout_s} s"}
+    p = subprocess.CompletedProcess(cmd, p.returncode, out, err_text)
     elapsed = round(time.time() - t0, 1)
     text, meta = "", {}
     ok = p.returncode == 0

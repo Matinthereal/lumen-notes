@@ -35,8 +35,10 @@ Rectangle {
             spacing: 24
             // Weak topics
             ColumnLayout {
-                // preferredWidth is pixels, not a flex ratio: both columns must fill, 3:2 by preference
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: parent.width * 0.58
+                // preferredWidth is pixels, not a flex ratio, and one taken from the parent's width
+                // makes the layout chase itself ("recursive rearrange"): both columns fill, and the
+                // stretch factors share the room 3:2.
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 300; Layout.horizontalStretchFactor: 3
                 Text { text: "Weakest topics first (marks scored ÷ available, all attempts)"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 }
                 ListView {
                     Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 6
@@ -57,7 +59,7 @@ Rectangle {
                 Text { visible: page.weak.length === 0; text: "No marked questions yet. Do a paper, enter marks per question with topic tags, and this fills in."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
             ColumnLayout {
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: parent.width * 0.38; spacing: 18
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 200; Layout.horizontalStretchFactor: 2; spacing: 18
                 ColumnLayout {
                     Text { text: "Where marks go"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 }
                     Repeater {

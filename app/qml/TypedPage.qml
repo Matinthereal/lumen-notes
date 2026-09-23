@@ -17,6 +17,9 @@ Item {
     readonly property alias formatter: fmt
     readonly property real barWidth: formatBar.width
     property real sideInset: 0             // room the page keeps clear at each edge (the breadcrumb)
+    // Main puts the page's name and whether it is saved under the format bar; this is the room it takes.
+    property real infoHeight: 0
+    readonly property real barBottom: formatBar.y + formatBar.height
     SystemPalette { id: pal }
 
     property string lastSaved: ""
@@ -205,7 +208,7 @@ Item {
     // which re-wraps the text, which changes the height, which hides the bar again.
     Flickable {
         id: scroller
-        anchors { top: typed.presenting ? parent.top : formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: 12 }
+        anchors { top: typed.presenting ? parent.top : formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: typed.presenting ? 12 : 12 + typed.infoHeight }
         contentWidth: width
         contentHeight: sheet.height + 48
         clip: true

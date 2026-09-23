@@ -39,6 +39,7 @@ qt_add_library(lumen_core STATIC
     src/ui/backuptool.h            src/ui/backuptool.cpp
     src/ui/notebooktool.h          src/ui/notebooktool.cpp
     src/ui/thumbnails.h            src/ui/thumbnails.cpp
+    src/ui/holdtips.h              src/ui/holdtips.cpp
 )
 target_include_directories(lumen_core PUBLIC src)
 
@@ -152,6 +153,9 @@ qt_add_qml_module(lumen
         qml/SplitPane.qml
         qml/PagePicker.qml
         qml/LaserOverlay.qml
+        qml/HoldTip.qml
+        qml/ProgressChip.qml
+        qml/ServicesSection.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp
