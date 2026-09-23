@@ -1,16 +1,20 @@
 # Lumen — user guide
 
-Built for one machine: the Galaxy Book5 360 with the S Pen on Fedora/KDE. Everything works offline
-except the Claude features.
+For a pen, a touchscreen, a keyboard, or all three. Everything works offline except the Claude
+features. Transcription, handwriting recognition and PDF import use the optional Python helpers
+(see the README); the rest of the app needs nothing else.
 
 ## Start
 
 ```
-~/lumen/scripts/run.sh            # from the build tree
-lumen                             # once installed (RPM)
+lumen                             # Linux: the AppImage, or after scripts/install.sh
+scripts/run.sh                    # from a build tree
 ```
-First run shows four tips (F1 brings them back). Three notebooks are ready: Maths (Edexcel),
-Physics (AQA), Computer Science (OCR H446), each with sections from the spec.
+On Windows, Start menu → Lumen.
+
+First run looks at what the machine has (pen, touch, keyboard) and picks whether new pages start
+typed or handwritten; F1 brings those tips back. A notebook called *My notebook* is ready, with a
+typed welcome page.
 
 ## Writing
 
@@ -46,6 +50,7 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
 | Straight line | hold **Shift** while drawing: the stroke snaps to the nearest 45° |
 | Recolour or re-weight ink | lasso it, then tap a colour or a width |
 | Favourite pens | the three slots after the widths: tap to take one up, hold to store the pen you are using |
+| Trim or turn a picture | select it, then **Trim…** or **Turn** in its menu; **Original** brings back the whole picture. The file itself is never changed |
 
 ## Notebooks, pages, and getting things back
 
@@ -57,7 +62,7 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
 | Close the page you are on | Ctrl+W, or "Close page" in the row's menu |
 | Nothing open | that is a normal state: the page area offers New page, Notebooks, and your recent pages. It is remembered, so the app starts there next time |
 | Undo a delete | the toast at the bottom — it waits while you hover or hold it. Pages, sections, notebooks, cards and papers all come back |
-| Audio you deleted | goes to `~/.local/share/lumen/trash` for 30 days; the toast's Undo restores it |
+| Audio you deleted | goes to the data folder's `trash` for 30 days; the toast's Undo restores it |
 | Things that ask first | deleting a recording entirely, and deleting a paper question — those two cannot be undone |
 | Everything in this section | Ctrl+P — thumbnails; tap to open, hold for duplicate/move/delete, select several to move or bin them together |
 | Duplicate a page | Ctrl+D (ink, typed blocks, pictures and any PDF backing come with it) |
@@ -72,6 +77,28 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
   the picture only when you press it.
 - Ctrl+K searches typed text, recognised handwriting, transcripts and PDFs.
 - Ctrl+Shift+H shows what was read from your handwriting; edit a line to correct it.
+
+## Links, tags and finding your way back
+
+- Type `[[` in typed text and pick a page: the link follows the page, not its name, so renaming
+  never breaks it. Tap a link to go there.
+- **This page** (Ctrl+Shift+L, or its rail button) shows what links here, the page's tags, and an
+  outline of its headings; tap a heading to jump to it.
+- Tags: add them in *This page*, or lasso some handwriting and tap **# Tag** to make it one. The
+  page browser and Ctrl+K filter by tag, and `#tag` in a search does too.
+- Alt+← and Alt+→ (or the arrows beside the page's name) step back and forward through the pages
+  you have opened.
+
+## Two pages, presenting, sharing
+
+- **Split view**: Ctrl+Shift+S, or *Open beside* in a page's menu, puts a second page next to this
+  one (a PDF beside your notes, say). Each side has its own tools, zoom and undo; drag the divider,
+  close either side.
+- **Present**: F5 shows the section full screen, one page at a time. Arrow keys, space, a tap or a
+  swipe move on; the pen becomes a laser that fades and never writes. Esc leaves.
+- **Share a notebook**: hold a notebook in the sidebar → *Export notebook…* writes one `.lumen`
+  file with its ink, text, links, pictures and PDFs. *Import a notebook* (beside the sidebar's +)
+  opens one as a new notebook. Recordings, flashcards and papers stay behind.
 
 ## Slides and PDFs
 
@@ -108,12 +135,18 @@ question with an error type. *Dashboard* shows the weakest topics, where marks g
 
 ## Tablet mode and settings
 
-Ctrl+Shift+T (or the tablet icon): bigger targets, a floating toolbar you can drag, the on-screen
-keyboard for text fields once `maliit-keyboard` is installed and enabled in Plasma. Rotation is set in Settings (this laptop exposes no hinge sensor to
-Linux). Ctrl+, opens Settings: pen, touch, page defaults, transcription models, OCR model,
-backups (nightly at 03:00, *Back up now*), Claude status.
+Ctrl+Shift+T (or the tablet icon): bigger targets, a floating toolbar you can drag, and the app's
+own keyboard for text fields. Plasma switches tablet mode by itself on machines that report being
+folded; anywhere else, use the switch. Holding any button shows what it does without doing it.
+
+Ctrl+, opens Settings: pen, touch, **writing hand** (left moves the rail and panels to the other
+side), page defaults, **background services** (what each Python helper is doing, and a restart),
+transcription and OCR models, backups (*Back up now*; nightly at 03:00 on Linux, once a day while
+Lumen is open on Windows), Claude status.
 
 ## Where things live
 
-`~/.local/share/lumen/` — database, journals, attachments, models, Claude log.
-`~/Backups/lumen/` — nightly zips. Logs: `QT_FORCE_STDERR_LOGGING=1 lumen` or `journalctl --user`.
+Linux: `~/.local/share/lumen/` — database, journals, attachments, models, Claude log.
+Windows: `%LOCALAPPDATA%\lumen\`. Backups go to a `Backups/lumen` folder in your home folder.
+Set `LUMEN_DATA_DIR` to keep a whole library (and its cache) somewhere else.
+Logs: `QT_FORCE_STDERR_LOGGING=1 lumen`, or `journalctl --user` on Linux.
