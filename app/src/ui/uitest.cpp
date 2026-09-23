@@ -666,6 +666,50 @@ int uitest::run(QQuickWindow *win, QObject *root)
         root->setProperty("settingsVisible", false);
         spin(200);
     };
+    // ---- 12h. Left-handed mode: the rail, the panels and the page arrows change sides, and the
+    // choice is remembered.
+    const auto handChecks = [&] {
+        ensurePage();
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        root->setProperty("leftHanded", false);
+        spin(250);
+        QQuickItem *rail = findOne(win, QStringLiteral("rail"));
+        QQuickItem *sidebar = findOne(win, QStringLiteral("sidebarList"));
+        const auto middleOf = [&](QQuickItem *i) { return i ? i->mapToScene(QPointF(i->width() / 2, i->height() / 2)).x() : -1; };
+        const qreal railRight = middleOf(rail), sideRight = middleOf(sidebar);
+        root->setProperty("leftHanded", true);
+        spin(400);
+        r.check("left-handed puts the rail on the other side", middleOf(rail) > win->width() / 2 && railRight < win->width() / 2,
+                QStringLiteral("%1 → %2").arg(railRight).arg(middleOf(rail)));
+        r.check("and the notebooks panel follows it", middleOf(findOne(win, QStringLiteral("sidebarList"))) > win->width() / 2 && sideRight < win->width() / 2);
+        QQuickItem *page = findOne(win, QStringLiteral("pageArea"));
+        int arrows = 0, onTheRight = 0;
+        for (QQuickItem *i : findAll(win, QStringLiteral("chrome"))) {
+            if (!i->isVisible() || !page || !page->isAncestorOf(i)) continue;
+            if (qAbs(i->width() - i->height()) > 2 || i->width() < 40) continue;       // the round page arrows
+            ++arrows;
+            if (i->mapToScene(QPointF(i->width() / 2, 0)).x() > win->width() / 2) ++onTheRight;
+        }
+        r.check("and the page arrows move over with them", arrows > 0 && arrows == onTheRight, QStringLiteral("%1 of %2 on the right").arg(onTheRight).arg(arrows));
+        // The setting is what the app reads at start, so it has to be written, not just applied.
+        if (QQmlEngine *engine = qmlEngine(root))
+            if (QObject *lib = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>()) {
+                QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("1")));
+                QString saved;
+                QMetaObject::invokeMethod(lib, "setting", Q_RETURN_ARG(QString, saved), Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("0")));
+                r.check("the writing hand is stored in the settings", saved == QLatin1String("1"), saved);
+                QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("ui.leftHanded")), Q_ARG(QString, QStringLiteral("0")));
+            }
+        root->setProperty("leftHanded", false);
+        spin(300);
+        r.check("and right-handed puts everything back", middleOf(findOne(win, QStringLiteral("rail"))) < win->width() / 2);
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("hand")) {
+        handChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
     // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
         progressChecks();
@@ -1372,6 +1416,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12g. (above)
     servicesChecks();
+
+    // ---- 12h. (above)
+    handChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

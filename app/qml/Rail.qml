@@ -34,7 +34,8 @@ Rectangle {
              : (h.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent"))
         Accessible.role: Accessible.Button
         Accessible.name: tip
-        Rectangle { visible: on; width: 3; height: parent.height - 14; radius: 1.5; x: -4; y: 7; color: pal.highlight }
+        // The strip that marks the open panel sits on the window's edge, whichever side the rail is.
+        Rectangle { visible: on; width: 3; height: parent.height - 14; radius: 1.5; x: Ui.leftHanded ? parent.width + 1 : -4; y: 7; color: pal.highlight }
         Icon { anchors.centerIn: parent; name: btn.icon; width: Ui.railIcon; height: Ui.railIcon
                colour: btn.on ? pal.highlight : pal.windowText; opacity: btn.on ? 1 : 0.85 }
         Rectangle {
@@ -66,5 +67,6 @@ Rectangle {
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "user-trash"; tip: "Recently deleted (Ctrl+Shift+D)"; onClicked: rail.trashRequested() }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "configure"; tip: "Settings (Ctrl+,)"; onClicked: rail.settingsRequested() }
     }
-    Rectangle { anchors { right: parent.right; top: parent.top; bottom: parent.bottom } width: 1; color: Qt.alpha(pal.text, 0.14) }
+    Rectangle { anchors { right: Ui.leftHanded ? undefined : parent.right; left: Ui.leftHanded ? parent.left : undefined
+                          top: parent.top; bottom: parent.bottom } width: 1; color: Qt.alpha(pal.text, 0.14) }
 }

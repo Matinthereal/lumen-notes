@@ -9,6 +9,8 @@ import QtQuick
 QtObject {
     property bool tablet: false
     property bool dark: true                              // set from Main, from the real palette
+    // Left-handed: the rail and the chrome a writing hand would cover move to the other side.
+    property bool leftHanded: false
 
     readonly property real k: tablet ? 1.25 : 1.0
     readonly property int base: {

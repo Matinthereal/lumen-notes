@@ -34,6 +34,9 @@ Window {
     property bool keysVisible: false
     property bool browserVisible: false
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
+    // Which hand writes: a left-hander covers the left of the screen, so the rail, the page arrows
+    // and the page's name move to the right and the panels swap sides with them.
+    property bool leftHanded: library.setting("ui.leftHanded", "0") === "1"
     readonly property bool tablet: tabletMode.tablet
     // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting).
     property string leftPanel: "notebooks"
@@ -42,6 +45,7 @@ Window {
     SystemPalette { id: pal }
     color: pal.window
     Binding { target: Ui; property: "tablet"; value: root.tablet }
+    Binding { target: Ui; property: "leftHanded"; value: root.leftHanded }
     Binding { target: Ui; property: "dark"; value: (0.299 * pal.window.r + 0.587 * pal.window.g + 0.114 * pal.window.b) < 0.5 }
 
     function applySavedSettings() {
@@ -158,6 +162,9 @@ Window {
         anchors.fill: parent
         visible: !root.probeMode
         spacing: 0
+        // Mirroring the top row alone flips which edge the rail and each panel sit on. It is not
+        // inherited: nothing inside a panel should read right to left.
+        LayoutMirroring.enabled: root.leftHanded
 
         Rail {
             id: rail
@@ -291,7 +298,8 @@ Window {
                 // Both tablet overlays live inside `page`: at Window level they were siblings of the
                 // whole page and painted over the toolbar, the arrows, the style bar and the toast.
                 visible: root.tablet && !root.probeMode && root.rightPanel.length > 0; active: visible
-                anchors { right: parent.right; top: parent.top; bottom: parent.bottom; margins: 8
+                anchors { right: root.leftHanded ? undefined : parent.right; left: root.leftHanded ? parent.left : undefined
+                          top: parent.top; bottom: parent.bottom; margins: 8
                           topMargin: toolbar.visible ? toolbar.height + 22 : 8
                           bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.rightPanel
@@ -301,7 +309,8 @@ Window {
             Loader {
                 id: leftOverlay
                 visible: root.tablet && root.leftPanel.length > 0; active: visible
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: 8; bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          top: parent.top; bottom: parent.bottom; margins: 8; bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.panel
                 sourceComponent: leftPanelComponent
                 z: 5
@@ -328,16 +337,20 @@ Window {
             }
             NavArrow {
                 objectName: "chrome"; icon: "go-previous"; z: 6
-                enabledLook: root.currentPageId > 0 && page.pageIndex > 0
+                // In tablet mode the notebooks panel overlays this same edge: an arrow on top of it
+                // is both unreadable and in the way.
+                enabledLook: root.currentPageId > 0 && page.pageIndex > 0 && !leftOverlay.visible
                 // Off the bottom corners: that is where the writing hand sits and where a right-hander
                 // occludes the screen (Vogel et al., CHI 2009). Mid-height on the free-hand side.
-                anchors { left: parent.left; verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: -34 }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: -34 }
                 onClicked: root.stepPage(-1)
             }
             NavArrow {
                 objectName: "chrome"; icon: "go-next"; z: 6
-                enabledLook: root.currentPageId > 0 && page.pageIndex >= 0 && page.pageIndex < page.pageList.length - 1
-                anchors { left: parent.left; verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: 34 }
+                enabledLook: root.currentPageId > 0 && page.pageIndex >= 0 && page.pageIndex < page.pageList.length - 1 && !leftOverlay.visible
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          verticalCenter: parent.verticalCenter; margins: 14; verticalCenterOffset: 34 }
                 onClicked: root.stepPage(1)
             }
             Rectangle {
@@ -452,15 +465,18 @@ Window {
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
             // page itself, and never longer than the space it has.
             Text {
-                anchors { left: parent.left; top: parent.top; leftMargin: 14; topMargin: 14 }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          top: parent.top; leftMargin: 14; rightMargin: 14; topMargin: 14 }
                 width: Math.min(implicitWidth, page.width * 0.4)
+                horizontalAlignment: root.leftHanded ? Text.AlignRight : Text.AlignLeft
                 elide: Text.ElideMiddle
                 text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
                 color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
                 visible: root.currentPageId > 0 && !canvas.inking
             }
             Text {
-                anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
+                anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
+                          bottom: audioBar.top; margins: 8 }
                 visible: root.showStats
                 text: canvas.stats + "  ·  touch ignored " + canvas.touchIgnored + "  ·  zoom " + Math.round(canvas.zoom * 100) + "%"
                 color: pal.text; font.pixelSize: 12; font.family: "monospace"
@@ -735,6 +751,7 @@ Window {
     SettingsPage {
         visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onHandChanged: (left) => root.leftHanded = left
         onToast: (m) => toast.show(m, null)
     }
     // ---- The on-screen keyboard. It appears when a text field asks for input and the app is in
