@@ -20,6 +20,7 @@ class TabletMode : public QObject {
     Q_PROPERTY(bool kwinAvailable READ kwinAvailable NOTIFY tabletChanged)
     Q_PROPERTY(bool kwinTablet READ kwinTablet NOTIFY tabletChanged)
     Q_PROPERTY(QString rotation READ rotation NOTIFY rotationChanged)
+    Q_PROPERTY(bool canRotate READ canRotate CONSTANT)
     // What this machine has to write with, for the first run's defaults.
     Q_PROPERTY(bool penAvailable READ penAvailable CONSTANT)
     Q_PROPERTY(bool touchAvailable READ touchAvailable CONSTANT)
@@ -31,6 +32,7 @@ public:
     bool kwinAvailable() const { return m_kwinAvailable; }
     bool kwinTablet() const { return m_kwinTablet; }
     QString rotation() const { return m_rotation; }
+    bool canRotate() const { return m_canRotate; }
     Q_INVOKABLE void rotateDisplay(const QString &to);   // "none" | "left" | "right" | "inverted"
     Q_INVOKABLE void refreshRotation();
     static bool penAvailable();
@@ -46,4 +48,6 @@ private:
     bool m_live = false;
     bool m_tablet = false, m_kwinAvailable = false, m_kwinTablet = false, m_userForced = false;
     QString m_rotation = QStringLiteral("none");
+    QString m_panel = QStringLiteral("eDP-1");     // the built-in screen, as kscreen-doctor names it
+    bool m_canRotate = false;
 };

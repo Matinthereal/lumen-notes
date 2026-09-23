@@ -41,11 +41,11 @@ Rectangle {
                 spacing: 18
                 component Section: Text { color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11; font.letterSpacing: 1.2; font.capitalization: Font.AllUppercase; Layout.topMargin: 8 }
                 component RowL: RowLayout { Layout.fillWidth: true; spacing: 12 }
-                component Lbl: Text { color: pal.text; font.pixelSize: 13; Layout.preferredWidth: 220 }
+                component Lbl: Text { color: pal.text; font.pixelSize: 13; Layout.preferredWidth: 220; Layout.maximumWidth: 220; wrapMode: Text.WordWrap }
 
                 Section { text: "Pen" }
                 RowL { Lbl { text: "Pressure ceiling (firm stroke = full width)" } Slider { from: 0.4; to: 1.0; stepSize: 0.05; value: Number(library.setting("pen.ceiling", "0.85")); Layout.preferredWidth: 220; onMoved: { canvas.pressureCeiling = value; page.save("pen.ceiling", value) } } Text { text: canvas.pressureCeiling.toFixed(2); color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
-                RowL { Lbl { text: "Input smoothing (0 = raw, as approved)" } Slider { from: 0; to: 1; stepSize: 0.1; value: Number(library.setting("pen.smoothing", "0")); Layout.preferredWidth: 220; onMoved: { canvas.smoothing = value; page.save("pen.smoothing", value) } } }
+                RowL { Lbl { text: "Input smoothing (0 = raw)" } Slider { from: 0; to: 1; stepSize: 0.1; value: Number(library.setting("pen.smoothing", "0")); Layout.preferredWidth: 220; onMoved: { canvas.smoothing = value; page.save("pen.smoothing", value) } } }
                 RowL { Lbl { text: "Prediction (ms ahead)" } Slider { from: 0; to: 33; stepSize: 1; value: Number(library.setting("pen.predictionMs", "16.7")); Layout.preferredWidth: 220; onMoved: { canvas.predictionMs = value; canvas.predictionEnabled = value > 0; page.save("pen.predictionMs", value) } } }
                 RowL { Lbl { text: "Shape snap when the pen rests" } Switch { id: snapSwitch; checked: canvas.shapeSnap; onToggled: { canvas.shapeSnap = checked; page.save("pen.shapeSnap", checked ? 1 : 0) }
                                                                 Connections { target: canvas; function onStyleChanged() { snapSwitch.checked = canvas.shapeSnap } } } }
@@ -93,8 +93,8 @@ Rectangle {
 
                 RowL { Lbl { text: "Tablet mode now" } Switch { id: tabletSwitch; checked: tabletMode.tablet; onToggled: tabletMode.tablet = checked
                                                                 Connections { target: tabletMode; function onTabletChanged() { tabletSwitch.checked = tabletMode.tablet } } } Text { text: tabletMode.kwinAvailable ? ("Plasma reports: " + (tabletMode.kwinTablet ? "tablet" : "laptop")) : "Plasma tablet-mode D-Bus not found"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
-                RowL { Lbl { text: "Rotate display" } Repeater { model: ["none", "left", "inverted", "right"]; delegate: Button { required property string modelData; text: modelData; font.pixelSize: 11; highlighted: tabletMode.rotation === modelData; onClicked: tabletMode.rotateDisplay(modelData) } } }
-                Text { text: "This laptop exposes no hinge switch or accelerometer to Linux, so tablet mode and rotation are yours to set (HARDWARE.md)."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                RowL { visible: tabletMode.canRotate; Lbl { text: "Rotate display" } Repeater { model: ["none", "left", "inverted", "right"]; delegate: Button { required property string modelData; text: modelData; font.pixelSize: 11; highlighted: tabletMode.rotation === modelData; onClicked: tabletMode.rotateDisplay(modelData) } } }
+                Text { text: "If your 2-in-1 does not switch to tablet mode by itself when you fold it, switch it here or press Ctrl+Shift+T anywhere."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
                 Section { text: "Background services" }
                 ServicesSection {
@@ -115,7 +115,7 @@ Rectangle {
 
                 Section { text: "Backups" }
                 RowL { Lbl { text: "Folder" } TextField { id: backupPath; Layout.fillWidth: true; text: library.setting("backup.dir", ""); placeholderText: "~/Backups/lumen"; font.pixelSize: 12; onEditingFinished: page.save("backup.dir", text) } Button { text: "Choose…"; font.pixelSize: 11; onClicked: folderDlg.open() } }
-                RowL { Lbl { text: "Keep" } SpinBox { from: 1; to: 60; value: Number(library.setting("backup.keep", "7")); onValueModified: page.save("backup.keep", value) } Text { text: "nightly copies at 03:00 (systemd user timer)"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
+                RowL { Lbl { text: "Keep" } SpinBox { from: 1; to: 60; value: Number(library.setting("backup.keep", "7")); onValueModified: page.save("backup.keep", value) } Text { text: Qt.platform.os === "linux" ? "nightly copies at 03:00 (systemd user timer)" : "a copy a day, made while Lumen is open"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 RowL { Lbl { text: "" } Button { text: "Back up now"; onClicked: { backupRunner.run() } } Text { id: backupStatus; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 Item { id: backupRunner; function run() { backupStatus.text = "running…"; backupNow.start() } Timer { id: backupNow; interval: 10; onTriggered: { const r = backupTool.runNow(); backupStatus.text = r } } }
 
