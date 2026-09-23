@@ -12,12 +12,19 @@ with an S Pen), works with mouse and keyboard too.
 - **Type** Markdown blocks alongside your ink, with `$\LaTeX$` maths rendering, and turn
   handwritten maths into LaTeX locally.
 - **Organise** as notebooks → sections → pages, with full-text search across typed text,
-  recognised handwriting, audio transcripts and PDFs (Ctrl+K).
+  recognised handwriting, audio transcripts and PDFs (Ctrl+K). Link pages with `[[Page title]]`
+  (links survive renames, and every page lists what links to it), tag pages (or lasso some
+  handwriting and make it a tag), and step back and forward through the pages you've visited.
+- **Two pages side by side** (a PDF and your notes, say), each with its own tools and zoom, and
+  **present** a section full screen with a laser pen that fades (F5).
+- **Share a notebook** as a single `.lumen` file — ink, text, links, pictures and PDFs inside it.
 - **Record lessons**: capture audio with live transcription (faster-whisper), tap-to-hear jumps to
   the moment a stroke was written, and marks let you flag a moment to come back to.
 - **Flashcards** with FSRS scheduling, plus Anki `.apkg` import/export.
 - **Past papers**: import a paper and mark scheme, track marks and topics per question, and see a
   dashboard of your weakest topics over time.
+- **Fits the hand holding the pen**: a left-handed layout moves the tool rail and panels out from
+  under your hand, and holding any button shows what it does without doing it.
 - **Optional AI add-on** (see below): notes from a recording, flashcard suggestions, explaining a
   selection, asking your notes questions — every prompt is shown before it's sent, and audio never
   leaves the machine.
@@ -29,11 +36,9 @@ See [docs/USER-GUIDE.md](docs/USER-GUIDE.md) for the full shortcut and workflow 
 
 ## Screenshots
 
-<!-- TODO: replace with real screenshots once the app has some — see docs/screenshots/. -->
-
-![Writing on a page](docs/screenshots/writing.png)
-![A notebook's pages, sections and search](docs/screenshots/notebook.png)
-![Flashcard review](docs/screenshots/cards.png)
+![A typed page, with the notebook sidebar](docs/screenshots/typed-page.png)
+![The same page in the left-handed layout](docs/screenshots/left-handed.png)
+![First run: Lumen looks at what the machine has (pen, touch, keyboard) and sets itself up](docs/screenshots/first-run.png)
 
 ## Install
 
