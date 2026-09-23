@@ -239,7 +239,9 @@ int main(int argc, char *argv[])
                 if (expr.hasError()) qWarning("shot-js: %s", qPrintable(expr.error().toString()));
             });
         }
-        QTimer::singleShot(3500, &app, [&engine, shotPath] {
+        const int delayIdx = args.indexOf(QStringLiteral("--shot-delay"));    // ms; catch something short-lived
+        const int shotDelay = delayIdx >= 0 && delayIdx + 1 < args.size() ? args.at(delayIdx + 1).toInt() : 3500;
+        QTimer::singleShot(shotDelay, &app, [&engine, shotPath] {
             if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
                 if (auto *c = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas")))
                     qInfo("screenshot: canvas %gx%g zoom %g pan %g,%g strokes %d", c->width(), c->height(), c->zoom(), c->pan().x(), c->pan().y(), c->strokeCount());

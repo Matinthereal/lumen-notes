@@ -8,7 +8,7 @@ import time
 
 os.nice(10)
 
-from .rpc import serve  # noqa: E402
+from .rpc import check_cancelled, progress, serve  # noqa: E402
 
 _state: dict = {"ocr": None, "latex": None, "model_name": None}
 
@@ -17,6 +17,7 @@ def prepare(models_dir: str, model: str = "microsoft/trocr-small-handwritten", *
     os.environ.setdefault("HF_HOME", os.path.join(models_dir, "hf"))
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
     t = time.time()
+    progress(None, "loading", "loading the handwriting model")
     import torch
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
     torch.set_num_threads(max(2, (os.cpu_count() or 4) // 2))
@@ -25,6 +26,7 @@ def prepare(models_dir: str, model: str = "microsoft/trocr-small-handwritten", *
         proc = TrOCRProcessor.from_pretrained(model, cache_dir=cache, local_files_only=True)
         mdl = VisionEncoderDecoderModel.from_pretrained(model, cache_dir=cache, local_files_only=True).eval()
     except Exception:
+        progress(None, "downloading", "downloading the handwriting model (first use only)")
         proc = TrOCRProcessor.from_pretrained(model, cache_dir=cache)
         mdl = VisionEncoderDecoderModel.from_pretrained(model, cache_dir=cache).eval()
     _state["ocr"] = (proc, mdl)
@@ -40,7 +42,9 @@ def recognize_lines(lines: list[dict], **_: object) -> dict:
     from PIL import Image
     proc, mdl = _state["ocr"]
     out = []
-    for ln in lines:
+    for i, ln in enumerate(lines):
+        check_cancelled()
+        progress(i / max(1, len(lines)), "reading", f"line {i + 1} of {len(lines)}")
         t = time.time()
         img = Image.open(ln["png"]).convert("RGB")
         pixel_values = proc(images=img, return_tensors="pt").pixel_values
@@ -66,9 +70,12 @@ def unload(**_: object) -> dict:
 
 def latex(png: str, **_: object) -> dict:
     if _state["latex"] is None:
+        progress(None, "loading", "loading the maths model")
         from pix2tex.cli import LatexOCR
         _state["latex"] = LatexOCR()
     from PIL import Image
+    check_cancelled()
+    progress(None, "reading", "reading the maths")
     t = time.time()
     img = Image.open(png).convert("RGB")
     tex = _state["latex"](img)
@@ -76,4 +83,5 @@ def latex(png: str, **_: object) -> dict:
 
 
 if __name__ == "__main__":
-    sys.exit(serve("ocr", {"prepare": prepare, "recognize_lines": recognize_lines, "latex": latex, "unload": unload}))
+    sys.exit(serve("ocr", {"prepare": prepare, "recognize_lines": recognize_lines, "latex": latex, "unload": unload},
+                   requires=["torch", "transformers", "PIL"], optional=["pix2tex"]))

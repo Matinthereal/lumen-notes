@@ -64,7 +64,15 @@ Rectangle {
                 onClicked: panel.insertAll()
             }
         }
-        Text { visible: ocr.status.length > 0; text: ocr.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
+        ProgressChip {
+            visible: ocr.busy
+            Layout.fillWidth: true
+            text: ocr.status.length ? ocr.status : "Reading handwriting…"
+            progress: ocr.progress
+            cancelTip: "Stop reading handwriting"
+            onCancelRequested: { ocr.cancel(); panel.toast("Stopped reading handwriting") }
+        }
+        Text { visible: !ocr.busy && ocr.status.length > 0; text: ocr.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
         Text { visible: panel.lineList.length === 0 && ocr.status.length === 0; text: "Nothing recognised yet. Handwriting is read ten seconds after you stop writing; corrections you make here are kept."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true }
         ListView {
             Layout.fillWidth: true; Layout.fillHeight: true

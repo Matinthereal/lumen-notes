@@ -19,6 +19,7 @@
 #include <QQuickWindow>
 #include <QTimer>
 #include <QDir>
+#include <QFile>
 #include <QPointingDevice>
 #include <QTabletEvent>
 #include <QImage>
@@ -564,7 +565,60 @@ int uitest::run(QQuickWindow *win, QObject *root)
             pressEscape(win);
         }
     };
-    // LUMEN_UITEST_ONLY=holdtips runs just these, for working on them without the 7-minute sweep.
+    // ---- 12f. Slow work shows itself where it was asked for, and can be stopped. Reading lasso'd
+    // maths is the case to drive: its chip sits under the lasso, and the worker is slow to start.
+    const auto progressChecks = [&] {
+        ensurePage();
+        QObject *ocr = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            ocr = engine->rootContext()->contextProperty(QStringLiteral("ocr")).value<QObject *>();
+        const QString png = QDir::temp().filePath(QStringLiteral("lumen-uitest-maths.png"));
+        QImage sum(160, 60, QImage::Format_RGB32);
+        sum.fill(Qt::white);
+        sum.save(png);
+        const auto latexChip = [&]() -> QQuickItem * {
+            QList<QQuickItem *> stack{win->contentItem()};
+            while (!stack.isEmpty()) {
+                QQuickItem *i = stack.takeLast();
+                if (QByteArray(i->metaObject()->className()).startsWith("ProgressChip") && i->isVisible()
+                    && i->property("text").toString().contains(QLatin1String("maths"))) return i;
+                stack << i->childItems();
+            }
+            return nullptr;
+        };
+        if (ocr) {
+            QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
+            spin(60);
+            QQuickItem *chip = latexChip();
+            r.check("reading maths shows a progress chip", chip != nullptr);
+            QQuickItem *stop = nullptr;
+            if (chip) { QList<QQuickItem *> found; gather(chip, QStringLiteral("progressCancel"), found); stop = found.value(0); }
+            r.check("the chip can stop it, with a finger-sized button", stop && stop->width() >= 40 && stop->height() >= 40);
+            if (stop) {
+                tap(win, stop);
+                r.check("Stop takes the chip away", !latexChip() && !ocr->property("latexBusy").toBool());
+            }
+            // Without the AI add-on the same request must end in a plain explanation, not a stack trace.
+            QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
+            waitFor([&] { return !ocr->property("latexBusy").toBool(); }, 20000);
+            r.check("the chip goes when the work ends", !latexChip());
+            QQuickItem *toastText = findOne(win, QStringLiteral("toastText"));
+            const QString said = toastText ? toastText->property("text").toString() : QString();
+            if (said.contains(QLatin1String("AI add-on")))
+                r.check("a missing add-on is explained, with where to go", said.contains(QLatin1String("Background services")), said);
+            else
+                qInfo("UITEST note  the maths reader is installed here; the add-on message was not exercised (%s)", qPrintable(said.left(80)));
+        } else {
+            r.check("the OCR service is available to QML", false);
+        }
+        QFile::remove(png);
+    };
+    // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
+        progressChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("holdtips")) {
         ensurePage();
         holdTipChecks();
@@ -1258,6 +1312,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12e. Tooltips by touch (above).
     holdTipChecks();
+
+    // ---- 12f. (above)
+    progressChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

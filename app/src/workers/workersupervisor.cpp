@@ -2,9 +2,11 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
 #include <QLoggingCategory>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -47,10 +49,28 @@ WorkerSupervisor::WorkerSupervisor(const QString &name, QObject *parent)
     connect(&m_proc, &QProcess::finished, this, &WorkerSupervisor::onProcessFinished);
     connect(&m_proc, &QProcess::readyReadStandardError, this, [this] {
         for (const QByteArray &line : m_proc.readAllStandardError().split('\n'))
-            if (!line.trimmed().isEmpty())
+            if (!line.trimmed().isEmpty()) {
                 qCInfo(lcWorker) << m_name << "stderr:" << line;
+                m_stderrTail << QString::fromUtf8(line.trimmed());
+                if (m_stderrTail.size() > 30) m_stderrTail.removeFirst();
+            }
+    });
+    connect(&m_proc, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;
+        // No Python at all: that is a missing install, and retrying will not conjure one up.
+        m_missing = {QStringLiteral("python3")};
+        m_lastError = m_proc.errorString();
+        failEverything(QStringLiteral("%1 helper cannot start: Python was not found").arg(m_name), -4);
+        setState(State::NotInstalled);
     });
     m_proc.setWorkingDirectory(workersDir());
+
+    // A request counts as keeping the worker busy once it has taken longer than a person notices
+    // (the Doherty threshold); the ping every two seconds never does.
+    m_busyTimer = new QTimer(this);
+    m_busyTimer->setSingleShot(true);
+    m_busyTimer->setInterval(400);
+    connect(m_busyTimer, &QTimer::timeout, this, &WorkerSupervisor::activityChanged);
 }
 
 WorkerSupervisor::~WorkerSupervisor() { stop(); }
@@ -62,8 +82,91 @@ QString WorkerSupervisor::stateName() const
     case State::Starting: return QStringLiteral("starting");
     case State::Ready: return QStringLiteral("ready");
     case State::Crashed: return QStringLiteral("crashed");
+    case State::NotInstalled: return QStringLiteral("not installed");
     }
     return {};
+}
+
+QString WorkerSupervisor::status() const
+{
+    if (m_state == State::NotInstalled || m_state == State::Crashed || m_state == State::Starting) return stateName();
+    if (m_state == State::Ready) {
+        for (const Job &j : m_jobs)
+            if (j.method == QLatin1String("prepare") || j.stage == QLatin1String("loading") || j.stage == QLatin1String("downloading"))
+                return QStringLiteral("loading model");
+        if (busy()) return QStringLiteral("busy");
+    }
+    if (!m_missing.isEmpty()) return QStringLiteral("not installed");      // it runs, but can do nothing useful
+    return stateName();
+}
+
+
+bool WorkerSupervisor::busy() const
+{
+    for (const Job &j : m_jobs)
+        if (!j.stage.isEmpty() || (j.age.isValid() && j.age.elapsed() >= m_busyTimer->interval())) return true;
+    return false;
+}
+
+QString WorkerSupervisor::activity() const
+{
+    const auto it = m_jobs.constFind(m_lastProgressId);
+    if (it != m_jobs.cend() && !it->text.isEmpty()) return it->text;
+    return busy() && !m_jobs.isEmpty() ? m_jobs.last().method : QString();
+}
+
+qreal WorkerSupervisor::progress() const
+{
+    const auto it = m_jobs.constFind(m_lastProgressId);
+    return it != m_jobs.cend() ? it->fraction : -1;
+}
+
+void WorkerSupervisor::began(int id, const QString &method)
+{
+    Job j;
+    j.method = method;
+    j.age.start();
+    m_jobs.insert(id, j);
+    m_busyTimer->start();
+}
+
+void WorkerSupervisor::ended(int id)
+{
+    if (m_jobs.remove(id)) emit activityChanged();
+}
+
+void WorkerSupervisor::failEverything(const QString &message, int code)
+{
+    const QSet<int> gone = std::move(m_outstanding); m_outstanding.clear();
+    QList<int> ids(gone.cbegin(), gone.cend());
+    for (const Queued &q : std::as_const(m_queue)) ids << q.id;
+    m_queue.clear();
+    m_jobs.clear();
+    emit activityChanged();
+    for (int id : ids) emit response(id, {}, QJsonObject{{"message", message}, {"code", code}});
+}
+
+void WorkerSupervisor::restart()
+{
+    stop();
+    m_missing.clear();
+    m_missingOptional.clear();
+    m_lastError.clear();
+    m_stderrTail.clear();
+    start();
+}
+
+void WorkerSupervisor::cancel(int id)
+{
+    for (int i = 0; i < m_queue.size(); ++i) {
+        if (m_queue[i].id != id) continue;          // never sent: just drop it
+        m_queue.removeAt(i);
+        ended(id);
+        QTimer::singleShot(0, this, [this, id] { emit response(id, {}, QJsonObject{{"message", "cancelled"}, {"code", CancelledCode}}); });
+        return;
+    }
+    if (m_conn && m_outstanding.contains(id))
+        m_conn->write(JsonLineBuffer::encode({{"method", "cancel"}, {"params", QJsonObject{{"id", id}}}}));
 }
 
 void WorkerSupervisor::setState(State s)
@@ -90,6 +193,7 @@ void WorkerSupervisor::start()
         }
     }
     setState(State::Starting);
+    m_stderrTail.clear();
     const QStringList args{QStringLiteral("-m"), QStringLiteral("lumen_workers.%1").arg(m_name),
                            QStringLiteral("--socket"), m_socketPath};
     qCInfo(lcWorker) << "starting" << m_python << args << "in" << m_proc.workingDirectory();
@@ -118,14 +222,22 @@ void WorkerSupervisor::stop()
 int WorkerSupervisor::request(const QString &method, const QJsonObject &params)
 {
     const int id = m_nextId++;
+    if (m_state == State::NotInstalled) {
+        // Starting it again would die on the same import: say so at once, like any other failure.
+        const QString why = QStringLiteral("the %1 helper is not installed (missing %2)").arg(m_name, m_missing.join(QStringLiteral(", ")));
+        QTimer::singleShot(0, this, [this, id, why] { emit response(id, {}, QJsonObject{{"message", why}, {"code", -4}}); });
+        return id;
+    }
+    began(id, method);
     if (!m_conn || m_state != State::Ready) {
         if (m_autoStart || m_wantRunning) {          // starting, or a restart is pending: queue
             if (m_proc.state() == QProcess::NotRunning && !m_restartTimer->isActive()) start();
             m_queue.append({id, method, params});          // sent the moment the worker connects
-            if (m_queue.size() > 200) { const Queued q = m_queue.takeFirst(); QTimer::singleShot(0, this, [this, q] { emit response(q.id, {}, QJsonObject{{"message", "worker queue overflow"}, {"code", -2}}); }); }
+            if (m_queue.size() > 200) { const Queued q = m_queue.takeFirst(); ended(q.id); QTimer::singleShot(0, this, [this, q] { emit response(q.id, {}, QJsonObject{{"message", "worker queue overflow"}, {"code", -2}}); }); }
             return id;
         }
         // Answer asynchronously so callers never special-case "not ready".
+        ended(id);
         QTimer::singleShot(0, this, [this, id] {
             emit response(id, {}, QJsonObject{{"message", "worker not ready"}, {"code", -1}});
         });
@@ -161,10 +273,35 @@ void WorkerSupervisor::onReadyRead()
     QJsonObject msg;
     while (m_rx.next(msg)) {
         if (msg.contains("id")) {
-            m_outstanding.remove(msg.value("id").toInt());
-            emit response(msg.value("id").toInt(), msg.value("result").toObject(), msg.value("error").toObject());
+            const int id = msg.value("id").toInt();
+            m_outstanding.remove(id);
+            ended(id);
+            emit response(id, msg.value("result").toObject(), msg.value("error").toObject());
         } else if (msg.contains("method")) {
-            emit notification(msg.value("method").toString(), msg.value("params").toObject());
+            const QString method = msg.value("method").toString();
+            const QJsonObject params = msg.value("params").toObject();
+            if (method == QLatin1String("progress")) {
+                const int id = params.value("id").toInt();
+                const double fraction = params.contains("fraction") ? params.value("fraction").toDouble() : -1;
+                auto it = m_jobs.find(id);
+                if (it != m_jobs.end()) {
+                    it->stage = params.value("stage").toString();
+                    it->text = params.value("text").toString();
+                    it->fraction = fraction;
+                    m_lastProgressId = id;
+                    emit activityChanged();
+                }
+                emit progressed(id, params.value("stage").toString(), fraction, params.value("text").toString());
+                continue;
+            }
+            if (method == QLatin1String("hello")) {
+                auto list = [](const QJsonValue &v) { QStringList out; for (const QJsonValue &x : v.toArray()) out << x.toString(); return out; };
+                m_missing = list(params.value("missing"));
+                m_missingOptional = list(params.value("missing_optional"));
+                emit stateChanged();
+                emit activityChanged();
+            }
+            emit notification(method, params);
         }
     }
 }
@@ -173,12 +310,26 @@ void WorkerSupervisor::onProcessFinished(int code, QProcess::ExitStatus status)
 {
     qCInfo(lcWorker) << m_name << "exited" << code << (status == QProcess::CrashExit ? "crash" : "normal");
     if (m_conn) { m_conn->deleteLater(); m_conn = nullptr; }
+    for (const QByteArray &line : m_proc.readAllStandardError().split('\n'))      // what arrived with the exit
+        if (!line.trimmed().isEmpty()) m_stderrTail << QString::fromUtf8(line.trimmed());
+    if (!m_stderrTail.isEmpty()) m_lastError = m_stderrTail.last();
+    // Died on an import: a package is missing, and restarting will only die the same way.
+    static const QRegularExpression noModule(QStringLiteral("(?:ModuleNotFoundError|ImportError): No module named '([^']+)'"));
+    for (auto it = m_stderrTail.crbegin(); m_wantRunning && it != m_stderrTail.crend(); ++it) {
+        const QRegularExpressionMatch m = noModule.match(*it);
+        if (!m.hasMatch()) continue;
+        m_missing = {m.captured(1).section(QLatin1Char('.'), 0, 0)};
+        m_stderrTail.clear();
+        failEverything(QStringLiteral("the %1 helper is not installed (missing %2)").arg(m_name, m_missing.first()), -4);
+        setState(State::NotInstalled);
+        return;
+    }
     // Anything the worker had in hand dies with it: fail those requests so no caller waits forever.
     const QSet<int> gone = std::move(m_outstanding); m_outstanding.clear();
-    for (int id : gone) emit response(id, {}, QJsonObject{{"message", QStringLiteral("%1 worker exited before answering").arg(m_name)}, {"code", -3}});
+    for (int id : gone) { ended(id); emit response(id, {}, QJsonObject{{"message", QStringLiteral("%1 worker exited before answering").arg(m_name)}, {"code", -3}}); }
     if (!m_queue.isEmpty() && !m_wantRunning) {
         const QList<Queued> lost = std::move(m_queue); m_queue.clear();
-        for (const Queued &q : lost) emit response(q.id, {}, QJsonObject{{"message", "worker exited before answering"}, {"code", -3}});
+        for (const Queued &q : lost) { ended(q.id); emit response(q.id, {}, QJsonObject{{"message", "worker exited before answering"}, {"code", -3}}); }
     }
     if (m_wantRunning) {
         setState(State::Crashed);

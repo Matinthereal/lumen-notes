@@ -428,6 +428,21 @@ Window {
                 }
                 onImprove: (png, draft) => claude.improveLatex(png, draft)
             }
+            // Reading lasso'd maths takes a few seconds the first time: show it under the lasso,
+            // where the LaTeX will appear.
+            ProgressChip {
+                id: latexProgress
+                objectName: "chrome"
+                visible: ocr.latexBusy && root.currentPageId > 0
+                readonly property rect box: visible ? canvas.selectionBounds() : Qt.rect(0, 0, 0, 0)
+                readonly property point under: Qt.point(box.x * canvas.zoom + canvas.pan.x, (box.y + box.height) * canvas.zoom + canvas.pan.y)
+                x: Math.max(8, Math.min(page.width - width - 8, under.x))
+                y: Math.max(8, Math.min((styleBar.visible ? styleBar.y : audioBar.y) - height - 8, under.y + 12))   // never under the style bar
+                z: 19
+                text: "Reading the maths…"
+                cancelTip: "Stop reading the maths"
+                onCancelRequested: ocr.cancelLatex()
+            }
             Connections {
                 target: ocr
                 function onLatexReady(latex, png) { latexPopup.latex = latex; latexPopup.png = png; latexPopup.anchorRect = canvas.selectionBounds(); latexPopup.open() }

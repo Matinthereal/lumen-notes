@@ -96,6 +96,7 @@ qt_add_qml_module(lumen
         qml/ProbePage.qml
         qml/Readout.qml
         qml/HoldTip.qml
+        qml/ProgressChip.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp

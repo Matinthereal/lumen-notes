@@ -58,4 +58,4 @@ def import_apkg(path: str, **_: object) -> dict:
 
 
 if __name__ == "__main__":
-    sys.exit(serve("cards", {"export_apkg": export_apkg, "import_apkg": import_apkg}))
+    sys.exit(serve("cards", {"export_apkg": export_apkg, "import_apkg": import_apkg}, requires=["genanki"]))

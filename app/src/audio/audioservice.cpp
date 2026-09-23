@@ -25,6 +25,12 @@ AudioService::AudioService(Database &db, Library &lib, WorkerSupervisor *worker,
         if (cb) cb(r, e);
     });
     connect(worker, &WorkerSupervisor::notification, this, &AudioService::onNotification);
+    connect(worker, &WorkerSupervisor::progressed, this, [this](int id, const QString &stage, double fraction, const QString &text) {
+        if (id != m_repassRequest) return;
+        m_progress = fraction;
+        setStatus(stage == QLatin1String("loading") ? text + QStringLiteral("…") : QStringLiteral("re-transcribing with the larger model…"));
+        emit stateChanged();
+    });
     connect(worker, &WorkerSupervisor::stateChanged, this, [this] {
         if (m_worker->state() == WorkerSupervisor::State::Ready) {
             refreshSources();
@@ -52,10 +58,11 @@ AudioService::AudioService(Database &db, Library &lib, WorkerSupervisor *worker,
     m_backend = lib.setting("audio.backend", "cpu");
 }
 
-void AudioService::call(const QString &method, const QJsonObject &params, Callback cb)
+int AudioService::call(const QString &method, const QJsonObject &params, Callback cb)
 {
     const int id = m_worker->request(method, params);
     if (cb) m_pending.insert(id, std::move(cb));
+    return id;
 }
 
 void AudioService::setStatus(const QString &s) { if (m_status == s) return; m_status = s; emit stateChanged(); }
@@ -105,12 +112,17 @@ void AudioService::refreshSources()
 
 void AudioService::prepareModels()
 {
-    if (m_modelReady) return;
+    if (m_modelReady || m_preparing) return;
+    m_preparing = true;
     setStatus(QStringLiteral("preparing the transcription model…"));
     call("prepare", {{"models_dir", paths::modelsDir()}, {"live_model", m_lib.setting("audio.liveModel", "small.en")}},
          [this](const QJsonObject &r, const QJsonObject &e) {
+             m_preparing = false;
              m_modelReady = e.isEmpty() && r.value("ok").toBool();
-             setStatus(m_modelReady ? QString() : QStringLiteral("model not available: ") + e.value("message").toString());
+             const bool noAddOn = e.value("code").toInt() == -4 || m_worker->missingOptional().contains(QLatin1String("faster_whisper"));
+             setStatus(m_modelReady ? QString()
+                       : noAddOn ? QStringLiteral("transcription needs the AI add-on — recording still works")
+                                 : QStringLiteral("model not available: ") + e.value("message").toString());
              emit stateChanged();
          });
 }
@@ -175,13 +187,25 @@ void AudioService::retranscribe(qint64 rid)
 {
     const QString path = audioPath(rid);
     if (path.isEmpty()) { setStatus({}); return; }
+    if (m_worker->missingOptional().contains(QLatin1String("faster_whisper"))) { setStatus({}); return; }   // no add-on: the recording is kept, untranscribed
     setStatus(QStringLiteral("re-transcribing with the larger model…"));
-    call("transcribe_file", {{"path", path}, {"model", m_lib.setting("audio.repassModel", "large-v3-turbo")}},
+    m_progress = -1;
+    m_repassRequest = call("transcribe_file", {{"path", path}, {"model", m_lib.setting("audio.repassModel", "large-v3-turbo")}},
          [this, rid](const QJsonObject &r, const QJsonObject &e) {
+             m_repassRequest = 0;
+             m_progress = -1;
              if (e.isEmpty()) storeSegments(rid, r.value("segments").toArray(), "repass", true);
-             else emit error(QStringLiteral("re-pass failed: ") + e.value("message").toString());
+             else if (e.value("code").toInt() != WorkerSupervisor::CancelledCode) emit error(QStringLiteral("re-pass failed: ") + e.value("message").toString());
              setStatus({});
+             emit stateChanged();
          });
+    emit stateChanged();
+}
+
+// The live transcript stays; only the slower, better second pass is dropped.
+void AudioService::cancelRetranscribe()
+{
+    if (m_repassRequest) m_worker->cancel(m_repassRequest);
 }
 
 // Called from aboutToQuit: the worker must not be killed with a recording open.

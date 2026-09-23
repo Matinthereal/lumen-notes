@@ -166,7 +166,16 @@ Item {
                 visible: !audio.recording && !panel.testingMic && audio.micVerdict.length > 0 && audio.micVerdict !== "alive"
                 text: "⚠ " + audio.micVerdict; color: Ui.warning; font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.maximumWidth: 300
             }
-            Text { visible: !audio.recording && audio.status.length > 0; text: audio.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.maximumWidth: 240 }
+            ProgressChip {
+                visible: !audio.recording && (audio.transcribing || audio.preparing)
+                text: audio.transcribing ? "Transcribing" : "Loading the speech model…"
+                progress: audio.transcribing ? audio.progress : -1
+                cancellable: audio.transcribing
+                cancelTip: "Stop — keep the live transcript"
+                Layout.preferredHeight: Ui.target - 6
+                onCancelRequested: { audio.cancelRetranscribe(); panel.toast("Kept the live transcript") }
+            }
+            Text { visible: !audio.recording && !audio.transcribing && !audio.preparing && audio.status.length > 0; text: audio.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.maximumWidth: 240 }
             Rectangle { visible: recordingsModel.count > 0 && !audio.recording; implicitWidth: 1; implicitHeight: Ui.target - 12; color: Qt.alpha(pal.text, 0.14) }
             ComboBox {
                 id: recPick
