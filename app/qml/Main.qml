@@ -211,6 +211,14 @@ Window {
         toastBar.show("Tagged #" + tag.name, function() { library.removePageTag(pageId, id) })
         canvas.selectNone()
     }
+    // The outline's way of taking you to a heading: the caret on a typed page, a flash of the block
+    // it lives in on a handwritten one.
+    function goToHeading(blockId, text) {
+        if (pageTyped) { typedPage.goToHeading(text); return }
+        const block = textBlocks.block(blockId)
+        if (!block.id) return
+        canvas.flashRect(Qt.rect(block.x, block.y, block.w, 44))
+    }
     function showTagged(tag) { browserTag = tag; if (currentPageId || tag.length) browserVisible = true }
 
     // A [[link]] followed from any text. The id is the link; a page since deleted says so.
@@ -949,6 +957,7 @@ Window {
                 anchors.fill: parent; visible: root.rightPanel === "page"; pageId: root.currentPageId
                 onOpenPage: (pid) => root.openPage(pid)
                 onShowTagged: (tag) => root.showTagged(tag)
+                onGoToHeading: (blockId, text) => root.goToHeading(blockId, text)
                 onToast: (m) => toastBar.show(m, null)
                 onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }

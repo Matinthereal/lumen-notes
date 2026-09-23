@@ -3,23 +3,27 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Lumen
 
-// Everything about the open page that is not on the page itself: its tags and what links here.
+// Everything about the open page that is not on the page itself: its headings, its tags, and what
+// links here.
 Rectangle {
     id: panel
     objectName: "chrome"
     property var pageId: 0
     signal openPage(var pageId)
     signal showTagged(string tag)
+    signal goToHeading(var blockId, string text)
     signal toast(string message)
     signal toastAction(string message, string actionLabel, var fn)
     SystemPalette { id: pal }
     color: pal.window
 
     property var backlinks: []
+    property var outline: []
     property var tags: []
     property var allTags: []
     function reload() {
         backlinks = pageId > 0 ? library.backlinks(pageId) : []
+        outline = pageId > 0 ? textBlocks.outline(pageId) : []
         reloadTags()
     }
     function reloadTags() {
@@ -55,6 +59,10 @@ Rectangle {
         function onChanged() { panel.reload() }
         function onTagsChanged() { panel.reloadTags() }
     }
+    Connections {
+        target: textBlocks
+        function onChanged(pid) { if (pid === panel.pageId) panel.outline = textBlocks.outline(pid) }
+    }
 
     component Caption: Text {
         color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; font.capitalization: Font.AllUppercase
@@ -80,6 +88,38 @@ Rectangle {
 
             Text { text: "This page"; color: pal.windowText; font.pixelSize: 14; font.weight: Font.DemiBold }
             Hint { visible: panel.pageId === 0; text: "Open a page to see its tags and what links to it." }
+
+            Caption { visible: panel.pageId > 0; text: "Outline" }
+            Hint {
+                visible: panel.pageId > 0 && panel.outline.length === 0
+                text: "Headings on this page show up here. Make one with H1, H2 or H3."
+            }
+            Repeater {
+                model: panel.pageId > 0 ? panel.outline : []
+                delegate: Rectangle {
+                    required property var modelData
+                    objectName: "outlineRow"
+                    Layout.fillWidth: true
+                    implicitHeight: Ui.target - 6
+                    radius: 8
+                    color: headTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (headHover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                    Accessible.role: Accessible.Link
+                    Accessible.name: modelData.text
+                    Text {
+                        anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
+                                  leftMargin: 10 + (modelData.level - 1) * 14; rightMargin: 10 }
+                        text: modelData.text
+                        color: pal.windowText
+                        font.pixelSize: modelData.level === 1 ? Ui.text + 1 : Ui.text
+                        font.weight: modelData.level === 1 ? Font.DemiBold : Font.Normal
+                        opacity: modelData.level === 3 ? Ui.mutedAlpha : 1
+                        elide: Text.ElideRight
+                    }
+                    HoverHandler { id: headHover; cursorShape: Qt.PointingHandCursor }
+                    TapHandler { id: headTap; gesturePolicy: TapHandler.ReleaseWithinBounds
+                                 onTapped: panel.goToHeading(modelData.blockId, modelData.text) }
+                }
+            }
 
             Caption { visible: panel.pageId > 0; text: "Tags" }
             Flow {

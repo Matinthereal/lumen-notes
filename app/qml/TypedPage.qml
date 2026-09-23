@@ -18,11 +18,19 @@ Item {
     readonly property real barWidth: formatBar.width
     SystemPalette { id: pal }
 
+    property string lastSaved: ""
     function save() {
         if (!typed.blockId || typed.loading) return
         saveTimer.stop()
-        textBlocks.setMarkdown(typed.blockId, fmt.markdown())
+        typed.lastSaved = fmt.markdown()
+        textBlocks.setMarkdown(typed.blockId, typed.lastSaved)
         typed.words = fmt.wordCount()
+    }
+    // Something else changed this page's text — renaming a page rewrites the links that name it —
+    // so take the new text, unless the maker is in the middle of typing their own.
+    function reloadIfStale() {
+        if (!typed.blockId || typed.loading || area.activeFocus) return
+        if ((textBlocks.block(typed.blockId).markdown || "") !== typed.lastSaved) load()
     }
     function load() {
         saveTimer.stop()
@@ -31,7 +39,8 @@ Item {
         if (typed.pageId > 0) {
             const blocks = textBlocks.list(typed.pageId)
             typed.blockId = blocks.length ? blocks[0].id : textBlocks.create(typed.pageId, 0, 0, 794)
-            fmt.setMarkdown(blocks.length ? library.resolveLinks(blocks[0].markdown || "") : "")
+            typed.lastSaved = blocks.length ? (blocks[0].markdown || "") : ""
+            fmt.setMarkdown(library.resolveLinks(typed.lastSaved))
         } else {
             fmt.setMarkdown("")
         }
@@ -49,8 +58,15 @@ Item {
     function refreshLinks() { backlinks = typed.pageId > 0 ? library.backlinks(typed.pageId) : [] }
     Connections {
         target: library
-        function onLinksChanged() { typed.refreshLinks() }
+        function onLinksChanged() { typed.refreshLinks(); typed.reloadIfStale() }
         function onChanged() { typed.refreshLinks() }
+    }
+    // Jump to a heading the outline lists: put the caret in it and let the editor scroll it into view.
+    function goToHeading(text) {
+        const at = fmt.plainText().indexOf(text)
+        if (at < 0) return
+        area.forceActiveFocus()
+        area.cursorPosition = at
     }
     function checkLink() {
         if (typed.loading || !area.activeFocus || area.selectedText.length) { linkPicker.close(); return }

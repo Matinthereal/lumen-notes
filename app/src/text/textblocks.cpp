@@ -3,6 +3,7 @@
 #include "storage/library.h"
 #include <QDateTime>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QJsonDocument>
 
 TextBlocks::TextBlocks(Database &db, Library &lib, QObject *parent) : QObject(parent), m_db(db), m_lib(lib) {}
@@ -72,6 +73,24 @@ void TextBlocks::remove(qint64 id)
     m_lib.syncLinks(id, b.value("pageId").toLongLong(), QString());
     Database::Query q(m_db, "DELETE FROM text_block WHERE id=?"); q.bind(1, id); q.run();
     emit changed(b.value("pageId").toLongLong());
+}
+
+QVariantList TextBlocks::outline(qint64 pageId) const
+{
+    static const QRegularExpression heading(QStringLiteral("^(#{1,3})\\s+(\\S.*?)\\s*#*$"));
+    QVariantList out;
+    for (const QVariant &v : list(pageId)) {
+        const QVariantMap b = v.toMap();
+        for (const QString &line : b.value(QStringLiteral("markdown")).toString().split(QLatin1Char('\n'))) {
+            const auto m = heading.match(line);
+            if (!m.hasMatch()) continue;
+            QString text = m.captured(2);
+            text.remove(QRegularExpression(QStringLiteral("[*_`]")));
+            out.append(QVariantMap{{"blockId", b.value(QStringLiteral("id"))}, {"level", m.captured(1).size()}, {"text", text},
+                                   {"x", b.value(QStringLiteral("x"))}, {"y", b.value(QStringLiteral("y"))}});
+        }
+    }
+    return out;
 }
 
 QString TextBlocks::pageText(qint64 pageId) const

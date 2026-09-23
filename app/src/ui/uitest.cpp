@@ -692,6 +692,48 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
         r.check("Escape leaves the presentation", !root->property("presenting").toBool());
         r.check("and the rail comes back", rail && rail->isVisible());
     }
+
+    // ---- 19. The outline: headings on the page, in the panel, and a tap puts the caret in one.
+    if (library) {
+        QObject *textBlocks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+        // Written before the page is opened, the way an import or a rename writes one.
+        QVariantMap here;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, here), Q_ARG(qint64, currentPage()));
+        qlonglong page = 0, block = 0;
+        QMetaObject::invokeMethod(library, "createPage", Q_RETURN_ARG(qlonglong, page),
+                                  Q_ARG(qlonglong, here.value(QStringLiteral("sectionId")).toLongLong()),
+                                  Q_ARG(QString, QString()), Q_ARG(QString, QStringLiteral("typed")), Q_ARG(int, -1));
+        if (textBlocks && page)
+            QMetaObject::invokeMethod(textBlocks, "create", Q_RETURN_ARG(qlonglong, block), Q_ARG(qlonglong, page),
+                                      Q_ARG(double, 0), Q_ARG(double, 0), Q_ARG(double, 794), Q_ARG(qlonglong, 0), Q_ARG(qlonglong, 0));
+        if (block) {
+            QMetaObject::invokeMethod(textBlocks, "setMarkdown", Q_ARG(qint64, block),
+                                      Q_ARG(QString, QStringLiteral("# Introduction\n\nWhy waves matter.\n\n## Method\n\nA long stretch of words so the heading is not already on screen.\n\n### Results\n")),
+                                      Q_ARG(qint64, 0));
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, page));
+            spin(500);
+            root->setProperty("rightPanel", QStringLiteral("page"));
+            spin(400);
+            QList<QQuickItem *> rows;
+            for (QQuickItem *row : findAll(win, QStringLiteral("outlineRow"))) if (row->isVisible()) rows << row;
+            r.check("the page panel lists the page's headings", rows.size() == 3, QStringLiteral("%1 rows").arg(rows.size()));
+            shot(win, QStringLiteral("5-outline"));
+            if (rows.size() == 3) {
+                QQuickItem *editor = findOne(win, QStringLiteral("typedEditor"));
+                if (editor) editor->setProperty("cursorPosition", 0);
+                tap(win, rows[1]);
+                spin(300);
+                const int at = editor ? editor->property("cursorPosition").toInt() : 0;
+                r.check("tapping a heading puts the caret in it", at > 10, QStringLiteral("cursor at %1").arg(at));
+            }
+            root->setProperty("rightPanel", QString());
+            spin(200);
+        } else {
+            r.check("the typed page has a block to give an outline", false);
+        }
+    }
 }
 
 } // namespace

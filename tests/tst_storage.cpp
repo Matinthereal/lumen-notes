@@ -371,6 +371,28 @@ private slots:
         QCOMPARE(lib.pagesWithTag("exam").size(), 1);
         QCOMPARE(lib.tags()[0].toMap().value("count").toInt(), 1);
     }
+    void headingsBecomeThePageOutline() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 page = lib.createPage(lib.createSection(lib.createNotebook("N", "#000"), "S"));
+        const qint64 first = tb.create(page, 10, 20, 400);
+        tb.setMarkdown(first, "# Waves\n\nSome text\n\n## Standing *waves*\n\n#hashtag is not a heading\n### Nodes ###");
+        const qint64 second = tb.create(page, 10, 400, 400);
+        tb.setMarkdown(second, "not a heading\n## Interference");
+
+        const QVariantList out = tb.outline(page);
+        QCOMPARE(out.size(), 4);
+        QCOMPARE(out[0].toMap().value("level").toInt(), 1);
+        QCOMPARE(out[0].toMap().value("text").toString(), QStringLiteral("Waves"));
+        QCOMPARE(out[1].toMap().value("level").toInt(), 2);
+        QCOMPARE(out[1].toMap().value("text").toString(), QStringLiteral("Standing waves"));
+        QCOMPARE(out[2].toMap().value("text").toString(), QStringLiteral("Nodes"));
+        QCOMPARE(out[3].toMap().value("blockId").toLongLong(), second);
+        QCOMPARE(out[3].toMap().value("y").toDouble(), 400.0);
+        QVERIFY(tb.outline(page + 999).isEmpty());
+    }
     void schemaSixIndexesLinksAlreadyInText() {
         QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
         const QString path = dir.path() + "/t.db";
