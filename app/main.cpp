@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
+#include <QMouseEvent>
 #include <QQuickWindow>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -116,7 +117,12 @@ int main(int argc, char *argv[])
     Images images(db);
     Shapes shapes(db);
     MathsService maths(mathsWorker);
-    TabletMode tabletMode;
+    // A test or offscreen run must never reach the desktop the maker is working in: no KWin D-Bus,
+    // no kscreen-doctor, no systemd timer.
+    const bool liveSession = QGuiApplication::platformName() != QLatin1String("offscreen")
+                             && QGuiApplication::platformName() != QLatin1String("minimal")
+                             && !args.contains(QStringLiteral("--uitest")) && !args.contains(QStringLiteral("--smoke"));
+    TabletMode tabletMode(liveSession);
     BackupTool backupTool(library);
     Thumbnails thumbnails(db);
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
@@ -194,7 +200,7 @@ int main(int argc, char *argv[])
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(4000, &audio, &AudioService::prepareModels);
 
     // Nightly backup timer (D-014): installed once, never in tests (they point LUMEN_DATA_DIR elsewhere).
-    if (qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke")) && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
+    if (liveSession && qgetenv("LUMEN_DATA_DIR").isEmpty() && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
         QString err;
         if (!backup::installUserTimer(QCoreApplication::applicationFilePath(), &err)) qWarning("backup timer: %s", qPrintable(err));
     }
@@ -229,7 +235,15 @@ int main(int argc, char *argv[])
     const int shotIdx = args.indexOf(QStringLiteral("--screenshot"));
     if (shotIdx >= 0 && shotIdx + 1 < args.size()) {
         const QString shotPath = args.at(shotIdx + 1);
-        QCursor::setPos(-1000, -1000);      // the offscreen cursor starts over the rail and hovers a tooltip up
+        // The offscreen cursor sits at the window's corner, over the rail, and hovers a tooltip up
+        // that nobody asked for. Move it off and tell the window, so hover handlers let go.
+        QTimer::singleShot(1500, &app, [&engine] {
+            if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
+                QCursor::setPos(-1000, -1000);
+                QMouseEvent away(QEvent::MouseMove, QPointF(-1000, -1000), QPointF(-1000, -1000), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(win, &away);
+            }
+        });
         // --shot-js <expr> (repeatable): evaluated against the window at 2 s, to put the UI in the
         // state worth looking at — a panel open, a mode on — before the grab.
         for (int i = 0; i + 1 < args.size(); ++i) {

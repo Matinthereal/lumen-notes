@@ -14,6 +14,9 @@ Item {
     property bool loading: false
     readonly property alias editor: area
     readonly property alias formatter: fmt
+    // Main puts the page's name and whether it is saved under the format bar; this is the room it takes.
+    property real infoHeight: 0
+    readonly property real barBottom: formatBar.y + formatBar.height
     SystemPalette { id: pal }
 
     function save() {
@@ -140,7 +143,7 @@ Item {
     // which re-wraps the text, which changes the height, which hides the bar again.
     Flickable {
         id: scroller
-        anchors { top: formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: 12 }
+        anchors { top: formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: 12 + typed.infoHeight }
         contentWidth: width
         contentHeight: sheet.height + 48
         clip: true

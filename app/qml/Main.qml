@@ -215,7 +215,7 @@ Window {
                 anchors.fill: parent
                 visible: root.currentPageId > 0 && !root.pageTyped
                 enabled: visible
-                topInset: (toolbar.visible ? toolbar.height + 20 : 16)
+                topInset: (toolbar.visible ? toolbar.height + 20 + pageInfo.height + 6 : 16)   // room for the page's name under the toolbar
                 bottomInset: (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
                 onTopInsetChanged: if (root.currentPageId) fitPage()
                 // The paper has its own colour so that ink written under one theme stays visible
@@ -268,6 +268,7 @@ Window {
                 anchors { fill: parent; bottomMargin: (audioBar.visible ? audioBar.height : 0) + Ui.keyboardInset }
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
+                infoHeight: pageInfo.height + 4
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.
@@ -465,10 +466,13 @@ Window {
             }
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
-            // page itself, and never longer than the space it has.
+            // page itself, and never longer than the space it has. It sits under the pen toolbar or
+            // the typed page's format bar, which are as wide as the desk and used to hide it.
             Row {
+                id: pageInfo
                 anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
-                          top: parent.top; leftMargin: 14; rightMargin: 14; topMargin: 14 }
+                          top: parent.top; leftMargin: 14; rightMargin: 14
+                          topMargin: toolbar.visible ? toolbar.height + 16 : (root.pageTyped ? typedPage.barBottom + 8 : 14) }
                 spacing: 10
                 visible: root.currentPageId > 0 && !canvas.inking
                 Text {
@@ -480,9 +484,14 @@ Window {
                 }
                 // Is my work safe? Answered where you are looking, without a dialog: the page is
                 // saved as you write, and this says when a copy of everything last left the app.
-                Row {
+                Rectangle {
+                    id: saveState
                     objectName: "chrome"
-                    spacing: 5
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: saveRow.implicitWidth + 20; implicitHeight: Ui.target - 14
+                    radius: height / 2
+                    color: saveTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (saveHover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                    border.color: Qt.alpha(pal.text, Ui.hairline); border.width: 1
                     readonly property double backedUp: backupTool.lastBackup
                     readonly property string ago: {
                         if (!backedUp) return "no backup yet"
@@ -491,25 +500,29 @@ Window {
                         const hours = Math.round(mins / 60)
                         return hours < 48 ? "backed up " + hours + " h ago" : "backed up " + Math.round(hours / 24) + " days ago"
                     }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 7; height: 7; radius: 3.5
-                        color: pageStore.dirty ? Ui.warning : Ui.good
-                    }
-                    Text {
-                        text: pageStore.dirty ? "Saving…" : "Saved"
-                        color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                    Row {
+                        id: saveRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 7; height: 7; radius: 3.5
+                            color: pageStore.dirty ? Ui.warning : Ui.good
+                        }
+                        Text {
+                            text: pageStore.dirty ? "Saving…" : "Saved"
+                            color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small
+                        }
                     }
                     HoverHandler { id: saveHover }
                     ToolTip.visible: saveHover.hovered
                     ToolTip.delay: 600
-                    ToolTip.text: "Every page is saved on this computer as you write — " + parent.ago
+                    ToolTip.text: "Every page is saved on this computer as you write — " + saveState.ago
                                   + ". Tap to make a backup copy now."
                     TapHandler {
+                        id: saveTap
                         gesturePolicy: TapHandler.ReleaseWithinBounds
-                        onTapped: {
-                            toast.show(parent.parent.ago + " · " + backupTool.folder, function() { toast.show(backupTool.runNow(), null) }, "Back up now")
-                        }
+                        onTapped: toast.show(saveState.ago + " · " + backupTool.folder, function() { toast.show(backupTool.runNow(), null) }, "Back up now")
                     }
                 }
             }

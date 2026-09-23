@@ -12,8 +12,9 @@
 
 Q_LOGGING_CATEGORY(lcTablet, "lumen.tablet")
 
-TabletMode::TabletMode(QObject *parent) : QObject(parent)
+TabletMode::TabletMode(bool liveSession, QObject *parent) : QObject(parent), m_live(liveSession)
 {
+    if (!m_live) { qCInfo(lcTablet) << "headless: tablet mode and rotation stay inside the app"; return; }
     queryKwin();
     QDBusConnection::sessionBus().connect(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"),
                                           QStringLiteral("tabletModeChanged"), this, SLOT(onKwinTabletChanged(bool)));
@@ -30,6 +31,7 @@ TabletMode::~TabletMode()
 
 void TabletMode::queryKwin()
 {
+    if (!m_live) return;
     QDBusInterface kwin(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"), QDBusConnection::sessionBus());
     if (!kwin.isValid()) { m_kwinAvailable = false; return; }
     const QVariant avail = kwin.property("tabletModeAvailable"), mode = kwin.property("tabletMode");
@@ -49,13 +51,15 @@ void TabletMode::setTablet(bool v)
 
 void TabletMode::rotateDisplay(const QString &to)
 {
-    QProcess::startDetached(QStringLiteral("kscreen-doctor"), {QStringLiteral("output.eDP-1.rotation.%1").arg(to == "none" ? "normal" : to)});
+    if (m_live)
+        QProcess::startDetached(QStringLiteral("kscreen-doctor"), {QStringLiteral("output.eDP-1.rotation.%1").arg(to == "none" ? "normal" : to)});
     m_rotation = to;
     emit rotationChanged();
 }
 
 void TabletMode::refreshRotation()
 {
+    if (!m_live) return;
     // Asynchronous: kscreen-doctor can hang without a running KWin (tests, offscreen).
     auto *p = new QProcess(this);
     connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {

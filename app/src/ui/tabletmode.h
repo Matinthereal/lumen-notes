@@ -8,6 +8,10 @@
 // toggled by hand (toolbar button, Ctrl+Shift+T). The hinge itself is not detectable on this
 // machine (HARDWARE.md), so the manual toggle is first-class, not a fallback. Also exposes a
 // rotate-display action through kscreen-doctor and the state of the on-screen keyboard.
+//
+// Headless (the offscreen platform, --uitest, --smoke) it never talks to the desktop: no KWin D-Bus,
+// no kscreen-doctor. Tablet mode and rotation are then just the app's own state, so a test run
+// cannot read or change the session the maker is working in.
 class TabletMode : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool tablet READ tablet WRITE setTablet NOTIFY tabletChanged)
@@ -18,7 +22,7 @@ class TabletMode : public QObject {
     Q_PROPERTY(bool penAvailable READ penAvailable CONSTANT)
     Q_PROPERTY(bool touchAvailable READ touchAvailable CONSTANT)
 public:
-    explicit TabletMode(QObject *parent = nullptr);
+    explicit TabletMode(bool liveSession, QObject *parent = nullptr);
     ~TabletMode() override;
     bool tablet() const { return m_tablet; }
     void setTablet(bool v);
@@ -37,6 +41,7 @@ private slots:
     void onPropertiesChanged(const QString &iface, const QVariantMap &changed, const QStringList &invalidated);
 private:
     void queryKwin();
+    bool m_live = false;
     bool m_tablet = false, m_kwinAvailable = false, m_kwinTablet = false, m_userForced = false;
     QString m_rotation = QStringLiteral("none");
 };

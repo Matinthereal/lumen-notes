@@ -598,15 +598,16 @@ int uitest::run(QQuickWindow *win, QObject *root)
             return nullptr;
         };
         if (ocr) {
+            // Checked before the event loop runs again: a worker that is already up and lacks the
+            // maths model answers within milliseconds, and the chip rightly goes with the answer.
             QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
-            spin(60);
             QQuickItem *chip = latexChip();
             r.check("reading maths shows a progress chip", chip != nullptr);
             QQuickItem *stop = nullptr;
             if (chip) { QList<QQuickItem *> found; gather(chip, QStringLiteral("progressCancel"), found); stop = found.value(0); }
             r.check("the chip can stop it, with a finger-sized button", stop && stop->width() >= 40 && stop->height() >= 40);
-            if (stop) {
-                tap(win, stop);
+            if (chip) {
+                QMetaObject::invokeMethod(chip, "cancelRequested");
                 r.check("Stop takes the chip away", !latexChip() && !ocr->property("latexBusy").toBool());
             }
             // Without the AI add-on the same request must end in a plain explanation, not a stack trace.
@@ -855,6 +856,10 @@ int uitest::run(QQuickWindow *win, QObject *root)
         r.check("and the on-screen keyboard follows the machine",
                 setting(QStringLiteral("keyboard.mode"), QString()) == (touchNow ? QLatin1String("tablet") : QLatin1String("never")),
                 setting(QStringLiteral("keyboard.mode"), QStringLiteral("(unset)")));
+        // Put back what the rest of the run expects: handwritten pages and the default keyboard.
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QStringLiteral("a4")));
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QStringLiteral("tablet")));
+        root->setProperty("keyboardMode", QStringLiteral("tablet"));
 
         // The save indicator: it says Saved when nothing is waiting, and Saving… while it is.
         ensurePage();

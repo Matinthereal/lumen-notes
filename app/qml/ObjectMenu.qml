@@ -116,7 +116,7 @@ Popup {
             }
             MenuAction { visible: menu.subject === "picture"; label: "Trim…"; onClicked: { menu.cropAsked(); menu.close() } }
             MenuAction { visible: menu.subject === "picture"; label: "Turn"; onClicked: menu.rotateAsked() }
-            MenuAction { visible: menu.subject === "picture" && ((menu.info.cropW !== undefined && menu.info.cropW < 1) || menu.info.cropH < 1 || menu.info.rotation)
+            MenuAction { visible: menu.subject === "picture" && (menu.info.cropW < 1 || menu.info.cropH < 1 || (menu.info.rotation || 0) !== 0)
                          label: "Original"; onClicked: { menu.resetAsked(); menu.close() } }
             MenuAction { label: "Duplicate"; onClicked: { menu.duplicateAsked(); menu.close() } }
             MenuAction { label: "Delete"; danger: true; onClicked: { menu.deleteAsked(); menu.close() } }
