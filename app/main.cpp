@@ -140,6 +140,7 @@ int main(int argc, char *argv[])
     Thumbnails thumbnails(db);
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
     QObject::connect(&splitStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
+    QObject::connect(&textBlocks, &TextBlocks::changed, &thumbnails, &Thumbnails::refresh);   // typed pages save through here
     TabletEventFilter tabletFilter;
     KeyInjector keys;
     SplitBinder splitBinder(tabletFilter, splitStore);

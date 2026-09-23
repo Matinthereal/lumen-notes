@@ -6,9 +6,11 @@
 #include "storage/strokecodec.h"
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <QPalette>
 #include <QThreadPool>
 
 Thumbnails::Thumbnails(Database &db, QObject *parent) : QObject(parent), m_db(db) { QDir().mkpath(paths::cacheDir() + "/thumbs"); }
@@ -27,18 +29,26 @@ void Thumbnails::render(qint64 pageId)
 {
     // Read on the GUI thread (SQLite connection is not shared), paint on the pool.
     QVector<Stroke> strokes;
-    double pw = 794, ph = 1123; bool pdf = false; QString style = "dotted"; QString paper;
+    double pw = 794, ph = 1123; bool pdf = false, typed = false; QString style = "dotted"; QString paper;
     struct Pic { QString path; QRectF rect; };
     QVector<Pic> pics;
     struct Shp { QString kind, stroke, fill; QRectF rect; double width; };
     QVector<Shp> shps;
     {
-        Database::Query q(m_db, "SELECT p.width, p.height, p.style, (SELECT COUNT(*) FROM pdf_page x WHERE x.page_id=p.id), b.data, p.paper FROM page p LEFT JOIN stroke_blob b ON b.page_id=p.id WHERE p.id=?");
+        Database::Query q(m_db, "SELECT p.width, p.height, p.style, (SELECT COUNT(*) FROM pdf_page x WHERE x.page_id=p.id), b.data, p.paper, p.size_mode FROM page p LEFT JOIN stroke_blob b ON b.page_id=p.id WHERE p.id=?");
         q.bind(1, pageId);
         if (!q.step()) return;
         pw = q.f64(0); ph = q.f64(1); style = q.text(2); pdf = q.i32(3) > 0;
         paper = q.text(5);
+        typed = q.text(6) == QLatin1String("typed");
         if (!q.isNull(4)) strokecodec::decode(q.blob(4), strokes);
+    }
+    // A typed page is drawn on the theme's own base colour, not on paper, so its thumbnail is too.
+    QColor ink;
+    if (typed) {
+        const QPalette pal = QGuiApplication::palette();
+        paper = pal.color(QPalette::Base).name();
+        ink = pal.color(QPalette::Text);
     }
     if (paper.isEmpty()) {          // the page follows the app default; the thumbnail must too
         Database::Query d(m_db, "SELECT value FROM setting WHERE key='page.paper'");
@@ -55,9 +65,33 @@ void Thumbnails::render(qint64 pageId)
         q.bind(1, pageId);
         while (q.step()) shps.append({q.text(0), q.text(5), q.text(6), QRectF(q.f64(1), q.f64(2), q.f64(3), q.f64(4)), q.f64(7)});
     }
+    // Text at thumbnail size would be two pixels high, so each line of it is a bar the length of
+    // the line, as Goodnotes and Notes draw it: enough to tell a page of notes from an empty one.
+    struct Bar { QRectF rect; bool heading; };
+    QVector<Bar> bars;
+    {
+        Database::Query q(m_db, "SELECT x, y, w, markdown FROM text_block WHERE page_id=? ORDER BY y, id");
+        q.bind(1, pageId);
+        while (q.step()) {
+            const double x = q.f64(0), w = std::max(40.0, q.f64(2));
+            double y = q.f64(1);
+            const double charW = 8.0, perRow = std::max(1.0, w / charW);
+            for (QString line : q.text(3).split(QLatin1Char('\n'))) {
+                line = line.trimmed();
+                if (line.isEmpty()) { y += 12; continue; }
+                const bool heading = line.startsWith(QLatin1Char('#'));
+                const double len = line.size();
+                for (double done = 0; done < len && y < ph; done += perRow) {
+                    const double chars = std::min(perRow, len - done);
+                    bars.append({QRectF(x, y + (heading ? 6 : 7), chars * (heading ? charW * 1.35 : charW), heading ? 13 : 7), heading});
+                    y += heading ? 34 : 22;
+                }
+            }
+        }
+    }
     m_inFlight.insert(pageId);
     const QString out = QStringLiteral("%1/thumbs/%2.png").arg(paths::cacheDir()).arg(pageId);
-    QThreadPool::globalInstance()->start([this, pageId, strokes, pw, ph, pdf, style, out, pics, shps, paper] {
+    QThreadPool::globalInstance()->start([this, pageId, strokes, pw, ph, pdf, typed, style, out, pics, shps, paper, bars, ink] {
         const int W = 160, H = int(160 * ph / pw);
         QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
         const QColor sheet = paper.isEmpty() ? (pdf ? QColor(0xF3, 0xF4, 0xF6) : QColor(Qt::white)) : QColor(paper);
@@ -66,7 +100,7 @@ void Thumbnails::render(qint64 pageId)
         QPainter p(&img);
         p.setRenderHint(QPainter::Antialiasing);
         const double s = double(W) / pw;
-        if (style != "plain" && !pdf) {                    // faint guide hint
+        if (style != "plain" && !pdf && !typed) {          // faint guide hint
             p.setPen(QPen(darkPaper ? QColor(255, 255, 255, 30) : QColor(0, 0, 0, 22), 1));
             const double pitch = (style == "lined" || style == "cornell") ? 30 * s : 19 * s;
             for (double y = pitch; y < H; y += pitch) p.drawLine(QPointF(0, y), QPointF(W, y));
@@ -78,6 +112,14 @@ void Thumbnails::render(qint64 pageId)
             reader.setScaledSize(QSize(std::max(1, int(pic.rect.width() * s)), std::max(1, int(pic.rect.height() * s))));
             const QImage loaded = reader.read();
             if (!loaded.isNull()) p.drawImage(pic.rect, loaded);
+        }
+        const QColor barColour = ink.isValid() ? ink : (darkPaper ? QColor(Qt::white) : QColor(0x1A, 0x1A, 0x1A));
+        p.setPen(Qt::NoPen);
+        for (const Bar &b : bars) {
+            QColor c = barColour;
+            c.setAlphaF(b.heading ? 0.7 : 0.4);
+            p.setBrush(c);
+            p.drawRoundedRect(b.rect, 3, 3);
         }
         const PressureCurve curve = PressureCurve::forStyle(PenStyle::Classic);
         for (const Stroke &st : strokes) {
