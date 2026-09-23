@@ -586,7 +586,7 @@ Window {
             }
             PaperBar {
                 id: paperBar
-                visible: !root.presenting
+                presenting: root.presenting
                 enabled: !root.pageTyped
                 opacity: root.pageTyped ? 0 : 1
                 anchors { left: parent.left; right: parent.right; bottom: audioBar.top; leftMargin: 8; rightMargin: 8; bottomMargin: 6 }
