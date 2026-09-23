@@ -114,6 +114,47 @@ Window {
         openPage(right)
         openSplit(left)
     }
+    // ---- Presentation: the section, one page at a time, full screen, with a pen that fades.
+    property bool presenting: false
+    property var presentPages: []
+    property int presentIndex: 0
+    property int presentReturn: Window.Windowed
+    property string presentReturnPanel: "notebooks"
+    function startPresenting() {
+        const info = library.page(currentPageId)
+        if (!info.id) return
+        presentPages = library.pages(info.sectionId)
+        if (!presentPages.length) return
+        presentIndex = Math.max(0, presentPages.findIndex(p => p.id === currentPageId))
+        closeSplit()
+        canvas.selectNone()
+        leftPanel = ""; rightPanel = ""
+        presentReturn = root.visibility
+        presentReturnPanel = leftPanel
+        presenting = true
+        root.visibility = Window.FullScreen
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function stopPresenting() {
+        if (!presenting) return
+        presenting = false
+        root.visibility = presentReturn
+        leftPanel = presentReturnPanel
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function presentStep(delta) {
+        const i = presentIndex + delta
+        if (!presenting || i < 0 || i >= presentPages.length) return
+        presentIndex = i
+        openPage(presentPages[i].id)
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function presentJump(index) {
+        if (!presenting || index < 0 || index >= presentPages.length) return
+        presentIndex = index
+        openPage(presentPages[index].id)
+        Qt.callLater(() => canvas.fitPage())
+    }
     function toggleSplit() {
         if (splitPageId) closeSplit()
         else { pagePicker.excludePageId = currentPageId; pagePicker.open() }
@@ -224,7 +265,9 @@ Window {
         Rail {
             id: rail
             objectName: "rail"
+            visible: !root.presenting
             Layout.fillHeight: true
+            Layout.preferredWidth: root.presenting ? 0 : Ui.rail
             leftPanel: root.leftPanel
             rightPanel: root.rightPanel
             tablet: root.tablet
@@ -246,8 +289,8 @@ Window {
             id: leftSlot
             Layout.fillHeight: true
             Layout.bottomMargin: Ui.keyboardInset
-            Layout.preferredWidth: root.tablet ? 0 : (root.leftPanel.length ? Ui.panel : 0)
-            visible: !root.tablet && root.leftPanel.length > 0
+            Layout.preferredWidth: root.tablet || root.presenting ? 0 : (root.leftPanel.length ? Ui.panel : 0)
+            visible: !root.tablet && !root.presenting && root.leftPanel.length > 0
             Loader { anchors.fill: parent; sourceComponent: leftPanelComponent; active: !root.tablet && root.leftPanel.length > 0 }
         }
         Rectangle { visible: leftSlot.visible; Layout.fillHeight: true; implicitWidth: 1; color: Qt.alpha(pal.text, 0.14) }
@@ -270,9 +313,10 @@ Window {
                 objectName: "inkCanvas"
                 anchors.fill: parent
                 visible: root.currentPageId > 0 && !root.pageTyped
-                enabled: visible
-                topInset: (toolbar.visible ? toolbar.height + 20 : 16)
-                bottomInset: (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
+                // While presenting, the pen belongs to the laser overlay, not to the page.
+                enabled: visible && !root.presenting
+                topInset: root.presenting ? 8 : (toolbar.visible ? toolbar.height + 20 : 16)
+                bottomInset: root.presenting ? 8 : (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
                 onTopInsetChanged: if (root.currentPageId) fitPage()
                 // The paper has its own colour so that ink written under one theme stays visible
                 // under the other. pal.base only supplies the fallback for the app default.
@@ -325,6 +369,7 @@ Window {
                 anchors { fill: parent; bottomMargin: (audioBar.visible ? audioBar.height : 0) + Ui.keyboardInset }
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
+                presenting: root.presenting
                 onPageLinkActivated: (url) => root.followLink(url)
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
@@ -386,7 +431,7 @@ Window {
                 width: Ui.target + 8; height: Ui.target + 8; radius: width / 2
                 color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
                 // hidden, not dimmed: a visible "chrome" item is a hole the pen cannot draw through
-                visible: enabledLook && !canvas.inking
+                visible: enabledLook && !canvas.inking && !root.presenting
                 opacity: canvas.inking ? 0 : 0.9
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Icon { anchors.centerIn: parent; name: "" + parent.icon; implicitWidth: Ui.icon + 2; implicitHeight: Ui.icon + 2 }
@@ -408,7 +453,7 @@ Window {
             }
             Rectangle {
                 objectName: "chrome"
-                visible: root.currentPageId > 0 && page.pageList.length > 1 && !canvas.inking
+                visible: root.currentPageId > 0 && page.pageList.length > 1 && !canvas.inking && !root.presenting
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: paperBar.visible ? paperBar.height + 16 : 10 }
                 width: counter.implicitWidth + 22; height: Ui.target - 10; radius: height / 2; z: 6
                 color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
@@ -420,7 +465,7 @@ Window {
 
             Toolbar {
                 id: toolbar
-                visible: root.currentPageId > 0 && !root.pageTyped
+                visible: root.currentPageId > 0 && !root.pageTyped && !root.presenting
                 canvas: canvas
                 pageId: root.currentPageId
                 tablet: root.tablet
@@ -431,6 +476,7 @@ Window {
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 enabled: visible && opacity > 0.5
                 onExportRequested: exportDialog.open()
+                onPresentRequested: root.startPresenting()
                 onPictureRequested: pictureDialog.open()
                 onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
@@ -460,7 +506,7 @@ Window {
 
             AudioPanel {
                 id: audioBar
-                visible: root.currentPageId > 0
+                visible: root.currentPageId > 0 && !root.presenting
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; bottomMargin: Ui.keyboardInset }
                 canvas: canvas
                 sectionId: library.page(root.currentPageId).sectionId || 0
@@ -472,6 +518,7 @@ Window {
             }
             PaperBar {
                 id: paperBar
+                visible: !root.presenting
                 enabled: !root.pageTyped
                 opacity: root.pageTyped ? 0 : 1
                 anchors { left: parent.left; right: parent.right; bottom: audioBar.top; leftMargin: 8; rightMargin: 8; bottomMargin: 6 }
@@ -516,7 +563,7 @@ Window {
                 elide: Text.ElideMiddle
                 text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
                 color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
-                visible: root.currentPageId > 0 && !canvas.inking && width >= 60
+                visible: root.currentPageId > 0 && !canvas.inking && !root.presenting && width >= 60
             }
             Text {
                 anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
@@ -528,7 +575,7 @@ Window {
             // In split view the left side can be closed too; the right-hand page then takes over.
             Item {
                 objectName: "chrome"
-                visible: root.splitPageId > 0 && root.currentPageId > 0 && !canvas.inking
+                visible: root.splitPageId > 0 && root.currentPageId > 0 && !canvas.inking && !root.presenting
                 // Beside the divider, level with the page arrows: clear of the toolbar at any width.
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12; verticalCenterOffset: -34 }
                 width: Ui.target + 8; height: Ui.target + 8
@@ -683,6 +730,62 @@ Window {
                 }
             }
 
+            // ---- Presentation: the laser, and the way out.
+            LaserOverlay {
+                id: laserLayer
+                objectName: "laserOverlay"
+                anchors.fill: parent
+                visible: root.presenting
+                enabled: visible
+                z: 25
+                onAdvance: (delta) => root.presentStep(delta)
+                onTapped: (position) => root.presentStep(position.x < width * 0.25 ? -1 : 1)
+            }
+            Rectangle {
+                objectName: "chrome"
+                visible: root.presenting
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 18 }
+                implicitWidth: presentRow.implicitWidth + 24
+                implicitHeight: Ui.target + 8
+                radius: height / 2
+                color: Qt.alpha(pal.window, 0.92)
+                border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                opacity: laserLayer.drawing ? 0.25 : 1
+                Behavior on opacity { NumberAnimation { duration: Ui.quick } }
+                z: 26
+                component PresentButton: Rectangle {
+                    property string icon
+                    property string tip
+                    property bool enabledLook: true
+                    signal clicked()
+                    implicitWidth: Ui.target; implicitHeight: Ui.target; radius: width / 2
+                    color: tap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (hov.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                    opacity: enabledLook ? 1 : 0.35
+                    Accessible.role: Accessible.Button
+                    Accessible.name: tip
+                    Icon { anchors.centerIn: parent; name: parent.icon }
+                    HoverHandler { id: hov }
+                    TapHandler { id: tap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
+                    ToolTip.visible: hov.hovered; ToolTip.delay: 600; ToolTip.text: tip
+                }
+                RowLayout {
+                    id: presentRow
+                    anchors.centerIn: parent
+                    spacing: 4
+                    PresentButton { objectName: "presentPrev"; icon: "go-previous"; tip: "Previous slide (←)"
+                                    enabledLook: root.presentIndex > 0; onClicked: root.presentStep(-1) }
+                    Text {
+                        objectName: "presentCounter"
+                        text: (root.presentIndex + 1) + " / " + root.presentPages.length
+                        color: pal.windowText; font.pixelSize: Ui.text; Layout.leftMargin: 4; Layout.rightMargin: 4
+                    }
+                    PresentButton { objectName: "presentNext"; icon: "go-next"; tip: "Next slide (→ or space)"
+                                    enabledLook: root.presentIndex < root.presentPages.length - 1; onClicked: root.presentStep(1) }
+                    Rectangle { implicitWidth: 1; implicitHeight: Ui.target - 16; color: Qt.alpha(pal.text, Ui.hairline) }
+                    PresentButton { objectName: "presentExit"; icon: "window-close"; tip: "Leave presentation (Esc)"; onClicked: root.stopPresenting() }
+                }
+            }
+
             ObjectMenu {
                 id: objectMenu
                 parent: Overlay.overlay
@@ -761,7 +864,7 @@ Window {
         }
         Loader {
             id: splitLoader
-            active: root.splitPageId > 0 && !root.probeMode
+            active: root.splitPageId > 0 && !root.probeMode && !root.presenting
             visible: active
             Layout.fillHeight: true
             Layout.bottomMargin: Ui.keyboardInset
@@ -781,8 +884,8 @@ Window {
             id: rightSlot
             Layout.fillHeight: true
             Layout.bottomMargin: Ui.keyboardInset
-            Layout.preferredWidth: root.rightPanel.length && !root.tablet ? Ui.rightPanel : 0
-            visible: !root.tablet && root.rightPanel.length > 0
+            Layout.preferredWidth: root.rightPanel.length && !root.tablet && !root.presenting ? Ui.rightPanel : 0
+            visible: !root.tablet && !root.presenting && root.rightPanel.length > 0
             Loader { anchors.fill: parent; sourceComponent: rightPanelComponent; active: !root.tablet && root.rightPanel.length > 0 }
         }
     }
@@ -919,6 +1022,7 @@ Window {
         onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
         onOpenBeside: (pageId) => { root.browserVisible = false; root.openSplit(pageId) }
+        onPresent: (pageId) => { root.browserVisible = false; root.openPage(pageId); root.startPresenting() }
     }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
@@ -927,7 +1031,7 @@ Window {
 
     // ================================================================ shortcuts (Goodnotes-shaped)
     // While a full-screen surface is up, the page behind it is not what the keys mean.
-    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible
+    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible || presenting
     // Keys that mean something only to the ink canvas must never fire while you are typing.
     readonly property bool pageKeys: !overlayUp && !keys.focusIsText
     readonly property bool inkKeys: pageKeys && !pageTyped
@@ -949,6 +1053,7 @@ Window {
     // for keys below Escape — so while you are typing this used to swallow Escape and TextLayer's
     // Keys.onEscapePressed never ran.
     Shortcut { enabled: !keys.focusIsText; sequence: "Escape"; onActivated: {
+        if (root.presenting) { root.stopPresenting(); return }
         if (objectMenu.opened) { objectMenu.close(); return }
         if (root.onboardingVisible) { root.onboardingVisible = false; return }
         if (root.reviewVisible) { root.reviewVisible = false; return }
@@ -997,6 +1102,11 @@ Window {
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+O"; onActivated: { const info = library.page(root.currentPageId); if (info.id) { importDialog.notebookId = info.notebookId; importDialog.open() } } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+B"; onActivated: canvas.addBenchmarkStrokes(10000) }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+I"; onActivated: canvas.infinite = !canvas.infinite }
+    Shortcut { enabled: root.presenting; sequences: ["Right", "Space", "PgDown", "Down"]; onActivated: root.presentStep(1) }
+    Shortcut { enabled: root.presenting; sequences: ["Left", "PgUp", "Up"]; onActivated: root.presentStep(-1) }
+    Shortcut { enabled: root.presenting; sequence: "Home"; onActivated: root.presentJump(0) }
+    Shortcut { enabled: root.presenting; sequence: "End"; onActivated: root.presentJump(root.presentPages.length - 1) }
+    Shortcut { sequence: "F5"; onActivated: root.presenting ? root.stopPresenting() : root.startPresenting() }
     Shortcut { sequence: "F12"; onActivated: root.showStats = !root.showStats }
     Shortcut { sequence: "F11"; onActivated: root.visibility = root.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
     Shortcut { sequence: "F1"; onActivated: root.onboardingVisible = true }

@@ -16,6 +16,7 @@ Rectangle {
     signal closed()
     signal openPage(var pageId)
     signal openBeside(var pageId)
+    signal present(var pageId)
     signal toast(string message)
 
     SystemPalette { id: pal }
@@ -155,6 +156,7 @@ Rectangle {
                     browser.openPage(id)
                 }
             }
+            BarButton { visible: !browser.picking && pages.count > 0; label: "Present"; onClicked: browser.present(browser.currentPageId || pages.get(0).pid) }
             BarButton { label: "Close (Esc)"; onClicked: browser.closed() }
         }
 

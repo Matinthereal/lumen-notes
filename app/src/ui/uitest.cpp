@@ -628,6 +628,70 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
         root->setProperty("leftPanel", QStringLiteral("notebooks"));
         spin(200);
     }
+
+    // ---- 18. Presentation: the section full screen, keys and taps move between slides, the pen
+    //          leaves a mark that fades and never reaches the page, and Escape gets out.
+    if (library) {
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 firstSlide = currentPage();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        chord(win, Qt::Key_F5, Qt::NoModifier);
+        waitFor([&] { return root->property("presenting").toBool(); }, 2000);
+        r.check("F5 starts the presentation", root->property("presenting").toBool());
+        spin(600);
+        QQuickItem *rail = findOne(win, QStringLiteral("rail"));
+        QQuickItem *overlay = findOne(win, QStringLiteral("laserOverlay"));
+        r.check("presenting hides the rail and shows the slide alone", rail && !rail->isVisible());
+        r.check("the pen layer is up", overlay && overlay->isVisible());
+        QQuickItem *counter = findOne(win, QStringLiteral("presentCounter"));
+        r.check("the slide counter says where you are", counter && counter->property("text").toString().contains(QLatin1Char('/')),
+                counter ? counter->property("text").toString() : QString());
+
+        shot(win, QStringLiteral("4-presentation-slide"));
+
+        // Arrow keys move between slides.
+        const int indexBefore = root->property("presentIndex").toInt();
+        chord(win, Qt::Key_Left, Qt::NoModifier);
+        spin(500);
+        r.check("← goes back a slide", root->property("presentIndex").toInt() == indexBefore - 1 && currentPage() != firstSlide,
+                QStringLiteral("index %1 → %2").arg(indexBefore).arg(root->property("presentIndex").toInt()));
+        chord(win, Qt::Key_Right, Qt::NoModifier);
+        spin(500);
+        r.check("→ goes on again", currentPage() == firstSlide);
+
+        // A tap on the left quarter goes back; anywhere else goes on.
+        if (overlay) {
+            const QRectF box = overlay->mapRectToScene(QRectF(0, 0, overlay->width(), overlay->height()));
+            tap(win, nullptr, Qt::LeftButton, QPointF(box.left() + box.width() * 0.1, box.center().y()));
+            spin(500);
+            r.check("a tap on the left goes back", root->property("presentIndex").toInt() == indexBefore - 1);
+            tap(win, nullptr, Qt::LeftButton, QPointF(box.center().x() + box.width() * 0.3, box.center().y()));
+            spin(500);
+            r.check("a tap on the right goes on", root->property("presentIndex").toInt() == indexBefore);
+
+            // The pen draws a laser that fades, and leaves the page untouched.
+            const int inkBefore = canvas ? canvas->strokeCount() : 0;
+            const QPointF from = box.center() - QPointF(160, 60);
+            sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+            spin(30);
+            for (int i = 1; i <= 12; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(26.0 * i, 12.0 * i * ((i % 3) - 1)), Qt::LeftButton); spin(16); }
+            shot(win, QStringLiteral("4-presentation"));
+            sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(312, 0), Qt::LeftButton);
+            spin(200);
+            r.check("the pen leaves a laser trail", overlay->property("trails").toList().size() == 1,
+                    QStringLiteral("%1 trails").arg(overlay->property("trails").toList().size()));
+            r.check("and no ink on the page", !canvas || canvas->strokeCount() == inkBefore);
+            waitFor([&] { return overlay->property("trails").toList().isEmpty(); }, 4000);
+            r.check("the trail fades away on its own", overlay->property("trails").toList().isEmpty());
+        }
+        pressEscape(win);
+        spin(400);
+        r.check("Escape leaves the presentation", !root->property("presenting").toBool());
+        r.check("and the rail comes back", rail && rail->isVisible());
+    }
 }
 
 } // namespace

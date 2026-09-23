@@ -33,6 +33,7 @@ Rectangle {
             ["PgUp · PgDn", "Previous · next page"],
             ["Ctrl+P", "All pages in this section, as thumbnails"],
             ["Ctrl+Shift+S", "Split view: another page beside this one (drag the divider to resize)"],
+            ["F5", "Present this section — pen draws a fading laser, ← → or tap to move, Esc to leave"],
             ["Ctrl+D", "Duplicate this page"],
             ["Ctrl+B", "Star this page"],
             ["Ctrl+W", "Close the page — nothing open is a fine place to be"],

@@ -100,6 +100,7 @@ qt_add_qml_module(lumen
         qml/TagChip.qml
         qml/SplitPane.qml
         qml/PagePicker.qml
+        qml/LaserOverlay.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp

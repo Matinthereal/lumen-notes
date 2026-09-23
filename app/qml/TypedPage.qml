@@ -10,6 +10,7 @@ Item {
     id: typed
     objectName: "typedPage"
     property var pageId: 0
+    property bool presenting: false        // full-screen slide: the text is read, not written
     property var blockId: 0
     property bool loading: false
     readonly property alias editor: area
@@ -136,6 +137,7 @@ Item {
     Rectangle {
         id: formatBar
         objectName: "chrome"
+        visible: !typed.presenting
         anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 12 }
         width: Math.min(parent.width - 24, bar.implicitWidth + 16)
         height: Ui.target + 4
@@ -186,7 +188,7 @@ Item {
     // which re-wraps the text, which changes the height, which hides the bar again.
     Flickable {
         id: scroller
-        anchors { top: formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: 12 }
+        anchors { top: typed.presenting ? parent.top : formatBar.bottom; bottom: parent.bottom; left: parent.left; right: parent.right; topMargin: 12 }
         contentWidth: width
         contentHeight: sheet.height + 48
         clip: true
@@ -215,6 +217,7 @@ Item {
                     background: null
                     textFormat: TextEdit.RichText
                     wrapMode: TextEdit.Wrap
+                    readOnly: typed.presenting
                     selectByMouse: true
                     persistentSelection: true
                     color: pal.text
