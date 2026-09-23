@@ -183,7 +183,9 @@ private slots:
         QImage src(200, 100, QImage::Format_RGB32); src.fill(Qt::blue);
         const QString file = dir.path() + "/photo.png";
         QVERIFY(src.save(file, "PNG"));
-        const QByteArray original = QFile(file).readAll();
+        const auto bytes = [](const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); };
+        const QByteArray original = bytes(file);
+        QVERIFY(!original.isEmpty());
 
         const qint64 id = images.insertFile(page, QUrl::fromLocalFile(file), 0, 0, 200);
         QCOMPARE(images.image(id).value("cropW").toDouble(), 1.0);
@@ -214,8 +216,8 @@ private slots:
         QCOMPARE(m.value("w").toDouble(), 200.0);           // the whole picture again, 2:1 as it was
         QCOMPARE(m.value("h").toDouble(), 100.0);
 
-        QCOMPARE(QFile(file).readAll(), original);          // nothing was ever written to the picture
-        QCOMPARE(QFile(m.value("path").toString()).readAll(), original);
+        QCOMPARE(bytes(file), original);                    // nothing was ever written to the picture
+        QCOMPARE(bytes(m.value("path").toString()), original);
     }
 
     void picturesLandOnAPageAndComeBack() {
