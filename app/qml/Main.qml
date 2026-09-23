@@ -64,6 +64,10 @@ Window {
         const info = library.page(pageId)
         if (!info.id) return
         if (pageId === splitPageId) closeSplit()     // one page, one side: it moves over here
+        if (!navigating && currentPageId > 0 && currentPageId !== pageId) {
+            backStack = backStack.concat([currentPageId]).slice(-50)
+            forwardStack = []
+        }
         canvas.resetHistory()
         canvas.clearBackground()
         pageStore.load(pageId)
@@ -221,11 +225,38 @@ Window {
     }
     function showTagged(tag) { browserTag = tag; if (currentPageId || tag.length) browserVisible = true }
 
+    // ---- Where you have been. Following a link is only half a move: Alt+← comes back.
+    property var backStack: []
+    property var forwardStack: []
+    property bool navigating: false
+    function stepHistory(back) {
+        let from = back ? backStack.slice() : forwardStack.slice()
+        let to = back ? forwardStack.slice() : backStack.slice()
+        while (from.length) {
+            const id = from[from.length - 1]
+            from = from.slice(0, -1)
+            if (!library.page(id).id) continue           // deleted since: skip over it
+            if (currentPageId > 0) to = to.concat([currentPageId]).slice(-50)
+            navigating = true
+            openPage(id)
+            navigating = false
+            break
+        }
+        backStack = back ? from : to
+        forwardStack = back ? to : from
+    }
+    function goBack() { stepHistory(true) }
+    function goForward() { stepHistory(false) }
+
     // A [[link]] followed from any text. The id is the link; a page since deleted says so.
     function followLink(url) {
         const id = library.linkTarget(url)
         if (id) openPage(id)
         else toastBar.show("That page has been deleted", null)
+    }
+    function pageName(pageId) {
+        const info = library.page(pageId)
+        return info.id ? ((info.title || "").length ? info.title.replace("\u200b", "") : "that page") : "that page"
     }
     function stepPage(delta) { const id = library.nextPageId(currentPageId, delta); if (id) openPage(id) }
     function toggleLeft(name) { leftPanel = leftPanel === name ? "" : name }
@@ -563,15 +594,51 @@ Window {
             }
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
-            // page itself, and never longer than the space it has.
-            Text {
-                anchors { left: parent.left; top: parent.top; leftMargin: 14; topMargin: 14 }
-                // …and never under the bar centred at the top of the page.
-                width: Math.max(0, Math.min(implicitWidth, page.width * 0.4, (page.width - (root.pageTyped ? typedPage.barWidth : toolbar.width)) / 2 - 28))
-                elide: Text.ElideMiddle
-                text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
-                color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
-                visible: root.currentPageId > 0 && !canvas.inking && !root.presenting && width >= 60
+            // page itself, and never longer than the space it has. The way back sits beside it.
+            component HistoryButton: Rectangle {
+                property string icon
+                property string tip
+                signal clicked()
+                implicitWidth: Ui.target - 8; implicitHeight: Ui.target - 8; radius: width / 2
+                color: histTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (histHover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                Accessible.role: Accessible.Button
+                Accessible.name: tip
+                Icon { anchors.centerIn: parent; name: parent.icon; implicitWidth: Ui.icon - 2; implicitHeight: Ui.icon - 2 }
+                HoverHandler { id: histHover }
+                TapHandler { id: histTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
+                ToolTip.visible: histHover.hovered; ToolTip.delay: 600; ToolTip.text: tip
+            }
+            Row {
+                id: crumbRow
+                objectName: "chrome"
+                anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 8 }
+                spacing: 6
+                visible: root.currentPageId > 0 && !canvas.inking && !root.presenting
+                // What the buttons take, worked out from the stacks: reading it off the Row's own
+                // width would make the label's width depend on the label.
+                readonly property real buttonsWidth: (root.backStack.length > 0 ? Ui.target - 2 : 0) + (root.forwardStack.length > 0 ? Ui.target - 2 : 0)
+                HistoryButton {
+                    objectName: "navBack"
+                    visible: root.backStack.length > 0
+                    icon: "go-previous"; tip: "Back to " + root.pageName(root.backStack[root.backStack.length - 1]) + " (Alt+←)"
+                    onClicked: root.goBack()
+                }
+                HistoryButton {
+                    objectName: "navForward"
+                    visible: root.forwardStack.length > 0
+                    icon: "go-next"; tip: "Forward to " + root.pageName(root.forwardStack[root.forwardStack.length - 1]) + " (Alt+→)"
+                    onClicked: root.goForward()
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, Math.min(implicitWidth, page.width * 0.4,
+                                                (page.width - (root.pageTyped ? typedPage.barWidth : toolbar.width)) / 2 - 28 - crumbRow.buttonsWidth))
+                    elide: Text.ElideMiddle
+                    text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
+                    color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                    visible: width >= 60
+                }
             }
             Text {
                 anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
@@ -1091,6 +1158,8 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+-"; onActivated: canvas.zoomAt(1 / 1.2, Qt.point(canvas.width / 2, canvas.height / 2)) }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+N"; onActivated: root.newPage() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+N"; onActivated: root.newSection() }
+    Shortcut { enabled: !root.overlayUp; sequence: "Alt+Left"; onActivated: root.goBack() }
+    Shortcut { enabled: !root.overlayUp; sequence: "Alt+Right"; onActivated: root.goForward() }
     Shortcut { enabled: !root.overlayUp; sequence: "PgDown"; onActivated: root.stepPage(1) }
     Shortcut { enabled: !root.overlayUp; sequence: "PgUp"; onActivated: root.stepPage(-1) }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+S"; onActivated: pageStore.flush() }

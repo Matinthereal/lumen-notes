@@ -31,6 +31,7 @@ Rectangle {
         { title: "Pages", keys: [
             ["Ctrl+N · Ctrl+Shift+N", "New page · new section"],
             ["PgUp · PgDn", "Previous · next page"],
+            ["Alt+← · Alt+→", "Back and forward through the pages you have opened"],
             ["Ctrl+P", "All pages in this section, as thumbnails"],
             ["Ctrl+Shift+S", "Split view: another page beside this one (drag the divider to resize)"],
             ["F5", "Present this section — pen draws a fading laser, ← → or tap to move, Esc to leave"],

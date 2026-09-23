@@ -734,6 +734,39 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
             r.check("the typed page has a block to give an outline", false);
         }
     }
+
+    // ---- 20. Back and forward: following a link (or any page change) can be undone as a move.
+    if (library) {
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 first = currentPage();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 second = currentPage();
+        r.check("opening a page remembers where you were", root->property("backStack").toList().contains(QVariant(first)),
+                QStringLiteral("%1 in the stack").arg(root->property("backStack").toList().size()));
+        shot(win, QStringLiteral("5-history"));
+        QQuickItem *back = findOne(win, QStringLiteral("navBack"));
+        r.check("the way back is on screen", back && back->isVisible());
+        if (back && back->isVisible()) {
+            tap(win, back);
+            waitFor([&] { return currentPage() == first; }, 2000);
+            r.check("Back returns to the page before", currentPage() == first);
+            QQuickItem *fwd = findOne(win, QStringLiteral("navForward"));
+            r.check("and offers the way forward", fwd && fwd->isVisible());
+            if (fwd && fwd->isVisible()) {
+                tap(win, fwd);
+                waitFor([&] { return currentPage() == second; }, 2000);
+                r.check("Forward goes back again", currentPage() == second);
+            }
+        }
+        chord(win, Qt::Key_Left, Qt::AltModifier);
+        waitFor([&] { return currentPage() == first; }, 2000);
+        r.check("Alt+← does the same", currentPage() == first);
+        chord(win, Qt::Key_Right, Qt::AltModifier);
+        waitFor([&] { return currentPage() == second; }, 2000);
+        r.check("Alt+→ too", currentPage() == second);
+    }
 }
 
 } // namespace
