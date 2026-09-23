@@ -351,6 +351,8 @@ private:
         qint64 id = 0;
         QString path;
         QRectF rect;
+        QRectF crop = QRectF(0, 0, 1, 1);   // the part of the turned picture to show, as a fraction
+        int rotation = 0;                   // quarter turns clockwise, in degrees
         QImage pending;          // decoded, waiting for the render thread to make a texture
         bool needsTexture = false;
         class QSGTexture *texture = nullptr;

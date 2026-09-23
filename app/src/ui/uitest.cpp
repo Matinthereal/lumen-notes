@@ -290,6 +290,17 @@ bool sheetOpen(QQuickWindow *w)
     return content && content->isVisible();
 }
 
+
+// Any item in the window showing this text — the object menu's actions are plain Text items.
+QQuickItem *itemWithText(QQuickItem *from, const QString &text)
+{
+    if (from->property("text").toString() == text && from->isVisible()) return from;
+    const auto kids = from->childItems();
+    for (QQuickItem *k : kids)
+        if (QQuickItem *hit = itemWithText(k, text)) return hit;
+    return nullptr;
+}
+
 QQuickItem *sheetAction(QQuickWindow *w, const QString &label)
 {
     for (QQuickItem *t : findAll(w, QStringLiteral("actionSheetLabel")))
@@ -707,6 +718,99 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("hand")) {
         handChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
+    // ---- 12i. A picture can be trimmed and turned, and the file it came from is untouched.
+    const auto pictureChecks = [&] {
+        ensurePage();
+        QObject *images = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            images = engine->rootContext()->contextProperty(QStringLiteral("images")).value<QObject *>();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        if (!images || !canvas) { r.check("the pictures service and canvas are there", false); return; }
+        const QString png = QDir::temp().filePath(QStringLiteral("lumen-uitest-photo.png"));
+        QImage photo(200, 100, QImage::Format_RGB32);
+        photo.fill(Qt::darkCyan);
+        photo.save(png);
+        QFile original(png);
+        original.open(QIODevice::ReadOnly);
+        const QByteArray originalBytes = original.readAll();
+        original.close();
+
+        canvas->setTool(QStringLiteral("lasso"));
+        qint64 id = 0;
+        QMetaObject::invokeMethod(images, "insertFile", Q_RETURN_ARG(qint64, id), Q_ARG(qint64, currentPage()),
+                                  Q_ARG(QUrl, QUrl::fromLocalFile(png)), Q_ARG(double, 80), Q_ARG(double, 80), Q_ARG(double, 240));
+        r.check("a picture lands on the page", id > 0);
+        if (!id) return;
+        spin(300);
+        const auto shot = [&](const char *key) {
+            QVariantMap m;
+            QMetaObject::invokeMethod(images, "image", Q_RETURN_ARG(QVariantMap, m), Q_ARG(qint64, id));
+            return m.value(QLatin1String(key)).toDouble();
+        };
+        const QPointF middle = canvas->mapToScene(canvas->toScreen(QPointF(80 + shot("w") / 2, 80 + shot("h") / 2)));
+        tap(win, canvas, Qt::LeftButton, middle);           // select it
+        tap(win, canvas, Qt::LeftButton, middle);
+        tap(win, canvas, Qt::LeftButton, middle);           // and again: its options
+        spin(300);
+        QQuickItem *trim = itemWithText(win->contentItem(), QStringLiteral("Trim…"));
+        r.check("a picture's options offer Trim", trim != nullptr);
+        if (!trim) return;
+        tap(win, trim);
+        spin(250);
+        const QList<QQuickItem *> grips = findAll(win, QStringLiteral("cropGrip"));
+        r.check("trimming shows four corners to drag", grips.size() == 4, QStringLiteral("%1 grips").arg(grips.size()));
+        QQuickItem *topLeft = nullptr;
+        for (QQuickItem *g : grips) {
+            const QPointF c = centre(g);
+            if (!topLeft || c.x() + c.y() < centre(topLeft).x() + centre(topLeft).y()) topLeft = g;
+        }
+        if (topLeft) {
+            const QPointF from = centre(topLeft);
+            sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+            for (int i = 1; i <= 6; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(6, 4) * i, Qt::LeftButton); spin(16); }
+            sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(36, 24), Qt::LeftButton);
+            spin(120);
+        }
+        const double widthBefore = shot("w");
+        QQuickItem *done = findOne(win, QStringLiteral("cropDone"));
+        r.check("and a finger-sized Trim to finish", done && done->height() >= 40);
+        if (done) { tap(win, done); spin(300); }
+        r.check("trimming takes a piece off the picture", shot("cropW") < 0.999 && shot("w") < widthBefore,
+                QStringLiteral("cropW=%1 w=%2 (was %3)").arg(shot("cropW")).arg(shot("w")).arg(widthBefore));
+        r.check("and no grips are left on the page", findAll(win, QStringLiteral("cropGrip")).isEmpty()
+                || !findAll(win, QStringLiteral("cropGrip")).first()->isVisible());
+
+        // Turn it: the crop turns with it and the sides swap.
+        const double wasW = shot("w"), wasH = shot("h");
+        tap(win, canvas, Qt::LeftButton, middle);
+        tap(win, canvas, Qt::LeftButton, middle);
+        spin(250);
+        QQuickItem *turn = itemWithText(win->contentItem(), QStringLiteral("Turn"));
+        r.check("a picture's options offer Turn", turn != nullptr);
+        if (turn) {
+            tap(win, turn);
+            spin(250);
+            QVariantMap m;
+            QMetaObject::invokeMethod(images, "image", Q_RETURN_ARG(QVariantMap, m), Q_ARG(qint64, id));
+            r.check("turning the picture turns it a quarter", m.value(QStringLiteral("rotation")).toInt() == 90);
+            r.check("and swaps its sides", qAbs(m.value(QStringLiteral("w")).toDouble() - wasH) < 0.01
+                                        && qAbs(m.value(QStringLiteral("h")).toDouble() - wasW) < 0.01);
+        }
+        pressEscape(win);
+        QFile after(png);
+        after.open(QIODevice::ReadOnly);
+        r.check("and the picture file itself is never written", after.readAll() == originalBytes);
+        after.close();
+        QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, id));
+        QFile::remove(png);
+        spin(150);
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("picture")) {
+        pictureChecks();
         qInstallMessageHandler(g_previous);
         return r.failures;
     }
@@ -1419,6 +1523,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12h. (above)
     handChecks();
+
+    // ---- 12i. (above)
+    pictureChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

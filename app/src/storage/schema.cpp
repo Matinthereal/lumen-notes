@@ -75,6 +75,10 @@ int ensureSchema(Database &db)
         db.exec("ALTER TABLE text_block ADD COLUMN edit_times TEXT NOT NULL DEFAULT '[]'");
         db.exec("ALTER TABLE page ADD COLUMN starred INTEGER NOT NULL DEFAULT 0");
         db.exec("ALTER TABLE page ADD COLUMN paper TEXT NOT NULL DEFAULT ''");
+        for (const char *col : {"crop_x REAL NOT NULL DEFAULT 0", "crop_y REAL NOT NULL DEFAULT 0",
+                                "crop_w REAL NOT NULL DEFAULT 1", "crop_h REAL NOT NULL DEFAULT 1",
+                                "rotation INTEGER NOT NULL DEFAULT 0"})
+            db.exec(QStringLiteral("ALTER TABLE image ADD COLUMN %1").arg(QLatin1String(col)));
         db.exec(QStringLiteral("INSERT INTO schema_version(version) VALUES (%1)").arg(kSchemaVersion));
         version = kSchemaVersion;
     }
@@ -96,6 +100,14 @@ int ensureSchema(Database &db)
     if (version < 5) {   // 2026-09-05: shapes are objects, not frozen ink — they keep fill, outline and size
         db.exec("UPDATE schema_version SET version=5");
         version = 5;     // the CREATE above is enough; nothing to migrate
+    }
+    if (version < 6) {   // 2026-09-23: pictures are cropped and turned without touching the original file
+        for (const char *col : {"crop_x REAL NOT NULL DEFAULT 0", "crop_y REAL NOT NULL DEFAULT 0",
+                                "crop_w REAL NOT NULL DEFAULT 1", "crop_h REAL NOT NULL DEFAULT 1",
+                                "rotation INTEGER NOT NULL DEFAULT 0"})
+            if (!db.exec(QStringLiteral("ALTER TABLE image ADD COLUMN %1").arg(QLatin1String(col)))) { db.rollback(); return 0; }
+        db.exec("UPDATE schema_version SET version=6");
+        version = 6;
     }
     if (!db.commit()) return 0;
     return version;

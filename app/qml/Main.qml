@@ -236,7 +236,7 @@ Window {
                 onToastAction: (m, label, fn) => toast.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "picture"
-                    objectMenu.info = ({})
+                    objectMenu.info = imageLayer.selectedInfo()
                     objectMenu.openOver(imageLayer.mapToItem(objectMenu.parent, where.x, where.y, where.width, where.height))
                 }
             }
@@ -624,6 +624,9 @@ Window {
                 onOutlineChosen: (c) => { if (subject === "shape") shapeLayer.restyle(c, undefined, 0); info = subject === "shape" ? shapeLayer.selected() : ({}) }
                 onFillChosen: (c) => { shapeLayer.restyle("", c, 0); info = shapeLayer.selected() }
                 onWidthChosen: (w) => { shapeLayer.restyle("", undefined, w); info = shapeLayer.selected() }
+                onCropAsked: imageLayer.startCrop()
+                onRotateAsked: { imageLayer.rotateSelected(); info = imageLayer.selectedInfo() }
+                onResetAsked: imageLayer.resetSelected()
                 onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toast.show("Add the picture again to duplicate it", null)
                 onDeleteAsked: subject === "shape" ? shapeLayer.removeSelected() : imageLayer.removeSelected()
             }

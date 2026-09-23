@@ -171,6 +171,50 @@ private slots:
         const qint64 again = lib.createPage(sec);
         if (again == p) QVERIFY2(!QFile::exists(jpath), "a recycled rowid must start with a clean journal");
     }
+    void cropAndTurnLeaveTheFileAlone() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+        Library lib(db);
+        const qint64 page = lib.createPage(lib.createSection(lib.createNotebook("N", "#000"), "S"));
+        Images images(db);
+        QImage src(200, 100, QImage::Format_RGB32); src.fill(Qt::blue);
+        const QString file = dir.path() + "/photo.png";
+        QVERIFY(src.save(file, "PNG"));
+        const QByteArray original = QFile(file).readAll();
+
+        const qint64 id = images.insertFile(page, QUrl::fromLocalFile(file), 0, 0, 200);
+        QCOMPARE(images.image(id).value("cropW").toDouble(), 1.0);
+        QCOMPARE(images.image(id).value("rotation").toInt(), 0);
+
+        // Trim the right half: the crop is a fraction of the picture, the rect is where it goes.
+        images.setCrop(id, 0, 0, 0.5, 1, 0, 0, 100, 100);
+        QVariantMap m = images.image(id);
+        QCOMPARE(m.value("cropW").toDouble(), 0.5);
+        QCOMPARE(m.value("w").toDouble(), 100.0);
+
+        // A quarter turn turns the crop with it and swaps the sides around the same middle.
+        images.rotate(id, 1);
+        m = images.image(id);
+        QCOMPARE(m.value("rotation").toInt(), 90);
+        QCOMPARE(m.value("cropX").toDouble(), 0.0);
+        QCOMPARE(m.value("cropY").toDouble(), 0.0);
+        QCOMPARE(m.value("cropW").toDouble(), 1.0);
+        QCOMPARE(m.value("cropH").toDouble(), 0.5);
+        QCOMPARE(m.value("w").toDouble(), 100.0);           // it was square, so the sides look the same
+        images.rotate(id, 4);                               // four quarter turns is where it started
+        QCOMPARE(images.image(id).value("rotation").toInt(), 90);
+
+        images.resetCrop(id);
+        m = images.image(id);
+        QCOMPARE(m.value("rotation").toInt(), 0);
+        QCOMPARE(m.value("cropW").toDouble(), 1.0);
+        QCOMPARE(m.value("w").toDouble(), 200.0);           // the whole picture again, 2:1 as it was
+        QCOMPARE(m.value("h").toDouble(), 100.0);
+
+        QCOMPARE(QFile(file).readAll(), original);          // nothing was ever written to the picture
+        QCOMPARE(QFile(m.value("path").toString()).readAll(), original);
+    }
+
     void picturesLandOnAPageAndComeBack() {
         QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
         Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);

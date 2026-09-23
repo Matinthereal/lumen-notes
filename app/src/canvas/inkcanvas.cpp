@@ -1078,9 +1078,13 @@ void InkCanvas::setImages(const QVariantList &images)
         img.path = m.value(QStringLiteral("path")).toString();
         img.rect = QRectF(m.value(QStringLiteral("x")).toDouble(), m.value(QStringLiteral("y")).toDouble(),
                           m.value(QStringLiteral("w")).toDouble(), m.value(QStringLiteral("h")).toDouble());
-        // Keep the texture we already have for this picture; only its rectangle may have moved.
+        img.crop = QRectF(m.value(QStringLiteral("cropX"), 0).toDouble(), m.value(QStringLiteral("cropY"), 0).toDouble(),
+                          m.value(QStringLiteral("cropW"), 1).toDouble(), m.value(QStringLiteral("cropH"), 1).toDouble());
+        img.rotation = m.value(QStringLiteral("rotation"), 0).toInt();
+        // Keep the texture we already have for this picture; only its rectangle may have moved. A
+        // different crop or turn is different pixels, so that one is decoded again.
         for (PageImage &old : m_images) {
-            if (old.id != img.id || old.path != img.path) continue;
+            if (old.id != img.id || old.path != img.path || old.crop != img.crop || old.rotation != img.rotation) continue;
             img.texture = old.texture; img.node = old.node; old.texture = nullptr; old.node = nullptr;
             break;
         }
@@ -1097,11 +1101,22 @@ void InkCanvas::setImages(const QVariantList &images)
         if (img.texture || img.path.isEmpty()) continue;
         const qint64 id = img.id;
         const QString path = img.path;
-        QThreadPool::globalInstance()->start([self, id, path] {
+        const QRectF crop = img.crop;
+        const int rotation = img.rotation;
+        QThreadPool::globalInstance()->start([self, id, path, crop, rotation] {
             QImageReader reader(path);
             reader.setAutoTransform(true);
             QImage loaded = reader.read();
             if (loaded.isNull() || !self) return;
+            // Turn first, then take the crop out of the turned picture — the order the crop rect
+            // was measured in. The file itself is never written.
+            if (rotation % 360 != 0) loaded = loaded.transformed(QTransform().rotate(rotation), Qt::SmoothTransformation);
+            if (crop != QRectF(0, 0, 1, 1)) {
+                const QRect box(qRound(crop.x() * loaded.width()), qRound(crop.y() * loaded.height()),
+                                std::max(1, qRound(crop.width() * loaded.width())), std::max(1, qRound(crop.height() * loaded.height())));
+                loaded = loaded.copy(box.intersected(loaded.rect()));
+            }
+            if (loaded.isNull()) return;
             loaded = loaded.convertToFormat(QImage::Format_ARGB32_Premultiplied);
             InkCanvas *target = self.data();
             if (!target) return;

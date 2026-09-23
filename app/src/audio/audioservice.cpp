@@ -121,7 +121,7 @@ void AudioService::prepareModels()
              m_modelReady = e.isEmpty() && r.value("ok").toBool();
              const bool noAddOn = e.value("code").toInt() == -4 || m_worker->missingOptional().contains(QLatin1String("faster_whisper"));
              setStatus(m_modelReady ? QString()
-                       : noAddOn ? QStringLiteral("transcription needs the AI add-on — recording still works")
+                       : noAddOn ? QStringLiteral("transcription needs the AI add-on")
                                  : QStringLiteral("model not available: ") + e.value("message").toString());
              emit stateChanged();
          });
