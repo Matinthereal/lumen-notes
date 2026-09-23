@@ -37,6 +37,13 @@ void PageStore::attach(InkDocument *doc)
     });
 }
 
+void PageStore::detach()
+{
+    unload();
+    if (m_doc) disconnect(m_doc, nullptr, this, nullptr);
+    m_doc = nullptr;
+}
+
 void PageStore::journalFailed(bool failed)
 {
     if (!failed) return;

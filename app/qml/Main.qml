@@ -33,9 +33,10 @@ Window {
     property bool trashVisible: false
     property bool keysVisible: false
     property bool browserVisible: false
+    onBrowserVisibleChanged: if (!browserVisible) browserTag = ""
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
     readonly property bool tablet: tabletMode.tablet
-    // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting).
+    // Panels: one on the left (notebooks | cards | papers), one on the right (claude | transcript | handwriting | page).
     property string leftPanel: "notebooks"
     property string rightPanel: ""
 
@@ -62,6 +63,11 @@ Window {
         if (!pageId) return
         const info = library.page(pageId)
         if (!info.id) return
+        if (pageId === splitPageId) closeSplit()     // one page, one side: it moves over here
+        if (!navigating && currentPageId > 0 && currentPageId !== pageId) {
+            backStack = backStack.concat([currentPageId]).slice(-50)
+            forwardStack = []
+        }
         canvas.resetHistory()
         canvas.clearBackground()
         pageStore.load(pageId)
@@ -85,6 +91,77 @@ Window {
         let id = Number(saved || "0")
         if (!id || !library.page(id).id) id = library.firstPageId()
         openPage(id)
+        const beside = Number(library.setting("split.page", "0"))
+        if (beside && beside !== currentPageId && library.page(beside).id) splitPageId = beside
+    }
+
+    // ---- Split view: a second page beside this one, with its own canvas and store.
+    property var splitPageId: 0
+    property real splitFraction: Math.min(0.75, Math.max(0.25, Number(library.setting("split.fraction", "0.5"))))
+    // The room the page and the split share: everything but the rail and the docked panels.
+    readonly property real workWidth: root.width - rail.width - (leftSlot.visible ? leftSlot.width + 1 : 0) - (rightSlot.visible ? rightSlot.width + 1 : 0)
+    function openSplit(pageId) {
+        if (!pageId || !library.page(pageId).id) return
+        if (pageId === currentPageId) { toastBar.show("That page is already open on the left", null); return }
+        splitPageId = pageId
+        library.setSetting("split.page", String(pageId))
+    }
+    function closeSplit() {
+        splitPageId = 0
+        library.setSetting("split.page", "0")
+    }
+    function closeMainSide() { const keep = splitPageId; closeSplit(); openPage(keep) }
+    function swapSides() {
+        const left = currentPageId, right = splitPageId
+        if (!left || !right) return
+        closeSplit()
+        openPage(right)
+        openSplit(left)
+    }
+    // ---- Presentation: the section, one page at a time, full screen, with a pen that fades.
+    property bool presenting: false
+    property var presentPages: []
+    property int presentIndex: 0
+    property int presentReturn: Window.Windowed
+    property string presentReturnPanel: "notebooks"
+    function startPresenting() {
+        const info = library.page(currentPageId)
+        if (!info.id) return
+        presentPages = library.pages(info.sectionId)
+        if (!presentPages.length) return
+        presentIndex = Math.max(0, presentPages.findIndex(p => p.id === currentPageId))
+        closeSplit()
+        canvas.selectNone()
+        leftPanel = ""; rightPanel = ""
+        presentReturn = root.visibility
+        presentReturnPanel = leftPanel
+        presenting = true
+        root.visibility = Window.FullScreen
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function stopPresenting() {
+        if (!presenting) return
+        presenting = false
+        root.visibility = presentReturn
+        leftPanel = presentReturnPanel
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function presentStep(delta) {
+        const i = presentIndex + delta
+        if (!presenting || i < 0 || i >= presentPages.length) return
+        presentIndex = i
+        openPage(presentPages[i].id)
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function presentJump(index) {
+        if (!presenting || index < 0 || index >= presentPages.length) return
+        presentIndex = index
+        openPage(presentPages[index].id)
+        Qt.callLater(() => canvas.fitPage())
+    }
+    function toggleSplit() {
+        if (splitPageId) closeSplit()
+        else { pagePicker.excludePageId = currentPageId; pagePicker.open() }
     }
     // No page open is a real, supported state — nothing is auto-opened to fill the hole.
     function closePage() {
@@ -118,6 +195,69 @@ Window {
         const info = library.page(currentPageId); if (!info.id) return
         openPage(library.createPage(library.createSection(info.notebookId, "New section")))
     }
+    // ---- Tags. Handwriting becomes a tag by the same recognition the page's OCR uses, run on just
+    // the strokes the lasso caught.
+    property var pendingTag: null
+    property string browserTag: ""
+    function tagFromSelection() {
+        if (!canvas.hasSelection || !currentPageId) return
+        pageStore.flush()                       // the recogniser reads the saved page
+        pendingTag = { token: "tag-" + Date.now(), pageId: currentPageId }
+        ocr.recognizeStrokes(currentPageId, canvas.selectionStrokeIds(), pendingTag.token)
+        toastBar.show("Reading your handwriting…", null)
+    }
+    function addTag(pageId, name) {
+        const had = library.pageTags(pageId).map(t => t.name.toLowerCase())
+        const id = library.addPageTag(pageId, name)
+        const tag = id ? library.pageTags(pageId).find(t => t.id === id) : null
+        if (!tag) { toastBar.show("That doesn't make a tag", null); return }
+        if (had.indexOf(tag.name.toLowerCase()) >= 0) { toastBar.show("Already tagged #" + tag.name, null); return }
+        toastBar.show("Tagged #" + tag.name, function() { library.removePageTag(pageId, id) })
+        canvas.selectNone()
+    }
+    // The outline's way of taking you to a heading: the caret on a typed page, a flash of the block
+    // it lives in on a handwritten one.
+    function goToHeading(blockId, text) {
+        if (pageTyped) { typedPage.goToHeading(text); return }
+        const block = textBlocks.block(blockId)
+        if (!block.id) return
+        canvas.flashRect(Qt.rect(block.x, block.y, block.w, 44))
+    }
+    function showTagged(tag) { browserTag = tag; if (currentPageId || tag.length) browserVisible = true }
+
+    // ---- Where you have been. Following a link is only half a move: Alt+← comes back.
+    property var backStack: []
+    property var forwardStack: []
+    property bool navigating: false
+    function stepHistory(back) {
+        let from = back ? backStack.slice() : forwardStack.slice()
+        let to = back ? forwardStack.slice() : backStack.slice()
+        while (from.length) {
+            const id = from[from.length - 1]
+            from = from.slice(0, -1)
+            if (!library.page(id).id) continue           // deleted since: skip over it
+            if (currentPageId > 0) to = to.concat([currentPageId]).slice(-50)
+            navigating = true
+            openPage(id)
+            navigating = false
+            break
+        }
+        backStack = back ? from : to
+        forwardStack = back ? to : from
+    }
+    function goBack() { stepHistory(true) }
+    function goForward() { stepHistory(false) }
+
+    // A [[link]] followed from any text. The id is the link; a page since deleted says so.
+    function followLink(url) {
+        const id = library.linkTarget(url)
+        if (id) openPage(id)
+        else toastBar.show("That page has been deleted", null)
+    }
+    function pageName(pageId) {
+        const info = library.page(pageId)
+        return info.id ? ((info.title || "").length ? info.title.replace("\u200b", "") : "that page") : "that page"
+    }
     function stepPage(delta) { const id = library.nextPageId(currentPageId, delta); if (id) openPage(id) }
     function toggleLeft(name) { leftPanel = leftPanel === name ? "" : name }
     function toggleRight(name) { rightPanel = rightPanel === name ? "" : name }
@@ -134,8 +274,8 @@ Window {
         }
         function onWords(pageId, words) { if (pageId === root.currentPageId) canvas.setWords(words) }
         function onImported(sectionId, firstPageId, token) { if (firstPageId) root.openPage(firstPageId) }
-        function onExported(file, pages) { toast.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null) }
-        function onFailed(message) { toast.show(message, null) }
+        function onExported(file, pages) { toastBar.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null) }
+        function onFailed(message) { toastBar.show(message, null) }
     }
     Timer { id: rerender; interval: 250; onTriggered: { if (!pdf.pageHasPdf(root.currentPageId)) return; const want = Math.min(Math.max(canvas.zoom, 0.5), 4.0); if (Math.abs(want - root.renderedScale) / Math.max(root.renderedScale, 0.01) > 0.2) pdf.requestRender(root.currentPageId, want) } }
     FileDialog {
@@ -144,12 +284,41 @@ Window {
         nameFilters: ["Pictures (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.tif *.tiff)"]
         onAccepted: imageLayer.insertFile(selectedFile)
     }
+    // A whole notebook as one file: everything on its pages, and the pictures and PDFs they use.
+    FileDialog {
+        id: notebookExportDialog
+        property var notebookId: 0
+        title: "Export notebook"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Lumen notebook (*.lumen)"]
+        defaultSuffix: "lumen"
+        onAccepted: {
+            const r = notebooks.exportNotebook(notebookExportDialog.notebookId, selectedFile)
+            toastBar.show(r.ok ? "Exported “" + r.name + "” — " + r.pages + (r.pages === 1 ? " page" : " pages")
+                               : "Could not export: " + r.error, null)
+        }
+    }
+    FileDialog {
+        id: notebookImportDialog
+        title: "Import a notebook"
+        nameFilters: ["Lumen notebook (*.lumen)", "All files (*)"]
+        onAccepted: {
+            const r = notebooks.importNotebook(selectedFile)
+            if (!r.ok) { toastBar.show("Could not import: " + r.error, null); return }
+            toastBar.show("Imported “" + r.name + "” — " + r.pages + (r.pages === 1 ? " page" : " pages"), null)
+            const sections = library.sections(r.notebookId)
+            const first = sections.length ? library.pages(sections[0].id)[0] : null
+            if (first) root.openPage(first.id)
+        }
+    }
     FileDialog { id: importDialog; property var notebookId: 0; title: "Import PDF as a section"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: pdf.importAsSection(selectedFile, notebookId, "") }
     FileDialog { id: exportDialog; title: "Export section as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: { const info = library.page(root.currentPageId); if (info.id) pdf.exportPages("section", info.sectionId, selectedFile) } }
     SearchPalette {
         id: search; parent: Overlay.overlay
         onOpenResult: (pageId, kind, refId) => { root.openPage(pageId); if (kind === "ocr") Qt.callLater(() => { for (const r of ocr.results(pageId)) if (r.id === refId) canvas.flashRect(Qt.rect(r.x, r.y, r.w, r.h)) }) }
     }
+
+    PagePicker { id: pagePicker; onChosen: (id) => root.openSplit(id) }
 
     Loader { id: probeLoader; anchors.fill: parent; active: root.probeMode; sourceComponent: ProbePage {} }
 
@@ -162,7 +331,9 @@ Window {
         Rail {
             id: rail
             objectName: "rail"
+            visible: !root.presenting
             Layout.fillHeight: true
+            Layout.preferredWidth: root.presenting ? 0 : Ui.rail
             leftPanel: root.leftPanel
             rightPanel: root.rightPanel
             tablet: root.tablet
@@ -170,6 +341,8 @@ Window {
             onRightPanelChanged: root.rightPanel = rightPanel
             onSearchRequested: search.open()
             onBrowserRequested: if (root.currentPageId) root.browserVisible = true
+            onSplitRequested: if (root.currentPageId) root.toggleSplit()
+            splitOpen: root.splitPageId > 0
             onTrashRequested: root.trashVisible = true
             onSettingsRequested: root.settingsVisible = !root.settingsVisible
             onTabletRequested: tabletMode.tablet = !tabletMode.tablet
@@ -182,8 +355,8 @@ Window {
             id: leftSlot
             Layout.fillHeight: true
             Layout.bottomMargin: Ui.keyboardInset
-            Layout.preferredWidth: root.tablet ? 0 : (root.leftPanel.length ? Ui.panel : 0)
-            visible: !root.tablet && root.leftPanel.length > 0
+            Layout.preferredWidth: root.tablet || root.presenting ? 0 : (root.leftPanel.length ? Ui.panel : 0)
+            visible: !root.tablet && !root.presenting && root.leftPanel.length > 0
             Loader { anchors.fill: parent; sourceComponent: leftPanelComponent; active: !root.tablet && root.leftPanel.length > 0 }
         }
         Rectangle { visible: leftSlot.visible; Layout.fillHeight: true; implicitWidth: 1; color: Qt.alpha(pal.text, 0.14) }
@@ -206,9 +379,10 @@ Window {
                 objectName: "inkCanvas"
                 anchors.fill: parent
                 visible: root.currentPageId > 0 && !root.pageTyped
-                enabled: visible
-                topInset: (toolbar.visible ? toolbar.height + 20 : 16)
-                bottomInset: (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
+                // While presenting, the pen belongs to the laser overlay, not to the page.
+                enabled: visible && !root.presenting
+                topInset: root.presenting ? 8 : (toolbar.visible ? toolbar.height + 20 : 16)
+                bottomInset: root.presenting ? 8 : (audioBar.visible ? audioBar.height : 0) + (paperBar.visible ? paperBar.height : 0) + 16 + Ui.keyboardInset
                 onTopInsetChanged: if (root.currentPageId) fitPage()
                 // The paper has its own colour so that ink written under one theme stays visible
                 // under the other. pal.base only supplies the fallback for the app default.
@@ -225,8 +399,8 @@ Window {
                 anchors.fill: parent
                 board: canvas
                 pageId: root.currentPageId
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "picture"
                     objectMenu.info = ({})
@@ -242,8 +416,8 @@ Window {
                 pageId: root.currentPageId
                 strokeColour: canvas.penColor        // a new shape uses the pen in your hand
                 strokeWidth: Math.max(1.5, canvas.penWidth)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onOptionsAsked: (where) => {
                     objectMenu.subject = "shape"
                     objectMenu.info = shapeLayer.selected()
@@ -254,12 +428,16 @@ Window {
                 id: textLayer; anchors.fill: parent; canvas: canvas; pageId: root.currentPageId
                 visible: !root.pageTyped
                 recordingT: function() { return audio.recording ? audio.nowMs() : 0 }
+                onPageLinkActivated: (url) => root.followLink(url)
             }
             TypedPage {
                 id: typedPage
                 anchors { fill: parent; bottomMargin: (audioBar.visible ? audioBar.height : 0) + Ui.keyboardInset }
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
+                presenting: root.presenting
+                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
+                onPageLinkActivated: (url) => root.followLink(url)
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.
@@ -320,7 +498,7 @@ Window {
                 width: Ui.target + 8; height: Ui.target + 8; radius: width / 2
                 color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
                 // hidden, not dimmed: a visible "chrome" item is a hole the pen cannot draw through
-                visible: enabledLook && !canvas.inking
+                visible: enabledLook && !canvas.inking && !root.presenting
                 opacity: canvas.inking ? 0 : 0.9
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Icon { anchors.centerIn: parent; name: "" + parent.icon; implicitWidth: Ui.icon + 2; implicitHeight: Ui.icon + 2 }
@@ -342,7 +520,7 @@ Window {
             }
             Rectangle {
                 objectName: "chrome"
-                visible: root.currentPageId > 0 && page.pageList.length > 1 && !canvas.inking
+                visible: root.currentPageId > 0 && page.pageList.length > 1 && !canvas.inking && !root.presenting
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: paperBar.visible ? paperBar.height + 16 : 10 }
                 width: counter.implicitWidth + 22; height: Ui.target - 10; radius: height / 2; z: 6
                 color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
@@ -354,7 +532,8 @@ Window {
 
             Toolbar {
                 id: toolbar
-                visible: root.currentPageId > 0 && !root.pageTyped
+                visible: root.currentPageId > 0 && !root.pageTyped && !root.presenting
+                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
                 canvas: canvas
                 pageId: root.currentPageId
                 tablet: root.tablet
@@ -365,21 +544,22 @@ Window {
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 enabled: visible && opacity > 0.5
                 onExportRequested: exportDialog.open()
+                onPresentRequested: root.startPresenting()
                 onPictureRequested: pictureDialog.open()
-                onToast: (m) => toast.show(m, null)
+                onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
-                onShapeKindChosen: (kind) => { shapeLayer.kind = kind; canvas.tool = "shape"; toast.show("Drag to draw a " + kind, null) }
+                onShapeKindChosen: (kind) => { shapeLayer.kind = kind; canvas.tool = "shape"; toastBar.show("Drag to draw a " + kind, null) }
                 onStyleChosen: (style) => {
                     if (!root.currentPageId) return
                     canvas.pageStyle = style
                     library.setPageStyle(root.currentPageId, style)
-                    toast.show("Page style: " + style, null)
+                    toastBar.show("Page style: " + style, null)
                 }
                 onPaperChosen: (colour) => {
                     if (!root.currentPageId) return
                     library.setPagePaper(root.currentPageId, colour)
                     root.pagePaper = colour
-                    toast.show(colour.length ? "Paper colour set for this page" : "Paper back to the app default", null)
+                    toastBar.show(colour.length ? "Paper colour set for this page" : "Paper back to the app default", null)
                 }
                 // Bounded, and remembered: an unbounded drag could put the toolbar off-screen for good.
                 DragHandler {
@@ -394,18 +574,19 @@ Window {
 
             AudioPanel {
                 id: audioBar
-                visible: root.currentPageId > 0
+                visible: root.currentPageId > 0 && !root.presenting
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; bottomMargin: Ui.keyboardInset }
                 canvas: canvas
                 sectionId: library.page(root.currentPageId).sectionId || 0
                 pageId: root.currentPageId
                 z: 6
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 onTranscriptRequested: root.toggleRight("transcript")
             }
             PaperBar {
                 id: paperBar
+                presenting: root.presenting
                 enabled: !root.pageTyped
                 opacity: root.pageTyped ? 0 : 1
                 anchors { left: parent.left; right: parent.right; bottom: audioBar.top; leftMargin: 8; rightMargin: 8; bottomMargin: 6 }
@@ -413,8 +594,8 @@ Window {
                 pageId: root.currentPageId
                 paperId: page.paperOf(page.libraryTick, root.currentPageId)
                 onOpenPage: (pid) => root.openPage(pid)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
                 z: 6
             }
             LatexPopup {
@@ -424,31 +605,98 @@ Window {
                     const id = textBlocks.create(root.currentPageId, where.x + where.width + 16, where.y, 260, 0, 0)
                     textBlocks.setMarkdown(id, "**= " + text + "**", 0)
                     canvas.selectNone()
-                    toast.show("Answer written on the page", null)
+                    toastBar.show("Answer written on the page", null)
                 }
                 onImprove: (png, draft) => claude.improveLatex(png, draft)
             }
             Connections {
                 target: ocr
                 function onLatexReady(latex, png) { latexPopup.latex = latex; latexPopup.png = png; latexPopup.anchorRect = canvas.selectionBounds(); latexPopup.open() }
-                function onFailed(m) { toast.show(m, null) }
+                function onFailed(m) { root.pendingTag = null; toastBar.show(m, null) }
+                function onStrokesRecognized(token, text) {
+                    const want = root.pendingTag
+                    if (!want || want.token !== token) return
+                    root.pendingTag = null
+                    if (text.trim().length) root.addTag(want.pageId, text)
+                    else toastBar.show("Nothing readable there to make a tag from", null)
+                }
             }
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
-            // page itself, and never longer than the space it has.
-            Text {
-                anchors { left: parent.left; top: parent.top; leftMargin: 14; topMargin: 14 }
-                width: Math.min(implicitWidth, page.width * 0.4)
-                elide: Text.ElideMiddle
-                text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
-                color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
-                visible: root.currentPageId > 0 && !canvas.inking
+            // page itself, and never longer than the space it has. The way back sits beside it.
+            component HistoryButton: Rectangle {
+                property string icon
+                property string tip
+                signal clicked()
+                implicitWidth: Ui.target - 8; implicitHeight: Ui.target - 8; radius: width / 2
+                color: histTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (histHover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                Accessible.role: Accessible.Button
+                Accessible.name: tip
+                Icon { anchors.centerIn: parent; name: parent.icon; implicitWidth: Ui.icon - 2; implicitHeight: Ui.icon - 2 }
+                HoverHandler { id: histHover }
+                TapHandler { id: histTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
+                ToolTip.visible: histHover.hovered; ToolTip.delay: 600; ToolTip.text: tip
+            }
+            Row {
+                id: crumbRow
+                objectName: "chrome"
+                anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 8 }
+                spacing: 6
+                visible: root.currentPageId > 0 && !canvas.inking && !root.presenting
+                // What the buttons take, worked out from the stacks: reading it off the Row's own
+                // width would make the label's width depend on the label.
+                readonly property real buttonsWidth: (root.backStack.length > 0 ? Ui.target - 2 : 0) + (root.forwardStack.length > 0 ? Ui.target - 2 : 0)
+                HistoryButton {
+                    objectName: "navBack"
+                    visible: root.backStack.length > 0
+                    icon: "go-previous"; tip: "Back to " + root.pageName(root.backStack[root.backStack.length - 1]) + " (Alt+←)"
+                    onClicked: root.goBack()
+                }
+                HistoryButton {
+                    objectName: "navForward"
+                    visible: root.forwardStack.length > 0
+                    icon: "go-next"; tip: "Forward to " + root.pageName(root.forwardStack[root.forwardStack.length - 1]) + " (Alt+→)"
+                    onClicked: root.goForward()
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, Math.min(implicitWidth, page.width * 0.4,
+                                                (page.width - (root.pageTyped ? typedPage.barWidth : toolbar.width)) / 2 - 28 - crumbRow.buttonsWidth))
+                    elide: Text.ElideMiddle
+                    text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
+                    color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                    visible: width >= 60
+                }
             }
             Text {
                 anchors { left: parent.left; bottom: audioBar.top; margins: 8 }
                 visible: root.showStats
                 text: canvas.stats + "  ·  touch ignored " + canvas.touchIgnored + "  ·  zoom " + Math.round(canvas.zoom * 100) + "%"
                 color: pal.text; font.pixelSize: 12; font.family: "monospace"
+            }
+
+            // In split view the left side can be closed too; the right-hand page then takes over.
+            Item {
+                objectName: "chrome"
+                visible: root.splitPageId > 0 && root.currentPageId > 0 && !canvas.inking && !root.presenting
+                // Beside the divider, level with the page arrows: clear of the toolbar at any width.
+                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12; verticalCenterOffset: -34 }
+                width: Ui.target + 8; height: Ui.target + 8
+                z: 7
+                Rectangle {
+                    objectName: "closeLeftSide"
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: closeLeftTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : Qt.alpha(pal.window, 0.9)
+                    border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Close this side"
+                    Icon { anchors.centerIn: parent; name: "window-close" }
+                    HoverHandler { id: closeLeftHover }
+                    TapHandler { id: closeLeftTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: root.closeMainSide() }
+                    ToolTip.visible: closeLeftHover.hovered; ToolTip.delay: 600; ToolTip.text: "Close this side — the page on the right takes its place"
+                }
             }
 
             // ---- Nothing open. A real state with its own way back, not a blank screen.
@@ -586,6 +834,62 @@ Window {
                 }
             }
 
+            // ---- Presentation: the laser, and the way out.
+            LaserOverlay {
+                id: laserLayer
+                objectName: "laserOverlay"
+                anchors.fill: parent
+                visible: root.presenting
+                enabled: visible
+                z: 25
+                onAdvance: (delta) => root.presentStep(delta)
+                onTapped: (position) => root.presentStep(position.x < width * 0.25 ? -1 : 1)
+            }
+            Rectangle {
+                objectName: "chrome"
+                visible: root.presenting
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 18 }
+                implicitWidth: presentRow.implicitWidth + 24
+                implicitHeight: Ui.target + 8
+                radius: height / 2
+                color: Qt.alpha(pal.window, 0.92)
+                border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                opacity: laserLayer.drawing ? 0.25 : 1
+                Behavior on opacity { NumberAnimation { duration: Ui.quick } }
+                z: 26
+                component PresentButton: Rectangle {
+                    property string icon
+                    property string tip
+                    property bool enabledLook: true
+                    signal clicked()
+                    implicitWidth: Ui.target; implicitHeight: Ui.target; radius: width / 2
+                    color: tap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (hov.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent")
+                    opacity: enabledLook ? 1 : 0.35
+                    Accessible.role: Accessible.Button
+                    Accessible.name: tip
+                    Icon { anchors.centerIn: parent; name: parent.icon }
+                    HoverHandler { id: hov }
+                    TapHandler { id: tap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
+                    ToolTip.visible: hov.hovered; ToolTip.delay: 600; ToolTip.text: tip
+                }
+                RowLayout {
+                    id: presentRow
+                    anchors.centerIn: parent
+                    spacing: 4
+                    PresentButton { objectName: "presentPrev"; icon: "go-previous"; tip: "Previous slide (←)"
+                                    enabledLook: root.presentIndex > 0; onClicked: root.presentStep(-1) }
+                    Text {
+                        objectName: "presentCounter"
+                        text: (root.presentIndex + 1) + " / " + root.presentPages.length
+                        color: pal.windowText; font.pixelSize: Ui.text; Layout.leftMargin: 4; Layout.rightMargin: 4
+                    }
+                    PresentButton { objectName: "presentNext"; icon: "go-next"; tip: "Next slide (→ or space)"
+                                    enabledLook: root.presentIndex < root.presentPages.length - 1; onClicked: root.presentStep(1) }
+                    Rectangle { implicitWidth: 1; implicitHeight: Ui.target - 16; color: Qt.alpha(pal.text, Ui.hairline) }
+                    PresentButton { objectName: "presentExit"; icon: "window-close"; tip: "Leave presentation (Esc)"; onClicked: root.stopPresenting() }
+                }
+            }
+
             ObjectMenu {
                 id: objectMenu
                 parent: Overlay.overlay
@@ -593,7 +897,7 @@ Window {
                 onOutlineChosen: (c) => { if (subject === "shape") shapeLayer.restyle(c, undefined, 0); info = subject === "shape" ? shapeLayer.selected() : ({}) }
                 onFillChosen: (c) => { shapeLayer.restyle("", c, 0); info = shapeLayer.selected() }
                 onWidthChosen: (w) => { shapeLayer.restyle("", undefined, w); info = shapeLayer.selected() }
-                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toast.show("Add the picture again to duplicate it", null)
+                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toastBar.show("Add the picture again to duplicate it", null)
                 onDeleteAsked: subject === "shape" ? shapeLayer.removeSelected() : imageLayer.removeSelected()
             }
             StyleBar {
@@ -603,12 +907,15 @@ Window {
                 shapeLayer: shapeLayer
                 imageLayer: imageLayer
                 z: 18
-                anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: toast.visible ? toast.height + 22 : 14 }
+                anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: toastBar.visible ? toastBar.height + 22 : 14 }
                 width: implicitWidth
-                onToast: (m) => toast.show(m, null)
+                onToast: (m) => toastBar.show(m, null)
+                onTagRequested: root.tagFromSelection()
             }
             Rectangle {
-                id: toast
+                // Not `toast`: most panels declare a `toast` signal, and inside their handlers that
+                // name meant the signal, so `toast.show()` was a TypeError the moment one fired.
+                id: toastBar
                 objectName: "chrome"
                 property var undoFn: null
                 property string actionLabel: "Undo"
@@ -616,19 +923,63 @@ Window {
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: 14 }
                 width: Math.min(page.width - 40, toastRow.implicitWidth + 28); height: Ui.target + 2; radius: 10
                 color: pal.text; visible: false; z: 20
-                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toast.visible = false; else restart() }
+                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toastBar.visible = false; else restart() }
                 HoverHandler { id: toastHover }
                 RowLayout { id: toastRow; anchors.centerIn: parent; spacing: 16
                     Text { id: toastText; objectName: "toastText"; color: pal.base; font.pixelSize: Ui.text; elide: Text.ElideMiddle; Layout.maximumWidth: page.width - 200 }
                     Rectangle {
                         objectName: "toastUndo"
-                        visible: toast.undoFn !== null
+                        visible: toastBar.undoFn !== null
                         implicitWidth: undoLabel.implicitWidth + 24; implicitHeight: Ui.target - 6
                         radius: 8; color: Qt.alpha(pal.base, undoTap.pressed ? 0.35 : 0.16)
-                        Text { id: undoLabel; anchors.centerIn: parent; text: toast.actionLabel; color: pal.base; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
-                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toast.undoFn) toast.undoFn(); toast.visible = false } }
+                        Text { id: undoLabel; anchors.centerIn: parent; text: toastBar.actionLabel; color: pal.base; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
+                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toastBar.undoFn) toastBar.undoFn(); toastBar.visible = false } }
                     }
                 }
+            }
+        }
+
+        // Split view: a divider you can drag, and the second page.
+        Item {
+            id: splitDivider
+            objectName: "splitDivider"
+            visible: splitLoader.active
+            Layout.fillHeight: true
+            implicitWidth: 12
+            property real startFraction: 0.5
+            Rectangle { anchors { top: parent.top; bottom: parent.bottom; horizontalCenter: parent.horizontalCenter } width: 1; color: Qt.alpha(pal.text, Ui.hairline) }
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6; height: 48; radius: 3
+                color: dividerDrag.active ? pal.highlight : Qt.alpha(pal.text, dividerHover.hovered ? 0.45 : 0.28)
+            }
+            HoverHandler { id: dividerHover; cursorShape: Qt.SplitHCursor }
+            DragHandler {
+                id: dividerDrag
+                target: null
+                margin: 10
+                yAxis.enabled: false
+                onActiveChanged: {
+                    if (active) splitDivider.startFraction = root.splitFraction
+                    else library.setSetting("split.fraction", String(root.splitFraction))
+                }
+                onTranslationChanged: root.splitFraction = Math.min(0.75, Math.max(0.25, splitDivider.startFraction - translation.x / Math.max(1, root.workWidth)))
+            }
+        }
+        Loader {
+            id: splitLoader
+            active: root.splitPageId > 0 && !root.probeMode && !root.presenting
+            visible: active
+            Layout.fillHeight: true
+            Layout.bottomMargin: Ui.keyboardInset
+            Layout.preferredWidth: active ? Math.round((root.workWidth - splitDivider.implicitWidth) * root.splitFraction) : 0
+            sourceComponent: SplitPane {
+                pageId: root.splitPageId
+                onCloseRequested: root.closeSplit()
+                onPickRequested: { pagePicker.excludePageId = root.currentPageId; pagePicker.open() }
+                onSwapRequested: root.swapSides()
+                onPageLinkActivated: (url) => { const id = library.linkTarget(url); if (id) root.openSplit(id); else toastBar.show("That page has been deleted", null) }
+                onToast: (m) => toastBar.show(m, null)
             }
         }
 
@@ -637,8 +988,8 @@ Window {
             id: rightSlot
             Layout.fillHeight: true
             Layout.bottomMargin: Ui.keyboardInset
-            Layout.preferredWidth: root.rightPanel.length && !root.tablet ? Ui.rightPanel : 0
-            visible: !root.tablet && root.rightPanel.length > 0
+            Layout.preferredWidth: root.rightPanel.length && !root.tablet && !root.presenting ? Ui.rightPanel : 0
+            visible: !root.tablet && !root.presenting && root.rightPanel.length > 0
             Loader { anchors.fill: parent; sourceComponent: rightPanelComponent; active: !root.tablet && root.rightPanel.length > 0 }
         }
     }
@@ -652,7 +1003,10 @@ Window {
                 visible: root.leftPanel === "notebooks"
                 onOpenPage: (pageId) => { root.openPage(pageId); if (root.tablet) root.leftPanel = "" }
                 onImportPdf: (notebookId) => { importDialog.notebookId = notebookId; importDialog.open() }
+                onExportNotebook: (notebookId) => { notebookExportDialog.notebookId = notebookId; notebookExportDialog.open() }
+                onImportNotebook: notebookImportDialog.open()
                 onClosePage: root.closePage()
+                onOpenBeside: (pageId) => root.openSplit(pageId)
                 property var infoBeforeDelete: ({})
                 onDeleting: (kind, id) => { infoBeforeDelete = library.page(root.currentPageId) }
                 onDeleted: (kind, id, name) => {
@@ -660,7 +1014,7 @@ Window {
                     const info = infoBeforeDelete || ({})
                     const gone = (kind === "page" && id === wasCurrent) || (kind === "section" && info.sectionId === id) || (kind === "notebook" && info.notebookId === id)
                     if (gone) root.closePage()          // no page is a fine place to be; the toast offers it back
-                    toast.show(kind + " “" + name + "” deleted", function() { library.restore(kind, id); if (kind === "page") root.openPage(id) })
+                    toastBar.show(kind + " “" + name + "” deleted", function() { library.restore(kind, id); if (kind === "page") root.openPage(id) })
                 }
                 Component.onCompleted: { root.sidebar = sidebarInst; revealPage(root.currentPageId) }
                 Component.onDestruction: if (root.sidebar === sidebarInst) root.sidebar = null
@@ -668,20 +1022,20 @@ Window {
             CardsPanel {
                 anchors.fill: parent; visible: root.leftPanel === "cards"; pageId: root.currentPageId
                 onReview: root.reviewVisible = true
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             PapersPanel {
                 anchors.fill: parent; visible: root.leftPanel === "papers"
                 onOpenPage: (pid) => root.openPage(pid)
                 onOpenDashboard: (s) => { root.dashboardSubject = s; root.dashboardVisible = true }
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
         }
     }
     property var sidebar: null
-    Connections { target: pageStore; function onStorageError(message) { toast.show(message, null) } }
+    Connections { target: pageStore; function onStorageError(message) { toastBar.show(message, null) } }
     Component {
         id: rightPanelComponent
         Item {
@@ -689,13 +1043,21 @@ Window {
                 anchors.fill: parent; visible: root.rightPanel === "claude"; canvas: canvas; pageId: root.currentPageId
                 sectionId: audioBar.sectionId; recordingId: audioBar.currentRecordingId
                 onOpenPage: (pid) => root.openPage(pid)
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             TranscriptPanel {
                 anchors.fill: parent; visible: root.rightPanel === "transcript"; recordingId: audioBar.currentRecordingId
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
+            }
+            PagePanel {
+                anchors.fill: parent; visible: root.rightPanel === "page"; pageId: root.currentPageId
+                onOpenPage: (pid) => root.openPage(pid)
+                onShowTagged: (tag) => root.showTagged(tag)
+                onGoToHeading: (blockId, text) => root.goToHeading(blockId, text)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             OcrPanel {
                 anchors.fill: parent; visible: root.rightPanel === "handwriting"; canvas: canvas; pageId: root.currentPageId
@@ -704,8 +1066,8 @@ Window {
                     const id = textBlocks.create(root.currentPageId, x, y, 420, 0, 0)
                     textBlocks.setMarkdown(id, text, 0)
                 }
-                onToast: (m) => toast.show(m, null)
-                onToastAction: (m, label, fn) => toast.show(m, fn, label)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
         }
     }
@@ -714,13 +1076,13 @@ Window {
     ReviewPage {
         visible: root.reviewVisible; anchors.fill: parent; z: 30
         onClosed: root.reviewVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
     }
     DashboardPage { visible: root.dashboardVisible; anchors.fill: parent; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
     SettingsPage {
         visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet") }
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
     }
     // ---- The on-screen keyboard. It appears when a text field asks for input and the app is in
     // tablet mode (or you have set it to always), and it never covers the field it is filling.
@@ -753,7 +1115,7 @@ Window {
     TrashPage {
         visible: root.trashVisible; anchors.fill: parent; z: 30
         onClosed: root.trashVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.trashVisible = false; root.openPage(pageId) }
     }
     PageBrowser {
@@ -761,9 +1123,13 @@ Window {
         visible: root.browserVisible; anchors.fill: parent; z: 30
         sectionId: library.page(root.currentPageId).sectionId || 0
         currentPageId: root.currentPageId
+        tag: root.browserTag
+        onTagChosen: (t) => root.browserTag = t
         onClosed: root.browserVisible = false
-        onToast: (m) => toast.show(m, null)
+        onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
+        onOpenBeside: (pageId) => { root.browserVisible = false; root.openSplit(pageId) }
+        onPresent: (pageId) => { root.browserVisible = false; root.openPage(pageId); root.startPresenting() }
     }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
@@ -772,7 +1138,7 @@ Window {
 
     // ================================================================ shortcuts (Goodnotes-shaped)
     // While a full-screen surface is up, the page behind it is not what the keys mean.
-    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible
+    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible || presenting
     // Keys that mean something only to the ink canvas must never fire while you are typing.
     readonly property bool pageKeys: !overlayUp && !keys.focusIsText
     readonly property bool inkKeys: pageKeys && !pageTyped
@@ -794,6 +1160,7 @@ Window {
     // for keys below Escape — so while you are typing this used to swallow Escape and TextLayer's
     // Keys.onEscapePressed never ran.
     Shortcut { enabled: !keys.focusIsText; sequence: "Escape"; onActivated: {
+        if (root.presenting) { root.stopPresenting(); return }
         if (objectMenu.opened) { objectMenu.close(); return }
         if (root.onboardingVisible) { root.onboardingVisible = false; return }
         if (root.reviewVisible) { root.reviewVisible = false; return }
@@ -810,11 +1177,11 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }
-    Shortcut { enabled: !root.overlayUp && audio.recording; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toast.show("Marked", null) } }
-    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toast.show(on ? "Page starred" : "Star removed", null) } }
+    Shortcut { enabled: !root.overlayUp && audio.recording; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toastBar.show("Marked", null) } }
+    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toastBar.show(on ? "Page starred" : "Star removed", null) } }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: root.trashVisible = !root.trashVisible }
     Shortcut { sequences: ["Ctrl+/", "Ctrl+?"]; onActivated: root.keysVisible = !root.keysVisible }
-    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+D"; onActivated: { const id = library.duplicatePage(root.currentPageId); if (id) { root.openPage(id); toast.show("Page duplicated", null) } } }
+    Shortcut { enabled: root.pageKeys; sequence: "Ctrl+D"; onActivated: { const id = library.duplicatePage(root.currentPageId); if (id) { root.openPage(id); toastBar.show("Page duplicated", null) } } }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+W"; onActivated: root.closePage() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+0"; onActivated: canvas.fitPage() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+1"; onActivated: canvas.fitWidth() }
@@ -822,6 +1189,8 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+-"; onActivated: canvas.zoomAt(1 / 1.2, Qt.point(canvas.width / 2, canvas.height / 2)) }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+N"; onActivated: root.newPage() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+N"; onActivated: root.newSection() }
+    Shortcut { enabled: !root.overlayUp; sequence: "Alt+Left"; onActivated: root.goBack() }
+    Shortcut { enabled: !root.overlayUp; sequence: "Alt+Right"; onActivated: root.goForward() }
     Shortcut { enabled: !root.overlayUp; sequence: "PgDown"; onActivated: root.stepPage(1) }
     Shortcut { enabled: !root.overlayUp; sequence: "PgUp"; onActivated: root.stepPage(-1) }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+S"; onActivated: pageStore.flush() }
@@ -829,6 +1198,8 @@ Window {
     Shortcut { sequence: "Ctrl+\\"; onActivated: root.toggleLeft("notebooks") }
     Shortcut { sequence: "Ctrl+J"; onActivated: root.toggleRight("claude") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+H"; onActivated: root.toggleRight("handwriting") }
+    Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+L"; onActivated: root.toggleRight("page") }
+    Shortcut { enabled: !root.overlayUp && root.currentPageId > 0; sequence: "Ctrl+Shift+S"; onActivated: root.toggleSplit() }
     Shortcut { sequence: "Ctrl+Shift+C"; onActivated: root.toggleLeft("cards") }
     Shortcut { sequence: "Ctrl+Shift+P"; onActivated: root.toggleLeft("papers") }
     Shortcut { sequence: "Ctrl+Shift+R"; onActivated: root.reviewVisible = !root.reviewVisible }
@@ -840,6 +1211,11 @@ Window {
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+O"; onActivated: { const info = library.page(root.currentPageId); if (info.id) { importDialog.notebookId = info.notebookId; importDialog.open() } } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+B"; onActivated: canvas.addBenchmarkStrokes(10000) }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+I"; onActivated: canvas.infinite = !canvas.infinite }
+    Shortcut { enabled: root.presenting; sequences: ["Right", "Space", "PgDown", "Down"]; onActivated: root.presentStep(1) }
+    Shortcut { enabled: root.presenting; sequences: ["Left", "PgUp", "Up"]; onActivated: root.presentStep(-1) }
+    Shortcut { enabled: root.presenting; sequence: "Home"; onActivated: root.presentJump(0) }
+    Shortcut { enabled: root.presenting; sequence: "End"; onActivated: root.presentJump(root.presentPages.length - 1) }
+    Shortcut { sequence: "F5"; onActivated: root.presenting ? root.stopPresenting() : root.startPresenting() }
     Shortcut { sequence: "F12"; onActivated: root.showStats = !root.showStats }
     Shortcut { sequence: "F11"; onActivated: root.visibility = root.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen }
     Shortcut { sequence: "F1"; onActivated: root.onboardingVisible = true }

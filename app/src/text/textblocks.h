@@ -19,6 +19,8 @@ public:
     Q_INVOKABLE void remove(qint64 id);
     Q_INVOKABLE QVariantMap block(qint64 id) const;
     Q_INVOKABLE QString pageText(qint64 pageId) const;   // all blocks joined, for Claude/OCR context
+    // The page's headings, in reading order: [{blockId, level, text, x, y}] — the table of contents.
+    Q_INVOKABLE QVariantList outline(qint64 pageId) const;
 signals:
     void changed(qint64 pageId);
 private:

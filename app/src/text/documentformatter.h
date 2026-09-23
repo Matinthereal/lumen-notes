@@ -50,6 +50,10 @@ public:
     Q_INVOKABLE QString plainText() const;
     Q_INVOKABLE int blockStart(int position) const;
     Q_INVOKABLE int wordCount() const;
+    // Replaces [start, end) with a link to a page, followed by a plain space so what you type next
+    // is ordinary text again. Returns the position after the space.
+    Q_INVOKABLE int insertPageLink(int start, int end, const QString &title, const QString &url);
+    Q_INVOKABLE QString textBefore(int position, int maxChars = 80) const;   // same paragraph only
 
 signals:
     void documentChanged();

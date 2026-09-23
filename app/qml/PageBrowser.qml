@@ -4,14 +4,19 @@ import QtQuick.Layouts
 import Lumen
 
 // Every page in the section as a thumbnail, the way you flick through a real pad. Tap to open,
-// hold for the menu, drag to reorder. Select several to move or delete them in one go.
+// hold for the menu, drag to reorder. Select several to move or delete them in one go. A tag chip
+// swaps the section for every page with that tag, wherever it lives.
 Rectangle {
     id: browser
     objectName: "chrome"
     property var sectionId: 0
     property var currentPageId: 0
+    property string tag: ""                // "" = this section; else every page with this tag
+    signal tagChosen(string tag)
     signal closed()
     signal openPage(var pageId)
+    signal openBeside(var pageId)
+    signal present(var pageId)
     signal toast(string message)
 
     SystemPalette { id: pal }
@@ -25,6 +30,10 @@ Rectangle {
     Keys.onEscapePressed: browser.closed()
     onVisibleChanged: if (visible) { selected = []; reload() }
     onSectionIdChanged: reload()
+    onTagChanged: { selected = []; reload() }
+    property var allTags: []
+    // The tag as it is spelled on the pages, whatever case it was asked for in.
+    readonly property string tagName: { const t = allTags.find(x => x.name.toLowerCase() === tag.toLowerCase()); return t ? t.name : tag }
 
     property var selected: []
     readonly property bool picking: selected.length > 0
@@ -32,13 +41,14 @@ Rectangle {
 
     function reload() {
         pages.clear()
+        allTags = library.tags()
         info = sectionId ? library.section(sectionId) : ({})
         // section() has no notebook name; allSections() does, and it is what the move list uses.
         const home = library.allSections().find(sec => sec.id === sectionId)
         if (home) { info.notebookName = home.notebookName; info.name = home.name }
-        for (const p of library.pages(sectionId)) {
+        for (const p of (tag.length ? library.pagesWithTag(tag) : library.pages(sectionId))) {
             thumbnails.ensure(p.id)
-            pages.append({ pid: p.id, title: p.title, idx: p.index + 1 })
+            pages.append({ pid: p.id, title: p.title, idx: p.index + 1, place: tag.length ? p.notebookName + " › " + p.sectionName : "" })
         }
     }
     function toggle(id) {
@@ -48,9 +58,14 @@ Rectangle {
         selected = next
     }
     function labelFor(row) {
-        return (row.title && row.title.length) ? row.title.replace("​", "") : ("Page " + row.idx)
+        // A tagged page's number is its place in this list, not in its section, so it is no name.
+        return (row.title && row.title.length) ? row.title.replace("​", "") : (tag.length ? "Untitled page" : "Page " + row.idx)
     }
-    Connections { target: library; function onChanged() { if (browser.visible) browser.reload() } }
+    Connections {
+        target: library
+        function onChanged() { if (browser.visible) browser.reload() }
+        function onTagsChanged() { if (browser.visible) browser.reload() }
+    }
 
     ListModel { id: pages }
     ConfirmSheet { id: confirm }
@@ -102,8 +117,9 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            Text { text: browser.info.notebookName ? (browser.info.notebookName + " › " + browser.info.name) : "Pages"
-                   color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold; elide: Text.ElideRight }
+            Text { text: browser.tag.length ? "#" + browser.tagName : (browser.info.notebookName ? (browser.info.notebookName + " › " + browser.info.name) : "Pages")
+                   color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold; elide: Text.ElideRight
+                   Layout.maximumWidth: browser.width * 0.45 }
             Text { text: pages.count + (pages.count === 1 ? " page" : " pages"); color: Qt.alpha(pal.windowText, 0.6); font.pixelSize: Ui.small }
             Item { Layout.fillWidth: true }
 
@@ -131,14 +147,42 @@ Rectangle {
                                        })
             }
             BarButton { visible: browser.picking; label: "Clear"; onClicked: browser.selected = [] }
-            BarButton { visible: !browser.picking; label: "New page"; onClicked: { const id = library.createPage(browser.sectionId); browser.openPage(id) } }
+            BarButton {
+                visible: !browser.picking && browser.sectionId > 0
+                label: browser.tag.length ? "New page #" + browser.tagName : "New page"
+                onClicked: {
+                    const id = library.createPage(browser.sectionId)
+                    if (browser.tag.length) library.addPageTag(id, browser.tag)
+                    browser.openPage(id)
+                }
+            }
+            BarButton { visible: !browser.picking && pages.count > 0; label: "Present"; onClicked: browser.present(browser.currentPageId || pages.get(0).pid) }
             BarButton { label: "Close (Esc)"; onClicked: browser.closed() }
+        }
+
+        // Tags: narrow the pad to one subject across every notebook.
+        Flow {
+            objectName: "browserTags"
+            visible: browser.allTags.length > 0
+            Layout.fillWidth: true
+            spacing: 6
+            TagChip { name: "This section"; plain: true; selected: browser.tag.length === 0; onClicked: browser.tagChosen("") }
+            Repeater {
+                model: browser.allTags
+                delegate: TagChip {
+                    required property var modelData
+                    name: modelData.name
+                    count: modelData.count
+                    selected: browser.tag.toLowerCase() === modelData.name.toLowerCase()
+                    onClicked: browser.tagChosen(selected ? "" : modelData.name)
+                }
+            }
         }
 
         ColumnLayout {
             visible: pages.count === 0
             Layout.fillWidth: true; Layout.topMargin: 40; Layout.alignment: Qt.AlignHCenter; spacing: 6
-            Text { text: "This section has no pages"; color: pal.windowText; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
+            Text { text: browser.tag.length ? "No pages tagged #" + browser.tagName : "This section has no pages"; color: pal.windowText; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignHCenter }
             Text { text: "Use New page above to start one."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.text; Layout.alignment: Qt.AlignHCenter }
         }
         GridView {
@@ -154,6 +198,7 @@ Rectangle {
                 required property var pid
                 required property string title
                 required property int idx
+                required property string place
                 width: grid.cellWidth - 10; height: grid.cellHeight - 10
                 readonly property bool chosen: browser.selected.indexOf(pid) >= 0
 
@@ -190,8 +235,15 @@ Rectangle {
                     Text {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
-                        text: cell.idx + " · " + browser.labelFor({ title: cell.title, idx: cell.idx })
+                        text: browser.tag.length ? browser.labelFor({ title: cell.title, idx: cell.idx }) : cell.idx + " · " + browser.labelFor({ title: cell.title, idx: cell.idx })
                         color: pal.windowText; font.pixelSize: Ui.small; elide: Text.ElideRight
+                    }
+                    Text {
+                        visible: cell.place.length > 0
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        text: cell.place
+                        color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small - 1; elide: Text.ElideMiddle
                     }
                 }
                 HoverHandler { id: cellHover }
@@ -207,6 +259,7 @@ Rectangle {
                             { label: "Duplicate", icon: "edit-copy", action: () => { const id = library.duplicatePage(pid); if (id) browser.toast("Page duplicated") } },
                             { label: "Move to…", icon: "folder", action: () => mover.begin([pid]) },
                             { label: "Open", icon: "document-open", action: () => browser.openPage(pid) },
+                            { label: "Open beside", icon: "view-split", action: () => browser.openBeside(pid) },
                             { label: "Delete", icon: "edit-delete", danger: true, action: () => { library.remove("page", pid); browser.toast("Page moved to the trash") } }
                         ]
                         sheet.openFrom(cell)
@@ -231,6 +284,7 @@ Rectangle {
                 DragHandler {
                     id: drag
                     target: null
+                    enabled: browser.tag.length === 0          // pages from several sections have no one order
                     onActiveChanged: {
                         if (active) return
                         // A delegate's x/y are already content coordinates: adding contentX/Y again

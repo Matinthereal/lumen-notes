@@ -31,7 +31,10 @@ Rectangle {
         { title: "Pages", keys: [
             ["Ctrl+N · Ctrl+Shift+N", "New page · new section"],
             ["PgUp · PgDn", "Previous · next page"],
+            ["Alt+← · Alt+→", "Back and forward through the pages you have opened"],
             ["Ctrl+P", "All pages in this section, as thumbnails"],
+            ["Ctrl+Shift+S", "Split view: another page beside this one (drag the divider to resize)"],
+            ["F5", "Present this section — pen draws a fading laser, ← → or tap to move, Esc to leave"],
             ["Ctrl+D", "Duplicate this page"],
             ["Ctrl+B", "Star this page"],
             ["Ctrl+W", "Close the page — nothing open is a fine place to be"],
@@ -39,6 +42,7 @@ Rectangle {
             ["Ctrl+0 · Ctrl+1", "Fit the page · fit the width"],
             ["Ctrl+= · Ctrl+-", "Zoom in · out"],
             ["Ctrl+Shift+G", "Add a picture"],
+            ["Hold a notebook in the sidebar", "Rename, new section, import PDF, export as a .lumen file"],
             ["Hold a row in the sidebar", "Rename, delete, duplicate, close"]
         ]},
         { title: "Recording and transcript", keys: [
@@ -51,6 +55,9 @@ Rectangle {
             ["Ctrl+\\", "Notebooks panel"],
             ["Ctrl+J", "Claude"],
             ["Ctrl+Shift+H", "Read this page's handwriting"],
+            ["[[ in any text", "Link to another page — tap the link to go there"],
+            ["Ctrl+Shift+L", "This page: its tags and what links here"],
+            ["#tag in Ctrl+K", "Search only pages with that tag"],
             ["Ctrl+Shift+C · Ctrl+Shift+R", "Flashcards · review"],
             ["Ctrl+Shift+P", "Past papers"]
         ]},

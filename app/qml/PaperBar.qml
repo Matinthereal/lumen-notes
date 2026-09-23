@@ -19,7 +19,8 @@ Rectangle {
     radius: 10
     border.color: Qt.alpha(pal.text, 0.14); border.width: 1
     implicitHeight: 96
-    visible: paperId > 0
+    property bool presenting: false        // a slide has no room for exam controls
+    visible: paperId > 0 && !presenting
 
     ConfirmSheet { id: qConfirm }
     ListModel { id: qs }

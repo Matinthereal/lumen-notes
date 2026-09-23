@@ -29,12 +29,15 @@ public:
     Q_INVOKABLE QVariantList results(qint64 pageId) const;
     Q_INVOKABLE void correct(qint64 resultId, const QString &text);
     Q_INVOKABLE void latexFromImage(const QString &png);  // → latexReady()
+    // Reads just these strokes as one line (the lasso's handwriting → text path) → strokesRecognized().
+    Q_INVOKABLE void recognizeStrokes(qint64 pageId, const QVariantList &strokeIds, const QString &token);
     Q_INVOKABLE void scanStale(int limit = 20);           // pages whose ink is newer than their OCR
 
 signals:
     void stateChanged();
     void pageRecognized(qint64 pageId, int lines);
     void latexReady(const QString &latex, const QString &png);
+    void strokesRecognized(const QString &token, const QString &text);
     void failed(const QString &message);
 
 private:
@@ -48,6 +51,7 @@ private:
     Library &m_lib;
     WorkerSupervisor *m_worker;
     QHash<int, Callback> m_pending;
+    QList<std::function<void()>> m_afterPrepare;   // requests that arrived before the model was loaded
     QSet<qint64> m_queue;
     QTimer m_debounce, m_idleUnload;
     bool m_ready = false, m_running = false, m_preparing = false;

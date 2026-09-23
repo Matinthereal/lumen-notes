@@ -1,6 +1,9 @@
 #include "schema.h"
 #include "database.h"
+#include <QRegularExpression>
 #include <QStringList>
+#include <QVector>
+#include <tuple>
 
 static const char *kSchemaV1[] = {
     "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -58,6 +61,14 @@ static const char *kSchemaV1[] = {
     "  t_ms INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '')",
     "CREATE INDEX IF NOT EXISTS mark_rec ON recording_mark(recording_id, t_ms)",
     "CREATE TABLE IF NOT EXISTS claude_log (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, feature TEXT NOT NULL, prompt_chars INTEGER, response_chars INTEGER, ok INTEGER, path TEXT)",
+    // [[page]] links, one row per (text block, page it points at). The link itself lives in the
+    // block's Markdown as [Title](lumen://page/<id>); this table is the index that answers "what
+    // links here?" without scanning every block.
+    "CREATE TABLE IF NOT EXISTS page_link (block_id INTEGER NOT NULL REFERENCES text_block(id) ON DELETE CASCADE,"
+    "  src_page INTEGER NOT NULL REFERENCES page(id) ON DELETE CASCADE, dst_page INTEGER NOT NULL REFERENCES page(id) ON DELETE CASCADE,"
+    "  PRIMARY KEY(block_id, dst_page))",
+    "CREATE INDEX IF NOT EXISTS page_link_dst ON page_link(dst_page)",
+    "CREATE INDEX IF NOT EXISTS page_tag_tag ON page_tag(tag_id)",
     "CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(kind UNINDEXED, page_id UNINDEXED, ref_id UNINDEXED, text, tokenize='unicode61')",
 };
 
@@ -96,6 +107,25 @@ int ensureSchema(Database &db)
     if (version < 5) {   // 2026-09-05: shapes are objects, not frozen ink — they keep fill, outline and size
         db.exec("UPDATE schema_version SET version=5");
         version = 5;     // the CREATE above is enough; nothing to migrate
+    }
+    if (version < 6) {   // 2026-09-22: [[page]] links get a backlink index; page tags get a lookup by tag
+        // The CREATEs above made the tables. Links already written into text (by hand, or by an
+        // older build that could not index them) are indexed now so "Linked from" is complete.
+        static const QRegularExpression link(QStringLiteral("\\]\\(lumen://page/(\\d+)\\)"));
+        QVector<std::tuple<qint64, qint64, qint64>> found;
+        {
+            Database::Query q(db, "SELECT id, page_id, markdown FROM text_block WHERE markdown LIKE '%lumen://page/%'");
+            while (q.step())
+                for (auto it = link.globalMatch(q.text(2)); it.hasNext();)
+                    found.append({q.i64(0), q.i64(1), it.next().captured(1).toLongLong()});
+        }
+        for (const auto &[block, src, dst] : found) {
+            Database::Query q(db, "INSERT OR IGNORE INTO page_link(block_id, src_page, dst_page) SELECT ?, ?, id FROM page WHERE id=? AND id<>?");
+            q.bind(1, block).bind(2, src).bind(3, dst).bind(4, src);
+            q.run();
+        }
+        db.exec("UPDATE schema_version SET version=6");
+        version = 6;
     }
     if (!db.commit()) return 0;
     return version;

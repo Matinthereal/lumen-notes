@@ -1,6 +1,7 @@
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QSignalSpy>
 #include "ink/inkdocument.h"
 #include "storage/database.h"
 #include "storage/journal.h"
@@ -9,6 +10,7 @@
 #include "media/shapes.h"
 #include "storage/paths.h"
 #include "storage/pagestore.h"
+#include "storage/notebookfile.h"
 #include "storage/schema.h"
 #include "storage/strokecodec.h"
 #include "text/textblocks.h"
@@ -131,18 +133,18 @@ private slots:
         QVERIFY(lib.search("\"unbalanced (syntax").isEmpty());
         // text blocks: CRUD, FTS, edit timeline
         TextBlocks tb(db, lib);
-        const int seeded = tb.list(p1).size();              // the welcome page is typed, so it starts with a block
+        const int welcomeBlocks = tb.list(p1).size();          // the seeded welcome page already has its text
         const qint64 b1 = tb.create(p1, 100, 120, 380, 0, 0);
-        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), seeded + 1);
+        QVERIFY(b1 > 0); QCOMPARE(tb.list(p1).size(), welcomeBlocks + 1);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set", 1500);
         tb.setMarkdown(b1, "# Kinematics\n\n$v = u + at$ and the *suvat* set, finished", 4200);
         QVERIFY(tb.block(b1).value("markdown").toString().endsWith("finished"));
         QCOMPARE(lib.search("suvat").size(), 1);
         QCOMPARE(lib.search("suvat")[0].toMap().value("refId").toLongLong(), b1);
-        QVERIFY(tb.list(p1)[seeded].toMap().value("editTimes").toString().contains("4200"));
+        QVERIFY(tb.list(p1).last().toMap().value("editTimes").toString().contains("4200"));
         tb.setGeometry(b1, 50, 60, 500); QCOMPARE(tb.block(b1).value("w").toDouble(), 500.0);
         QVERIFY(tb.pageText(p1).contains("Kinematics"));
-        tb.remove(b1); QCOMPARE(tb.list(p1).size(), seeded); QCOMPARE(lib.search("suvat").size(), 0);
+        tb.remove(b1); QCOMPARE(tb.list(p1).size(), welcomeBlocks); QCOMPARE(lib.search("suvat").size(), 0);
         QCOMPARE(lib.page(lib.createPage(pure1)).value("style").toString(), QStringLiteral("lined"));
     }
     void truncatedBlobKeepsWhatDecodes() {
@@ -273,6 +275,256 @@ private slots:
         lib.rename("page", good, QStringLiteral("Mine"));
         lib.suggestTitle(good, QStringLiteral("Something else entirely"));
         QCOMPARE(lib.page(good).value("title").toString(), QStringLiteral("Mine"));   // never overrides yours
+    }
+    void pageLinksFollowTheIdAndSurviveARename() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QCOMPARE(ensureSchema(db), kSchemaVersion);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 sec = lib.createSection(lib.createNotebook("Physics", "#000"), "Mechanics");
+        const qint64 kin = lib.createPage(sec), forces = lib.createPage(sec);
+        lib.rename("page", kin, "Kinematics");
+        lib.rename("page", forces, "Forces");
+
+        // [[Title]] typed in full becomes a link by id, whatever the case you typed it in
+        const QString typed = QStringLiteral("See [[kinematics]] for *suvat*, and [[No such page]].");
+        const QString resolved = lib.resolveLinks(typed);
+        QCOMPARE(resolved, QStringLiteral("See [Kinematics](lumen://page/%1) for *suvat*, and [[No such page]].").arg(kin));
+        const qint64 block = tb.create(forces, 0, 0, 400);
+        QSignalSpy linked(&lib, &Library::linksChanged);
+        tb.setMarkdown(block, resolved);
+        QCOMPARE(linked.size(), 1);
+        tb.setMarkdown(block, resolved + " ");                  // same links: nothing to re-index
+        QCOMPARE(linked.size(), 1);
+
+        QVariantList back = lib.backlinks(kin);
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(back[0].toMap().value("id").toLongLong(), forces);
+        QCOMPARE(back[0].toMap().value("context").toString(), QStringLiteral("See Kinematics for suvat, and [[No such page]]."));
+        QVERIFY(lib.backlinks(forces).isEmpty());
+        QCOMPARE(lib.linkTarget(QStringLiteral("lumen://page/%1").arg(kin)), kin);
+        QCOMPARE(lib.linkTarget(QStringLiteral("lumen://page/987654")), qint64(0));
+        QCOMPARE(lib.linkTarget(QStringLiteral("https://example.org")), qint64(0));
+
+        // Rename the target: the link still points at it, and the linking text now says the new name.
+        lib.rename("page", kin, "Motion [1D]");
+        const QString after = tb.block(block).value("markdown").toString();
+        QVERIFY2(after.contains(QStringLiteral("[Motion \\[1D\\]](lumen://page/%1)").arg(kin)), qPrintable(after));
+        QCOMPARE(lib.backlinks(kin).size(), 1);
+        QCOMPARE(lib.search("motion").size(), 1);
+        QCOMPARE(lib.resolveLinks(QStringLiteral("[Old name](lumen://page/%1)").arg(kin)), QStringLiteral("[Motion \\[1D\\]](lumen://page/%1)").arg(kin));
+
+        // Autocomplete: titled pages matching the words, never the page you are on
+        const QVariantList some = lib.linkCandidates("mot", forces);
+        QCOMPARE(some.size(), 1);
+        QCOMPARE(some[0].toMap().value("title").toString(), QStringLiteral("Motion [1D]"));
+        for (const QVariant &v : lib.linkCandidates("", kin)) QVERIFY(v.toMap().value("id").toLongLong() != kin);
+        QCOMPARE(lib.pageByTitle("FORCES"), forces);
+
+        // A copy of the linking page links too; a deleted one stops counting.
+        const qint64 copy = lib.duplicatePage(forces);
+        QCOMPARE(lib.backlinks(kin).size(), 2);
+        lib.remove("page", copy);
+        QCOMPARE(lib.backlinks(kin).size(), 1);
+        tb.remove(block);
+        QVERIFY(lib.backlinks(kin).isEmpty());
+    }
+    void pageTagsFilterBrowsingAndSearch() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 sec = lib.createSection(lib.createNotebook("Physics", "#000"), "Waves");
+        const qint64 a = lib.createPage(sec), b = lib.createPage(sec), c = lib.createPage(sec);
+        tb.setMarkdown(tb.create(a, 0, 0, 400), "Standing waves on a string");
+        tb.setMarkdown(tb.create(b, 0, 0, 400), "Standing waves in a pipe");
+
+        QCOMPARE(Library::normaliseTag("  ##Exam   revision. "), QStringLiteral("Exam revision"));
+        QCOMPARE(Library::normaliseTag("#"), QString());
+        QSignalSpy changed(&lib, &Library::tagsChanged);
+        const qint64 exam = lib.addPageTag(a, "#exam");
+        QVERIFY(exam > 0);
+        QCOMPARE(lib.addPageTag(b, "EXAM"), exam);                // one tag, however it is typed
+        QCOMPARE(lib.addPageTag(b, "exam"), exam);                // already there: no change, no signal
+        QCOMPARE(changed.size(), 2);
+        QCOMPARE(lib.addPageTag(a, "   "), qint64(0));
+        lib.addPageTag(c, "formulae");
+
+        QCOMPARE(lib.pageTags(a).size(), 1);
+        QCOMPARE(lib.pageTags(a)[0].toMap().value("name").toString(), QStringLiteral("exam"));
+        const QVariantList all = lib.tags();
+        QCOMPARE(all.size(), 2);
+        QCOMPARE(all[0].toMap().value("name").toString(), QStringLiteral("exam"));
+        QCOMPARE(all[0].toMap().value("count").toInt(), 2);
+
+        QCOMPARE(lib.pagesWithTag("Exam").size(), 2);
+        QCOMPARE(lib.search("standing").size(), 2);
+        QCOMPARE(lib.search("standing", 40, "formulae").size(), 0);
+        lib.removePageTag(b, exam);
+        QCOMPARE(lib.search("standing", 40, "#exam").size(), 1);
+        QCOMPARE(lib.search("standing", 40, "exam")[0].toMap().value("pageId").toLongLong(), a);
+
+        // a copy carries its tags; a page in the trash does not count
+        const qint64 copy = lib.duplicatePage(a);
+        QCOMPARE(lib.pageTags(copy).size(), 1);
+        QCOMPARE(lib.pagesWithTag("exam").size(), 2);
+        lib.remove("page", copy);
+        QCOMPARE(lib.pagesWithTag("exam").size(), 1);
+        QCOMPARE(lib.tags()[0].toMap().value("count").toInt(), 1);
+    }
+    void headingsBecomeThePageOutline() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        Database db; QVERIFY(db.open(dir.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+        Library lib(db);
+        TextBlocks tb(db, lib);
+        const qint64 page = lib.createPage(lib.createSection(lib.createNotebook("N", "#000"), "S"));
+        const qint64 first = tb.create(page, 10, 20, 400);
+        tb.setMarkdown(first, "# Waves\n\nSome text\n\n## Standing *waves*\n\n#hashtag is not a heading\n### Nodes ###");
+        const qint64 second = tb.create(page, 10, 400, 400);
+        tb.setMarkdown(second, "not a heading\n## Interference");
+
+        const QVariantList out = tb.outline(page);
+        QCOMPARE(out.size(), 4);
+        QCOMPARE(out[0].toMap().value("level").toInt(), 1);
+        QCOMPARE(out[0].toMap().value("text").toString(), QStringLiteral("Waves"));
+        QCOMPARE(out[1].toMap().value("level").toInt(), 2);
+        QCOMPARE(out[1].toMap().value("text").toString(), QStringLiteral("Standing waves"));
+        QCOMPARE(out[2].toMap().value("text").toString(), QStringLiteral("Nodes"));
+        QCOMPARE(out[3].toMap().value("blockId").toLongLong(), second);
+        QCOMPARE(out[3].toMap().value("y").toDouble(), 400.0);
+        QVERIFY(tb.outline(page + 999).isEmpty());
+    }
+    void aNotebookTravelsInOneFile() {
+        QTemporaryDir from, to, out;
+        const QString file = out.path() + "/Physics.lumen";
+        qint64 pagesExported = 0;
+        {   // ---- the library it leaves
+            qputenv("LUMEN_DATA_DIR", from.path().toUtf8());
+            QDir().mkpath(paths::attachmentsDir());
+            Database db; QVERIFY(db.open(from.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+            Library lib(db);
+            TextBlocks tb(db, lib);
+            Images images(db);
+            Shapes shapes(db);
+            const qint64 nb = lib.createNotebook("Physics", "#1F6FEB");
+            const qint64 other = lib.createNotebook("Chemistry", "#12855B");
+            const qint64 sec = lib.createSection(nb, "Waves");
+            const qint64 a = lib.createPage(sec, "lined", "a4");
+            const qint64 b = lib.createPage(sec, "", "typed");
+            const qint64 outside = lib.createPage(lib.createSection(other, "Bonding"));
+            lib.rename("page", a, "Interference");
+            lib.rename("page", b, "Notes");
+            lib.setStarred(a, true);
+            lib.addPageTag(a, "exam");
+
+            // ink
+            QVector<Stroke> ink{randomStroke(1, 12), randomStroke(2, 9)};
+            {
+                Database::Query q(db, "INSERT INTO stroke_blob(page_id, schema, data, stroke_count) VALUES (?,?,?,?)");
+                q.bind(1, a).bind(2, strokecodec::kVersion).bind(3, strokecodec::encode(ink)).bind(4, ink.size());
+                QVERIFY(q.run());
+            }
+            // typed text, one link inside the notebook and one to a page that stays behind
+            const qint64 block = tb.create(b, 20, 30, 400);
+            tb.setMarkdown(block, lib.resolveLinks(QStringLiteral("see [[Interference]] and [away](lumen://page/%1)").arg(outside)));
+            QCOMPARE(lib.backlinks(a).size(), 1);
+            shapes.create(a, "rect", 10, 20, 100, 60, "#E0403C", "", 2.5);
+
+            QImage picture(40, 20, QImage::Format_RGB32);
+            picture.fill(Qt::magenta);
+            const QString png = from.path() + "/diagram.png";
+            QVERIFY(picture.save(png, "PNG"));
+            QVERIFY(images.insertFile(a, QUrl::fromLocalFile(png), 50, 60, 120) > 0);
+
+            const notebookfile::Result r = notebookfile::exportNotebook(db, nb, file);
+            QVERIFY2(r.ok, qPrintable(r.error));
+            QCOMPARE(r.name, QStringLiteral("Physics"));
+            QCOMPARE(r.pages, 2);
+            QCOMPARE(r.attachments, 1);
+            pagesExported = r.pages;
+            QVERIFY(QFileInfo(file).size() > 0);
+            QCOMPARE(notebookfile::describe(file), QStringLiteral("Physics · 2 pages"));
+        }
+        {   // ---- and the library it lands in
+            qputenv("LUMEN_DATA_DIR", to.path().toUtf8());
+            QDir().mkpath(paths::attachmentsDir());
+            Database db; QVERIFY(db.open(to.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+            Library lib(db);
+            TextBlocks tb(db, lib);
+            Images images(db);
+            Shapes shapes(db);
+            lib.createNotebook("Physics", "#000");          // a name clash, on purpose
+
+            const notebookfile::Result r = notebookfile::importNotebook(db, file);
+            QVERIFY2(r.ok, qPrintable(r.error));
+            QCOMPARE(r.name, QStringLiteral("Physics (imported)"));
+            QCOMPARE(r.pages, int(pagesExported));
+            QVERIFY(r.notebookId > 0);
+
+            const QVariantList sections = lib.sections(r.notebookId);
+            QCOMPARE(sections.size(), 1);
+            const qint64 sec = sections[0].toMap().value("id").toLongLong();
+            const QVariantList pages = lib.pages(sec);
+            QCOMPARE(pages.size(), 2);
+            const qint64 a = pages[0].toMap().value("id").toLongLong(), b = pages[1].toMap().value("id").toLongLong();
+            QCOMPARE(lib.page(a).value("title").toString(), QStringLiteral("Interference"));
+            QCOMPARE(lib.page(a).value("style").toString(), QStringLiteral("lined"));
+            QVERIFY(lib.isStarred(a));
+            QCOMPARE(lib.pageTags(a).size(), 1);
+            QCOMPARE(lib.pageTags(a)[0].toMap().value("name").toString(), QStringLiteral("exam"));
+            QCOMPARE(shapes.count(a), 1);
+            QCOMPARE(images.count(a), 1);
+            QVERIFY2(QFileInfo::exists(images.list(a)[0].toMap().value("path").toString()),
+                     "the picture's bytes must come with the notebook");
+            {
+                Database::Query q(db, "SELECT stroke_count, data FROM stroke_blob WHERE page_id=?");
+                q.bind(1, a);
+                QVERIFY(q.step());
+                QCOMPARE(q.i32(0), 2);
+                QVector<Stroke> back;
+                QVERIFY(strokecodec::decode(q.blob(1), back));
+                QCOMPARE(back.size(), 2);
+            }
+            // The link inside the notebook now points at the page's new id; the one that pointed
+            // outside it points nowhere rather than at some unrelated page.
+            const QString text = tb.pageText(b);
+            QVERIFY2(text.contains(QStringLiteral("lumen://page/%1").arg(a)), qPrintable(text));
+            QVERIFY2(text.contains(QStringLiteral("lumen://page/0")), qPrintable(text));
+            QCOMPARE(lib.backlinks(a).size(), 1);
+            QCOMPARE(lib.backlinks(a)[0].toMap().value("id").toLongLong(), b);
+            QVERIFY(!lib.search("Interference").isEmpty());   // searchable without opening it
+
+            // Importing the same file twice makes a second notebook, never a merge.
+            const notebookfile::Result again = notebookfile::importNotebook(db, file);
+            QVERIFY(again.ok);
+            QVERIFY(again.notebookId != r.notebookId);
+            QCOMPARE(again.name, QStringLiteral("Physics (imported 2)"));
+            QCOMPARE(lib.notebooks().size(), 3);
+            QVERIFY(!notebookfile::importNotebook(db, to.path() + "/t.db").ok);   // not an export file
+            QVERIFY(!notebookfile::importNotebook(db, to.path() + "/nope.lumen").ok);
+        }
+        qputenv("LUMEN_DATA_DIR", QByteArray());
+    }
+    void schemaSixIndexesLinksAlreadyInText() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        const QString path = dir.path() + "/t.db";
+        qint64 a = 0, b = 0;
+        {
+            Database db; QVERIFY(db.open(path)); QCOMPARE(ensureSchema(db), kSchemaVersion);
+            Library lib(db);
+            const qint64 sec = lib.createSection(lib.createNotebook("N", "#000"), "S");
+            a = lib.createPage(sec); b = lib.createPage(sec);
+            // what a version-5 file looks like: the link is in the text, the index does not exist yet
+            QVERIFY(db.exec(QStringLiteral("INSERT INTO text_block(page_id, x, y, w, markdown) VALUES (%1, 0, 0, 400, 'go to [A](lumen://page/%2) now')").arg(b).arg(a)));
+            QVERIFY(db.exec("DROP TABLE page_link"));
+            QVERIFY(db.exec("UPDATE schema_version SET version=5"));
+        }
+        Database db; QVERIFY(db.open(path));
+        QCOMPARE(ensureSchema(db), 6);
+        Library lib(db);
+        const QVariantList back = lib.backlinks(a);
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(back[0].toMap().value("id").toLongLong(), b);
     }
 };
 QTEST_GUILESS_MAIN(TstStorage)

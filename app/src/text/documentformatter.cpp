@@ -1,5 +1,7 @@
 #include "documentformatter.h"
 
+#include <QGuiApplication>
+#include <QPalette>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -246,6 +248,19 @@ void DocumentFormatter::setMarkdown(const QString &md)
     if (!d) return;
     m_loading = true;
     d->setMarkdown(md, QTextDocument::MarkdownDialectGitHub);
+    // Page links look the way insertPageLink() makes them, whatever the importer chose.
+    for (QTextBlock b = d->begin(); b.isValid(); b = b.next())
+        for (auto it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment f = it.fragment();
+            if (!f.charFormat().anchorHref().startsWith(QLatin1String("lumen://"))) continue;
+            QTextCursor c(d);
+            c.setPosition(f.position());
+            c.setPosition(f.position() + f.length(), QTextCursor::KeepAnchor);
+            QTextCharFormat look;
+            look.setFontUnderline(true);
+            look.setForeground(QGuiApplication::palette().highlight());
+            c.mergeCharFormat(look);
+        }
     m_loading = false;
     d->setIndentWidth(28);
     d->clearUndoRedoStacks();
@@ -271,4 +286,38 @@ int DocumentFormatter::wordCount() const
     int n = 0;
     for (auto it = words.globalMatch(t); it.hasNext(); it.next()) ++n;
     return n;
+}
+
+int DocumentFormatter::insertPageLink(int start, int end, const QString &title, const QString &url)
+{
+    QTextDocument *d = doc();
+    if (!d || start < 0 || end < start) return end;
+    QTextCursor c(d);
+    c.beginEditBlock();
+    c.setPosition(start);
+    c.setPosition(end, QTextCursor::KeepAnchor);
+    QTextCharFormat plain = c.charFormat();
+    // Cleared, not set empty: an empty href still counts as a link to the Markdown writer.
+    for (int p : {int(QTextFormat::IsAnchor), int(QTextFormat::AnchorHref), int(QTextFormat::AnchorName),
+                  int(QTextFormat::TextUnderlineStyle), int(QTextFormat::ForegroundBrush)})
+        plain.clearProperty(p);
+    QTextCharFormat link = plain;
+    link.setAnchor(true);
+    link.setAnchorHref(url);
+    link.setFontUnderline(true);
+    link.setForeground(QGuiApplication::palette().highlight());   // the accent, as every link in the app
+    c.removeSelectedText();
+    c.insertText(title, link);
+    c.insertText(QStringLiteral(" "), plain);
+    c.endEditBlock();
+    return c.position();
+}
+
+QString DocumentFormatter::textBefore(int position, int maxChars) const
+{
+    QTextDocument *d = doc();
+    if (!d) return {};
+    const QTextBlock block = d->findBlock(position);
+    const int from = std::max(block.position(), position - maxChars);
+    return block.text().mid(from - block.position(), position - from);
 }

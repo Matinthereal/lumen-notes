@@ -5,6 +5,7 @@
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
+#include <QGuiApplication>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
@@ -12,9 +13,16 @@
 
 Q_LOGGING_CATEGORY(lcTablet, "lumen.tablet")
 
+#if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
+// An offscreen instance — the tests, the screenshots — has no display of its own, so it must not
+// follow, query or rotate the desktop's: no KWin D-Bus and no kscreen-doctor from it, ever.
+static bool onRealDisplay() { return QGuiApplication::platformName() != QLatin1String("offscreen"); }
+#endif
+
 TabletMode::TabletMode(QObject *parent) : QObject(parent)
 {
 #if defined(Q_OS_LINUX) && defined(LUMEN_HAVE_DBUS)
+    if (!onRealDisplay()) return;
     queryKwin();
     QDBusConnection::sessionBus().connect(QStringLiteral("org.kde.KWin"), QStringLiteral("/org/kde/KWin"), QStringLiteral("org.kde.KWin.TabletModeManager"),
                                           QStringLiteral("tabletModeChanged"), this, SLOT(onKwinTabletChanged(bool)));
@@ -54,6 +62,7 @@ void TabletMode::queryKwin()
 
 void TabletMode::rotateDisplay(const QString &to)
 {
+    if (!onRealDisplay()) return;
     QProcess::startDetached(QStringLiteral("kscreen-doctor"), {QStringLiteral("output.eDP-1.rotation.%1").arg(to == "none" ? "normal" : to)});
     m_rotation = to;
     emit rotationChanged();
@@ -61,6 +70,7 @@ void TabletMode::rotateDisplay(const QString &to)
 
 void TabletMode::refreshRotation()
 {
+    if (!onRealDisplay()) return;
     // Asynchronous: kscreen-doctor can hang without a running KWin (tests, offscreen).
     auto *p = new QProcess(this);
     connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {

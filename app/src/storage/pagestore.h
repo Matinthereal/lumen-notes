@@ -19,6 +19,7 @@ public:
     PageStore(Database &db, const QString &journalDir, QObject *parent = nullptr);
     ~PageStore() override;
     void attach(InkDocument *doc);
+    void detach();                          // fold, then forget the document (before it is destroyed)
     Q_INVOKABLE bool load(qint64 pageId);   // folds the current page first
     Q_INVOKABLE bool flush();               // fold now
     Q_INVOKABLE void unload();              // fold and detach from the page

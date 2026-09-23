@@ -40,7 +40,7 @@ public:
     // Full-text index (FTS5): one row per (kind, page, ref). kind ∈ text|ocr|transcript|pdf.
     Q_INVOKABLE void indexText(const QString &kind, qint64 pageId, qint64 refId, const QString &text);
     Q_INVOKABLE void unindex(const QString &kind, qint64 pageId, qint64 refId = -1);
-    Q_INVOKABLE QVariantList search(const QString &query, int limit = 40) const;
+    Q_INVOKABLE QVariantList search(const QString &query, int limit = 40, const QString &tag = {}) const;
     Q_INVOKABLE void movePage(qint64 pageId, int newIndex);
     Q_INVOKABLE void remove(const QString &kind, qint64 id);
     Q_INVOKABLE void restore(const QString &kind, qint64 id);
@@ -49,6 +49,27 @@ public:
     Q_INVOKABLE void purgeOne(const QString &kind, qint64 id);       // gone for good
     Q_INVOKABLE qint64 duplicatePage(qint64 pageId);                 // ink, text, pictures and PDF page with it
     Q_INVOKABLE void movePageToSection(qint64 pageId, qint64 sectionId);
+
+    // [[page]] links. In text a link is [Title](lumen://page/<id>): the id is what it follows, so a
+    // rename never breaks it, and the label is refreshed to the current title whenever it is shown.
+    void syncLinks(qint64 blockId, qint64 pageId, const QString &markdown);   // re-index one block's links
+    Q_INVOKABLE QVariantList backlinks(qint64 pageId) const;                  // pages whose text links here
+    Q_INVOKABLE QVariantList linkCandidates(const QString &query, qint64 excludePageId = 0, int limit = 8) const;
+    Q_INVOKABLE QString resolveLinks(const QString &markdown) const;          // fresh labels; [[Title]] → a link
+    Q_INVOKABLE qint64 linkTarget(const QString &url) const;                  // 0 unless it names a live page
+    Q_INVOKABLE qint64 pageByTitle(const QString &title) const;
+    Q_INVOKABLE QString displayTitle(qint64 pageId) const;                    // title without the auto mark
+    static QString pageUrl(qint64 pageId) { return QStringLiteral("lumen://page/%1").arg(pageId); }
+    static QString linkMarkdown(const QString &title, qint64 pageId);
+
+    // Page tags. A tag is a name ("#" and spacing tidied, case kept as first typed, matched without
+    // case); the tag table is shared with flashcards.
+    static QString normaliseTag(const QString &name);
+    Q_INVOKABLE QVariantList tags() const;                          // every tag on a live page, with its count
+    Q_INVOKABLE QVariantList pageTags(qint64 pageId) const;
+    Q_INVOKABLE qint64 addPageTag(qint64 pageId, const QString &name);   // the tag id, 0 if the name was empty
+    Q_INVOKABLE void removePageTag(qint64 pageId, qint64 tagId);
+    Q_INVOKABLE QVariantList pagesWithTag(const QString &name) const;
 
     Q_INVOKABLE qint64 firstPageId() const;
     Q_INVOKABLE qint64 nextPageId(qint64 pageId, int delta) const;   // ±1 within the section
@@ -59,6 +80,8 @@ public:
 
 signals:
     void changed();
+    void linksChanged();
+    void tagsChanged();
 
 private:
     qint64 now() const;

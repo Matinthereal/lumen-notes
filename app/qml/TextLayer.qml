@@ -29,6 +29,49 @@ Item {
         Qt.callLater(() => { for (let i = 0; i < repeater.count; ++i) { const it = repeater.itemAt(i); if (it && it.bid === id) it.startEditing() } })
     }
     Connections { target: textBlocks; function onChanged(pid) { if (pid === textPage.pageId) textPage.reload() } }
+    signal pageLinkActivated(string url)
+    // A rename changes what a link says; the rendered blocks pick that up here.
+    property int linkTick: 0
+    Connections { target: library; function onChanged() { textPage.linkTick++ } }
+
+    // [[ in a block's Markdown opens the page picker; the pick is written as [Title](lumen://page/id).
+    property Item linkEditor: null
+    property int linkStart: -1
+    function checkLink(editor) {
+        const pos = editor.cursorPosition
+        const line = editor.getText(Math.max(0, pos - 80), pos).split("\n").pop()
+        const open = line.lastIndexOf("[[")
+        if (!editor.activeFocus || open < 0 || line.indexOf("]]", open) >= 0) { if (linkEditor === editor) linkPicker.close(); return }
+        linkEditor = editor
+        linkStart = pos - (line.length - open)
+        linkPicker.query = line.slice(open + 2)
+        const r = editor.positionToRectangle(linkStart)
+        linkPicker.openAt(editor.mapToItem(linkPicker.parent, r.x, r.y), r.height * canvas.zoom)
+    }
+    function insertLink(pageId) {
+        const editor = linkEditor
+        linkPicker.close()
+        if (!editor) return
+        const label = library.displayTitle(pageId).replace(/([\\\[\]*_`])/g, "\\$1")
+        const md = "[" + label + "](lumen://page/" + pageId + ")"
+        editor.remove(linkStart, editor.cursorPosition)
+        editor.insert(linkStart, md)
+        editor.cursorPosition = linkStart + md.length
+        editor.forceActiveFocus()
+    }
+    LinkPicker {
+        id: linkPicker
+        parent: Overlay.overlay
+        excludePageId: textPage.pageId
+        onChosen: (id, title) => textPage.insertLink(id)
+        onCreateAsked: (title) => {
+            const home = library.page(textPage.pageId)
+            if (!home.id) return
+            const id = library.createPage(home.sectionId, "", "typed")
+            library.rename("page", id, title)
+            textPage.insertLink(id)
+        }
+    }
     onPageIdChanged: reload()
 
     // Markdown → rendered: $$…$$ and $…$ become inline images from the latex worker.
@@ -71,7 +114,7 @@ Item {
                     autosave.stop()
                     // Read everything off the delegate first: remove() rebuilds the model, which
                     // releases this delegate and invalidates its context mid-function.
-                    const id = bid, text = editor.text, was = markdown
+                    const id = bid, text = library.resolveLinks(editor.text), was = markdown
                     if (text.trim().length === 0) { textBlocks.remove(id); return }
                     if (text !== was) { textBlocks.setMarkdown(id, text, textPage.recordingT()); markdown = text }
                 }
@@ -137,11 +180,12 @@ Item {
                     visible: !editing
                     x: 8; y: 12; width: parent.width - 16
                     textFormat: Text.MarkdownText
-                    text: markdown.length ? textPage.toRich(markdown) : "*Empty block — tap to type*"
+                    text: markdown.length ? textPage.toRich(textPage.linkTick >= 0 ? library.resolveLinks(markdown) : markdown) : "*Empty block — tap to type*"
                     color: pal.text
                     wrapMode: Text.Wrap
                     font.pixelSize: 15
-                    onLinkActivated: (link) => Qt.openUrlExternally(link)
+                    linkColor: pal.highlight
+                    onLinkActivated: (link) => link.startsWith("lumen://") ? textPage.pageLinkActivated(link) : Qt.openUrlExternally(link)
                 }
                 TextArea {
                     id: editor
@@ -153,9 +197,15 @@ Item {
                     color: pal.text
                     placeholderText: "Markdown, with $x^2$ or $$\\int_0^1 x\\,dx$$ for maths"
                     background: null
-                    onActiveFocusChanged: if (!activeFocus) block.commit()
-                    onTextChanged: if (block.editing) autosave.restart()
-                    Keys.onEscapePressed: block.commit()
+                    onActiveFocusChanged: if (!activeFocus) { if (textPage.linkEditor === editor) linkPicker.close(); block.commit() }
+                    onTextChanged: if (block.editing) { autosave.restart(); Qt.callLater(textPage.checkLink, editor) }
+                    Keys.onPressed: (e) => {
+                        const picking = linkPicker.visible && textPage.linkEditor === editor
+                        if (e.key === Qt.Key_Escape) { if (picking) linkPicker.close(); else block.commit(); e.accepted = true }
+                        else if (!picking) return
+                        else if (e.key === Qt.Key_Down || e.key === Qt.Key_Up) { linkPicker.move(e.key === Qt.Key_Down ? 1 : -1); e.accepted = true }
+                        else if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Tab) { linkPicker.acceptCurrent(); e.accepted = true }
+                    }
                 }
                 HoverHandler { id: hover }
                 TapHandler { enabled: !block.editing; onTapped: block.startEditing() }

@@ -15,6 +15,7 @@
 #include <QQuickItem>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QJSValue>
 #include <QQmlProperty>
 #include <QQuickWindow>
 #include <QTimer>
@@ -22,6 +23,10 @@
 #include <QPointingDevice>
 #include <QTabletEvent>
 #include <QImage>
+#include <QFile>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QRegularExpression>
 #include <QUrl>
 #include <QVariant>
@@ -296,6 +301,535 @@ QQuickItem *sheetAction(QQuickWindow *w, const QString &label)
     return nullptr;
 }
 
+// LUMEN_UITEST_SHOTS=<dir>: keep a picture of the window at the moments worth looking at.
+void shot(QQuickWindow *w, const QString &name)
+{
+    const QString dir = qEnvironmentVariable("LUMEN_UITEST_SHOTS");
+    if (dir.isEmpty()) return;
+    QDir().mkpath(dir);
+    spin(250);
+    w->grabWindow().save(dir + QLatin1Char('/') + name + QStringLiteral(".png"));
+}
+
+// The page, notebook and navigation features: links, tags, split view, presentation and the rest.
+// Also runnable on its own with LUMEN_UITEST_ONLY=pages.
+void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
+{
+    const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    QObject *library = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root))
+        library = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
+
+    // ---- 15. [[page]] links: typing [[ offers pages, the pick is a real link, the target lists the
+    //          source under "Linked from", both directions can be followed, and a rename keeps it.
+    if (library) {
+        QObject *textBlocks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+        spin(400);
+        const qint64 target = currentPage();
+        QMetaObject::invokeMethod(library, "rename", Q_ARG(QString, QStringLiteral("page")), Q_ARG(qlonglong, target), Q_ARG(QString, QStringLiteral("Uitest target")));
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+        spin(400);
+        const qint64 source = currentPage();
+        QQuickItem *editor = findOne(win, QStringLiteral("typedEditor"));
+        if (editor && source != target) {
+            win->requestActivate();
+            waitFor([&] { return win->isActive(); }, 1500);
+            editor->forceActiveFocus();
+            spin(100);
+            typeKeys(QStringLiteral("see [[uitest ta"));
+            spin(300);
+            QList<QQuickItem *> rows;
+            for (QQuickItem *row : findAll(win, QStringLiteral("linkPickerRow"))) if (row->isVisible()) rows << row;
+            r.check("typing [[ offers pages to link to", !rows.isEmpty());
+            shot(win, QStringLiteral("1-links-picker"));
+            chord(win, Qt::Key_Return, Qt::NoModifier);
+            spin(1000);                                   // past the autosave delay
+            QString saved;
+            if (textBlocks) QMetaObject::invokeMethod(textBlocks, "pageText", Q_RETURN_ARG(QString, saved), Q_ARG(qint64, source));
+            const QString url = QStringLiteral("lumen://page/%1").arg(target);
+            r.check("the pick is saved as a link by page id", saved.contains(QStringLiteral("[Uitest target](") + url + QLatin1Char(')')), saved.left(200));
+            QVariantList back;
+            QMetaObject::invokeMethod(library, "backlinks", Q_RETURN_ARG(QVariantList, back), Q_ARG(qint64, target));
+            r.check("the target knows what links to it", back.size() == 1 && back[0].toMap().value(QStringLiteral("id")).toLongLong() == source);
+
+            // A tap on the link's words opens the page it names.
+            QRectF at;
+            QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, at), Q_ARG(int, 6));
+            tap(win, nullptr, Qt::LeftButton, editor->mapToScene(at.center()));
+            waitFor([&] { return currentPage() == target; }, 2000);
+            r.check("tapping a link follows it", currentPage() == target, QStringLiteral("page %1, wanted %2").arg(currentPage()).arg(target));
+            spin(300);
+            QQuickItem *row = findOne(win, QStringLiteral("backlinkRow"));
+            r.check("the linked page shows where it is linked from", row && row->isVisible());
+            root->setProperty("rightPanel", QStringLiteral("page"));
+            shot(win, QStringLiteral("1-links-backlinks"));
+            root->setProperty("rightPanel", QString());
+            spin(150);
+            row = findOne(win, QStringLiteral("backlinkRow"));
+            if (row && row->isVisible()) {
+                tap(win, row);
+                waitFor([&] { return currentPage() == source; }, 2000);
+                r.check("and that list leads back", currentPage() == source);
+            }
+            // Renaming the target keeps the link, and the linking text says the new name.
+            QMetaObject::invokeMethod(library, "rename", Q_ARG(QString, QStringLiteral("page")), Q_ARG(qlonglong, target), Q_ARG(QString, QStringLiteral("Renamed target")));
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, target));
+            spin(200);
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, source));
+            spin(300);
+            QString reloaded;
+            if (QQuickItem *tp = findOne(win, QStringLiteral("typedPage")))
+                if (QObject *fmtObj = tp->property("formatter").value<QObject *>())
+                    QMetaObject::invokeMethod(fmtObj, "markdown", Q_RETURN_ARG(QString, reloaded));
+            shot(win, QStringLiteral("1-links-rendered"));
+            r.check("a renamed page's links keep working and show the new name", reloaded.contains(QStringLiteral("[Renamed target](") + url + QLatin1Char(')')), reloaded.left(200));
+        } else {
+            r.check("found a typed editor for the link test", false);
+        }
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+    }
+
+
+    // ---- 16. Tags: lassoed handwriting becomes a tag through the OCR path, the page panel adds and
+    //          removes them (with undo), and the page browser and search narrow to a tag.
+    if (library) {
+        QObject *ocr = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            ocr = engine->rootContext()->contextProperty(QStringLiteral("ocr")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(400);
+        const qint64 inked = currentPage();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        const auto pageTagNames = [&](qint64 pid) {
+            QVariantList tags;
+            QMetaObject::invokeMethod(library, "pageTags", Q_RETURN_ARG(QVariantList, tags), Q_ARG(qint64, pid));
+            QStringList names;
+            for (const QVariant &t : tags) names << t.toMap().value(QStringLiteral("name")).toString();
+            return names;
+        };
+        if (canvas && ocr) {
+            canvas->setTool(QStringLiteral("pen"));
+            const QPointF mid = centre(canvas);
+            const auto sample = [&](TabletSample::Kind kind, QPointF at) {
+                TabletSample t;
+                t.kind = kind; t.windowPos = at;
+                t.pressure = kind == TabletSample::Kind::Release ? 0.0f : 0.6f;
+                t.buttons = kind == TabletSample::Kind::Release ? Qt::NoButton : Qt::LeftButton;
+                t.button = Qt::LeftButton;
+                t.timestampMs = quint32(g_stamp += 16);
+                canvas->tabletSample(t);
+            };
+            sample(TabletSample::Kind::Press, mid);
+            for (int i = 1; i <= 10; ++i) sample(TabletSample::Kind::Move, mid + QPointF(8.0 * i, (i % 2) * 10.0));
+            sample(TabletSample::Kind::Release, mid + QPointF(80, 0));
+            spin(200);
+            canvas->selectAll();
+            spin(300);
+            QQuickItem *pill = findOne(win, QStringLiteral("tagPill"));
+            r.check("lassoed ink offers # Tag", pill && pill->isVisible());
+            shot(win, QStringLiteral("2-tags-lasso"));
+            if (pill && pill->isVisible()) {
+                // Pressed and released with no event loop between, so the reply from a recogniser
+                // that is missing its model cannot arrive before the stand-in answer below.
+                sendMouse(win, QEvent::MouseButtonPress, centre(pill), Qt::LeftButton);
+                sendMouse(win, QEvent::MouseButtonRelease, centre(pill), Qt::LeftButton);
+                const QJSValue pending = root->property("pendingTag").value<QJSValue>();
+                const QString token = pending.isObject() ? pending.property(QStringLiteral("token")).toString() : QString();
+                r.check("# Tag sends the strokes to the handwriting reader", !token.isEmpty());
+                // The recogniser needs its model, which a test machine may not have: answer for it.
+                QMetaObject::invokeMethod(ocr, "strokesRecognized", Q_ARG(QString, token), Q_ARG(QString, QStringLiteral("#Revision.")));
+                spin(250);
+                r.check("the recognised words become the page's tag", pageTagNames(inked).contains(QStringLiteral("Revision")),
+                        pageTagNames(inked).join(QLatin1Char(',')));
+            }
+        } else {
+            r.check("found the canvas and OCR service for the tag test", false);
+        }
+
+        // The page panel: add by typing, see the chips, remove with an undo.
+        root->setProperty("rightPanel", QStringLiteral("page"));
+        spin(300);
+        QQuickItem *field = findOne(win, QStringLiteral("tagField"));
+        r.check("the page panel has a field for tags", field && field->isVisible());
+        if (field) {
+            win->requestActivate();
+            waitFor([&] { return win->isActive(); }, 1500);
+            field->forceActiveFocus();
+            spin(100);
+            typeKeys(QStringLiteral("exam"));
+            chord(win, Qt::Key_Return, Qt::NoModifier);
+            spin(250);
+            r.check("a typed tag is added", pageTagNames(inked).contains(QStringLiteral("exam")), pageTagNames(inked).join(QLatin1Char(',')));
+            if (QQmlEngine *engine = qmlEngine(root))
+                if (QObject *k = engine->rootContext()->contextProperty(QStringLiteral("keys")).value<QObject *>())
+                    QMetaObject::invokeMethod(k, "dropFocus");
+            spin(150);
+        }
+        shot(win, QStringLiteral("2-tags-panel"));
+        QQuickItem *removeExam = nullptr;
+        for (QQuickItem *chip : findAll(win, QStringLiteral("tagChip")))
+            if (chip->isVisible() && chip->property("name").toString() == QLatin1String("exam") && chip->property("removable").toBool())
+                for (QQuickItem *x : findAll(win, QStringLiteral("tagChipRemove")))
+                    if (x->parentItem() && x->parentItem()->parentItem() == chip) removeExam = x;
+        r.check("a tag chip can be removed", removeExam != nullptr);
+        if (removeExam) {
+            tap(win, removeExam);
+            spin(250);
+            r.check("removing takes the tag off", !pageTagNames(inked).contains(QStringLiteral("exam")));
+            if (QQuickItem *undo = findOne(win, QStringLiteral("toastUndo"))) {
+                tap(win, undo);
+                spin(250);
+                r.check("and Undo puts it back", pageTagNames(inked).contains(QStringLiteral("exam")));
+            }
+        }
+        root->setProperty("rightPanel", QString());
+
+        // The page browser, narrowed to a tag.
+        QMetaObject::invokeMethod(root, "showTagged", Q_ARG(QVariant, QStringLiteral("revision")));
+        waitFor([&] { return !findAll(win, QStringLiteral("browserCell")).isEmpty(); }, 3000);
+        spin(300);
+        int cells = 0;
+        for (QQuickItem *c : findAll(win, QStringLiteral("browserCell"))) if (c->isVisible()) ++cells;
+        r.check("the page browser shows the pages with a tag", cells == 1, QStringLiteral("%1 cells").arg(cells));
+        shot(win, QStringLiteral("2-tags-browser"));
+        root->setProperty("browserVisible", false);
+        spin(200);
+
+        // Search, narrowed by a tag chip.
+        chord(win, Qt::Key_K, Qt::ControlModifier);
+        spin(300);
+        QQuickItem *chipInSearch = nullptr;
+        if (QQuickItem *flow = findOne(win, QStringLiteral("searchTags")))
+            for (QQuickItem *chip : findAll(win, QStringLiteral("tagChip")))
+                if (chip->isVisible() && chip->parentItem() == flow && chip->property("name").toString() == QLatin1String("Revision")) chipInSearch = chip;
+        r.check("search offers tags to narrow it", chipInSearch != nullptr);
+        if (chipInSearch) {
+            tap(win, chipInSearch);
+            spin(250);
+            r.check("a tag chip selects in search", chipInSearch->property("selected").toBool());
+            shot(win, QStringLiteral("2-tags-search"));
+        }
+        pressEscape(win);
+        spin(150);
+    }
+
+    // ---- 17. Split view: a PDF page and an ink page side by side, each drawn on through the real
+    //          pen path, each zoomed on its own, the divider drags, and either side closes.
+    if (library) {
+        QObject *pdf = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            pdf = engine->rootContext()->contextProperty(QStringLiteral("pdf")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 inkPage = currentPage();
+        qint64 left = 0;
+        // A one-page lecture handout, made here so the test needs no files of its own.
+        const QString handout = QDir::tempPath() + QStringLiteral("/lumen-uitest-handout.pdf");
+        {
+            QPdfWriter writer(handout);
+            writer.setPageSize(QPageSize(QPageSize::A4));
+            QPainter p(&writer);
+            QFont f = p.font(); f.setPointSize(28); p.setFont(f);
+            p.drawText(QRectF(0, 400, writer.width(), 1200), Qt::AlignHCenter, QStringLiteral("Lecture 4\nWaves and interference"));
+            p.drawEllipse(QRectF(writer.width() / 2 - 1500, 3000, 3000, 3000));
+        }
+        QVariantMap info;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, info), Q_ARG(qint64, inkPage));
+        if (pdf) {
+            QMetaObject::invokeMethod(pdf, "importAsSection", Q_ARG(QUrl, QUrl::fromLocalFile(handout)),
+                                      Q_ARG(qint64, info.value(QStringLiteral("notebookId")).toLongLong()), Q_ARG(QString, QStringLiteral("Handouts")), Q_ARG(QString, QString()));
+            waitFor([&] { return currentPage() != inkPage && currentPage() > 0; }, 20000);
+            spin(1500);                                  // the page raster arrives after the page opens
+        }
+        left = currentPage();
+        if (left == inkPage) {
+            qInfo("UITEST note  the PDF worker is not available here; split view uses two ink pages");
+            QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+            spin(300);
+            left = currentPage();
+        }
+        // The rail button asks which page to show beside this one.
+        root->setProperty("leftPanel", QString());
+        spin(200);
+        QMetaObject::invokeMethod(root, "toggleSplit");
+        spin(300);
+        QList<QQuickItem *> pickRows;
+        for (QQuickItem *row : findAll(win, QStringLiteral("pagePickerRow"))) if (row->isVisible()) pickRows << row;
+        r.check("split view asks which page to show beside this one", !pickRows.isEmpty());
+        QQuickItem *want = nullptr;
+        for (QQuickItem *row : pickRows)
+            if (row->property("modelData").toMap().value(QStringLiteral("id")).toLongLong() == inkPage) want = row;
+        if (want) tap(win, want); else pressEscape(win);
+        waitFor([&] { return root->property("splitPageId").toLongLong() == inkPage; }, 2000);
+        if (root->property("splitPageId").toLongLong() != inkPage) QMetaObject::invokeMethod(root, "openSplit", Q_ARG(QVariant, inkPage));
+        spin(600);
+        auto *mainCanvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        auto *splitCanvas = qobject_cast<InkCanvas *>(findOne(win, QStringLiteral("splitCanvas")));
+        r.check("the chosen page opens beside the first", splitCanvas && splitCanvas->isVisible() && root->property("splitPageId").toLongLong() == inkPage);
+        if (mainCanvas && splitCanvas) {
+            mainCanvas->setTool(QStringLiteral("pen"));
+            splitCanvas->setTool(QStringLiteral("pen"));
+            const int mainBefore = mainCanvas->strokeCount(), splitBefore = splitCanvas->strokeCount();
+            const QPointF onSplit = centre(splitCanvas), onMain = centre(mainCanvas);
+            penDrag(win, onSplit - QPointF(60, 0), onSplit + QPointF(60, 40));
+            r.check("the pen writes on the right-hand page", splitCanvas->strokeCount() == splitBefore + 1 && mainCanvas->strokeCount() == mainBefore,
+                    QStringLiteral("split %1→%2, main %3→%4").arg(splitBefore).arg(splitCanvas->strokeCount()).arg(mainBefore).arg(mainCanvas->strokeCount()));
+            penDrag(win, onMain - QPointF(80, -60), onMain + QPointF(40, 90));
+            r.check("and on the left-hand page", mainCanvas->strokeCount() == mainBefore + 1 && splitCanvas->strokeCount() == splitBefore + 1);
+            const qreal mainZoom = mainCanvas->zoom();
+            splitCanvas->zoomAt(1.8, QPointF(splitCanvas->width() / 2, splitCanvas->height() / 2));
+            spin(200);
+            r.check("each side zooms on its own", std::abs(mainCanvas->zoom() - mainZoom) < 1e-6 && std::abs(splitCanvas->zoom() - mainZoom) > 0.05);
+            shot(win, QStringLiteral("3-split-view"));
+            splitCanvas->fitPage();
+
+            // The divider drags.
+            const double before = root->property("splitFraction").toDouble();
+            if (QQuickItem *divider = findOne(win, QStringLiteral("splitDivider"))) {
+                const QPointF at = centre(divider);
+                sendMouse(win, QEvent::MouseButtonPress, at, Qt::LeftButton);
+                spin(30);
+                for (int i = 1; i <= 10; ++i) { sendMouse(win, QEvent::MouseMove, at - QPointF(15.0 * i, 0), Qt::LeftButton); spin(16); }
+                sendMouse(win, QEvent::MouseButtonRelease, at - QPointF(150, 0), Qt::LeftButton);
+                spin(250);
+            }
+            const double after = root->property("splitFraction").toDouble();
+            r.check("dragging the divider resizes the two sides", after > before + 0.03, QStringLiteral("%1 → %2").arg(before).arg(after));
+            shot(win, QStringLiteral("3-split-resized"));
+        } else {
+            r.check("found both canvases", false);
+        }
+        // The right side's ink is saved: close it, open it again, it is still there.
+        if (QQuickItem *close = findOne(win, QStringLiteral("splitClose"))) {
+            tap(win, close);
+            spin(300);
+            r.check("the right side closes", root->property("splitPageId").toLongLong() == 0 && !findOne(win, QStringLiteral("splitCanvas")));
+        }
+        QMetaObject::invokeMethod(root, "openSplit", Q_ARG(QVariant, inkPage));
+        spin(500);
+        splitCanvas = qobject_cast<InkCanvas *>(findOne(win, QStringLiteral("splitCanvas")));
+        r.check("ink written on the right is kept", splitCanvas && splitCanvas->strokeCount() >= 1);
+        // Closing the left side hands the window to the right-hand page.
+        if (QQuickItem *closeLeft = findOne(win, QStringLiteral("closeLeftSide"))) {
+            tap(win, closeLeft);
+            spin(400);
+            r.check("the left side closes, and the right-hand page takes its place",
+                    currentPage() == inkPage && root->property("splitPageId").toLongLong() == 0);
+        } else {
+            r.check("the left side has a close button", false);
+        }
+        QFile::remove(handout);
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        spin(200);
+    }
+
+    // ---- 18. Presentation: the section full screen, keys and taps move between slides, the pen
+    //          leaves a mark that fades and never reaches the page, and Escape gets out.
+    if (library) {
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 firstSlide = currentPage();
+        auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        chord(win, Qt::Key_F5, Qt::NoModifier);
+        waitFor([&] { return root->property("presenting").toBool(); }, 2000);
+        r.check("F5 starts the presentation", root->property("presenting").toBool());
+        spin(600);
+        QQuickItem *rail = findOne(win, QStringLiteral("rail"));
+        QQuickItem *overlay = findOne(win, QStringLiteral("laserOverlay"));
+        r.check("presenting hides the rail and shows the slide alone", rail && !rail->isVisible());
+        r.check("the pen layer is up", overlay && overlay->isVisible());
+        QQuickItem *counter = findOne(win, QStringLiteral("presentCounter"));
+        r.check("the slide counter says where you are", counter && counter->property("text").toString().contains(QLatin1Char('/')),
+                counter ? counter->property("text").toString() : QString());
+
+        shot(win, QStringLiteral("4-presentation-slide"));
+
+        // Arrow keys move between slides.
+        const int indexBefore = root->property("presentIndex").toInt();
+        chord(win, Qt::Key_Left, Qt::NoModifier);
+        spin(500);
+        r.check("← goes back a slide", root->property("presentIndex").toInt() == indexBefore - 1 && currentPage() != firstSlide,
+                QStringLiteral("index %1 → %2").arg(indexBefore).arg(root->property("presentIndex").toInt()));
+        chord(win, Qt::Key_Right, Qt::NoModifier);
+        spin(500);
+        r.check("→ goes on again", currentPage() == firstSlide);
+
+        // A tap on the left quarter goes back; anywhere else goes on.
+        if (overlay) {
+            const QRectF box = overlay->mapRectToScene(QRectF(0, 0, overlay->width(), overlay->height()));
+            tap(win, nullptr, Qt::LeftButton, QPointF(box.left() + box.width() * 0.1, box.center().y()));
+            spin(500);
+            r.check("a tap on the left goes back", root->property("presentIndex").toInt() == indexBefore - 1);
+            tap(win, nullptr, Qt::LeftButton, QPointF(box.center().x() + box.width() * 0.3, box.center().y()));
+            spin(500);
+            r.check("a tap on the right goes on", root->property("presentIndex").toInt() == indexBefore);
+
+            // The pen draws a laser that fades, and leaves the page untouched.
+            const int inkBefore = canvas ? canvas->strokeCount() : 0;
+            const QPointF from = box.center() - QPointF(160, 60);
+            sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+            spin(30);
+            for (int i = 1; i <= 12; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(26.0 * i, 12.0 * i * ((i % 3) - 1)), Qt::LeftButton); spin(16); }
+            shot(win, QStringLiteral("4-presentation"));
+            sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(312, 0), Qt::LeftButton);
+            spin(200);
+            r.check("the pen leaves a laser trail", overlay->property("trails").toList().size() == 1,
+                    QStringLiteral("%1 trails").arg(overlay->property("trails").toList().size()));
+            r.check("and no ink on the page", !canvas || canvas->strokeCount() == inkBefore);
+            waitFor([&] { return overlay->property("trails").toList().isEmpty(); }, 4000);
+            r.check("the trail fades away on its own", overlay->property("trails").toList().isEmpty());
+        }
+        pressEscape(win);
+        spin(400);
+        r.check("Escape leaves the presentation", !root->property("presenting").toBool());
+        r.check("and the rail comes back", rail && rail->isVisible());
+    }
+
+    // ---- 19. The outline: headings on the page, in the panel, and a tap puts the caret in one.
+    if (library) {
+        QObject *textBlocks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+        // Written before the page is opened, the way an import or a rename writes one.
+        QVariantMap here;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, here), Q_ARG(qint64, currentPage()));
+        qlonglong page = 0, block = 0;
+        QMetaObject::invokeMethod(library, "createPage", Q_RETURN_ARG(qlonglong, page),
+                                  Q_ARG(qlonglong, here.value(QStringLiteral("sectionId")).toLongLong()),
+                                  Q_ARG(QString, QString()), Q_ARG(QString, QStringLiteral("typed")), Q_ARG(int, -1));
+        if (textBlocks && page)
+            QMetaObject::invokeMethod(textBlocks, "create", Q_RETURN_ARG(qlonglong, block), Q_ARG(qlonglong, page),
+                                      Q_ARG(double, 0), Q_ARG(double, 0), Q_ARG(double, 794), Q_ARG(qlonglong, 0), Q_ARG(qlonglong, 0));
+        if (block) {
+            QMetaObject::invokeMethod(textBlocks, "setMarkdown", Q_ARG(qint64, block),
+                                      Q_ARG(QString, QStringLiteral("# Introduction\n\nWhy waves matter.\n\n## Method\n\nA long stretch of words so the heading is not already on screen.\n\n### Results\n")),
+                                      Q_ARG(qint64, 0));
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, page));
+            spin(500);
+            root->setProperty("rightPanel", QStringLiteral("page"));
+            spin(400);
+            QList<QQuickItem *> rows;
+            for (QQuickItem *row : findAll(win, QStringLiteral("outlineRow"))) if (row->isVisible()) rows << row;
+            r.check("the page panel lists the page's headings", rows.size() == 3, QStringLiteral("%1 rows").arg(rows.size()));
+            shot(win, QStringLiteral("5-outline"));
+            if (rows.size() == 3) {
+                QQuickItem *editor = findOne(win, QStringLiteral("typedEditor"));
+                if (editor) editor->setProperty("cursorPosition", 0);
+                tap(win, rows[1]);
+                spin(300);
+                const int at = editor ? editor->property("cursorPosition").toInt() : 0;
+                r.check("tapping a heading puts the caret in it", at > 10, QStringLiteral("cursor at %1").arg(at));
+            }
+            root->setProperty("rightPanel", QString());
+            spin(200);
+        } else {
+            r.check("the typed page has a block to give an outline", false);
+        }
+    }
+
+    // ---- 20. Back and forward: following a link (or any page change) can be undone as a move.
+    if (library) {
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 first = currentPage();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 second = currentPage();
+        r.check("opening a page remembers where you were", root->property("backStack").toList().contains(QVariant(first)),
+                QStringLiteral("%1 in the stack").arg(root->property("backStack").toList().size()));
+        shot(win, QStringLiteral("5-history"));
+        QQuickItem *back = findOne(win, QStringLiteral("navBack"));
+        r.check("the way back is on screen", back && back->isVisible());
+        if (back && back->isVisible()) {
+            tap(win, back);
+            waitFor([&] { return currentPage() == first; }, 2000);
+            r.check("Back returns to the page before", currentPage() == first);
+            QQuickItem *fwd = findOne(win, QStringLiteral("navForward"));
+            r.check("and offers the way forward", fwd && fwd->isVisible());
+            if (fwd && fwd->isVisible()) {
+                tap(win, fwd);
+                waitFor([&] { return currentPage() == second; }, 2000);
+                r.check("Forward goes back again", currentPage() == second);
+            }
+        }
+        chord(win, Qt::Key_Left, Qt::AltModifier);
+        waitFor([&] { return currentPage() == first; }, 2000);
+        r.check("Alt+← does the same", currentPage() == first);
+        chord(win, Qt::Key_Right, Qt::AltModifier);
+        waitFor([&] { return currentPage() == second; }, 2000);
+        r.check("Alt+→ too", currentPage() == second);
+    }
+
+    // ---- 21. A notebook in one file: exported, imported back, and the copy is a real notebook.
+    if (library) {
+        QObject *notebooks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            notebooks = engine->rootContext()->contextProperty(QStringLiteral("notebooks")).value<QObject *>();
+        QVariantMap here;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, here), Q_ARG(qint64, currentPage()));
+        const qint64 notebook = here.value(QStringLiteral("notebookId")).toLongLong();
+        const QString file = QDir::tempPath() + QStringLiteral("/lumen-uitest-notebook.lumen");
+        QFile::remove(file);
+        QVariantMap saved, loaded;
+        if (notebooks && notebook) {
+            QMetaObject::invokeMethod(notebooks, "exportNotebook", Q_RETURN_ARG(QVariantMap, saved),
+                                      Q_ARG(qint64, notebook), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            r.check("a notebook exports to one file", saved.value(QStringLiteral("ok")).toBool() && QFileInfo(file).size() > 0,
+                    saved.value(QStringLiteral("error")).toString());
+            QString what;
+            QMetaObject::invokeMethod(notebooks, "describe", Q_RETURN_ARG(QString, what), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            r.check("the file says what is in it", what.contains(QLatin1String("page")), what);
+            int before = 0;
+            QVariantList list;
+            QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, list));
+            before = list.size();
+            QMetaObject::invokeMethod(notebooks, "importNotebook", Q_RETURN_ARG(QVariantMap, loaded), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            spin(400);
+            QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, list));
+            r.check("and imports back as a notebook of its own",
+                    loaded.value(QStringLiteral("ok")).toBool() && list.size() == before + 1
+                        && loaded.value(QStringLiteral("pages")).toInt() == saved.value(QStringLiteral("pages")).toInt(),
+                    loaded.value(QStringLiteral("error")).toString());
+            root->setProperty("leftPanel", QStringLiteral("notebooks"));
+            spin(500);
+            // The imported notebook is the last thing in the list: show that end of it.
+            if (QQuickItem *list = findOne(win, QStringLiteral("sidebarList"))) QMetaObject::invokeMethod(list, "positionViewAtEnd");
+            spin(300);
+            shot(win, QStringLiteral("5-notebook-file"));
+        } else {
+            r.check("the notebook file service is available to QML", false);
+        }
+        // And the menu that offers it.
+        revealCurrent(win, root);
+        QQuickItem *notebookRow = nullptr;
+        {
+            QQuickItem *list = findOne(win, QStringLiteral("sidebarList"));
+            const QRectF viewport = list ? list->mapRectToScene(QRectF(0, 0, list->width(), list->height())) : QRectF();
+            for (QQuickItem *row : findAll(win, QStringLiteral("sidebarRow"))) {
+                if (!row->isVisible() || row->property("rowKind").toString() != QLatin1String("notebook")) continue;
+                if (!viewport.isNull() && !viewport.contains(centre(row))) continue;   // a delegate parked outside the list
+                notebookRow = row;
+                break;
+            }
+        }
+        if (notebookRow) {
+            hold(win, notebookRow);
+            r.check("a notebook's menu offers to export it", sheetAction(win, QStringLiteral("Export notebook…")) != nullptr);
+            pressEscape(win);
+            spin(150);
+        }
+        QQuickItem *importButton = findOne(win, QStringLiteral("importNotebook"));
+        r.check("the sidebar offers to import one", importButton && importButton->isVisible());
+        QFile::remove(file);
+    }
+}
+
 } // namespace
 
 int uitest::run(QQuickWindow *win, QObject *root)
@@ -314,6 +848,17 @@ int uitest::run(QQuickWindow *win, QObject *root)
     spin(400);
 
     const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("pages")) {
+        waitFor([&] { return currentPage() > 0; }, 3000);
+        if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        pageFeatures(win, root, r);
+        r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
+                g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
+        qInstallMessageHandler(g_previous);
+        qInfo("UITEST %s (%d failure%s)", r.failures ? "FAILED" : "OK", r.failures, r.failures == 1 ? "" : "s");
+        return r.failures;
+    }
 
     // Start is either the last page reopened, or — after a deliberate close last time — the empty
     // state. Both are correct; anything else is not.
@@ -1208,6 +1753,8 @@ int uitest::run(QQuickWindow *win, QObject *root)
         spin(200);
     }
 
+    pageFeatures(win, root, r);
+
     // ---- 13. Tap every control there is, in both postures.
     {
         const int windowsBefore = QGuiApplication::topLevelWindows().size();
@@ -1223,7 +1770,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
             // Panels have to be open for their controls to exist at all.
             for (const QString &left : {QStringLiteral("notebooks"), QStringLiteral("cards"), QStringLiteral("papers")}) {
-                for (const QString &right : {QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting")}) {
+                for (const QString &right : {QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting"), QStringLiteral("page")}) {
                     root->setProperty("leftPanel", left);
                     root->setProperty("rightPanel", right);
                     spin(220);

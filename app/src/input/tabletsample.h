@@ -29,4 +29,6 @@ public:
     // Return true to consume the event (nothing else in Qt Quick sees it).
     virtual bool tabletSample(const TabletSample &s) = 0;
     virtual void tabletProximity(bool entering, const TabletSample &s) = 0;
+    // With more than one sink (split view), a stroke goes to the one under the pen when it lands.
+    virtual bool wantsPoint(const QPointF &windowPos) const { Q_UNUSED(windowPos); return true; }
 };
