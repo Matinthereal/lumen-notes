@@ -34,6 +34,8 @@ class WorkerSupervisor : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY activityChanged)
     Q_PROPERTY(QString activity READ activity NOTIFY activityChanged)
     Q_PROPERTY(qreal progress READ progress NOTIFY activityChanged)  // 0..1, or -1 when the worker cannot say
+    Q_PROPERTY(bool autoStart READ autoStart CONSTANT)               // runs only while something needs it
+    Q_PROPERTY(QString workersDir READ workersDir CONSTANT)
 public:
     enum class State { Stopped, Starting, Ready, Crashed, NotInstalled };
     static constexpr int CancelledCode = -32800;       // the error a cancelled request is answered with
@@ -48,6 +50,7 @@ public:
     QString stateName() const;
     Q_INVOKABLE void restart();                          // a person can ask for this from Settings
     Q_INVOKABLE void cancel(int id);                     // answered with CancelledCode if the worker stops in time
+    Q_INVOKABLE void check();                            // learn what is installed, starting it briefly if need be
     QString name() const { return m_name; }
     QString status() const;
     QString pythonPath() const { return m_python; }
@@ -55,6 +58,7 @@ public:
     QStringList missing() const { return m_missing; }
     QStringList missingOptional() const { return m_missingOptional; }
     QString lastError() const { return m_lastError; }
+    bool autoStart() const { return m_autoStart; }
     bool busy() const;
     QString activity() const;
     qreal progress() const;
@@ -93,6 +97,7 @@ private:
     int m_backoffMs = 1000;
     bool m_wantRunning = false;
     bool m_autoStart = false;
+    bool m_stopAfterHello = false;
     struct Queued { int id; QString method; QJsonObject params; };
     QList<Queued> m_queue;
     QSet<int> m_outstanding;      // written to the socket, not yet answered

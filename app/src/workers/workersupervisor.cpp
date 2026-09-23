@@ -100,6 +100,12 @@ QString WorkerSupervisor::status() const
     return stateName();
 }
 
+void WorkerSupervisor::check()
+{
+    if (m_state == State::Ready || m_state == State::Starting) return;      // it has said, or is about to
+    m_stopAfterHello = !m_wantRunning || m_state == State::NotInstalled;
+    if (m_state == State::NotInstalled) restart(); else start();
+}
 
 bool WorkerSupervisor::busy() const
 {
@@ -300,6 +306,10 @@ void WorkerSupervisor::onReadyRead()
                 m_missingOptional = list(params.value("missing_optional"));
                 emit stateChanged();
                 emit activityChanged();
+                if (m_stopAfterHello) {
+                    m_stopAfterHello = false;
+                    QTimer::singleShot(0, this, [this] { if (m_jobs.isEmpty() && m_queue.isEmpty()) stop(); });
+                }
             }
             emit notification(method, params);
         }

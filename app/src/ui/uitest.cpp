@@ -613,9 +613,63 @@ int uitest::run(QQuickWindow *win, QObject *root)
         }
         QFile::remove(png);
     };
+    // ---- 12g. Settings › Background services: one row per helper, each with a state a person can
+    // read and a Restart that works; the add-on banner exactly when an AI package is missing.
+    const auto servicesChecks = [&] {
+        root->setProperty("settingsVisible", true);
+        spin(300);
+        const QList<QQuickItem *> rows = findAll(win, QStringLiteral("serviceRow"));
+        r.check("the services panel lists every helper", rows.size() == 8, QStringLiteral("%1 rows").arg(rows.size()));
+        const QVariantList workers = qmlEngine(root) ? qmlEngine(root)->rootContext()->contextProperty(QStringLiteral("workers")).toList() : QVariantList();
+        const QStringList known{QStringLiteral("ready"), QStringLiteral("busy"), QStringLiteral("loading model"), QStringLiteral("starting"),
+                                QStringLiteral("not installed"), QStringLiteral("crashed"), QStringLiteral("stopped")};
+        // Opening Settings asks each helper what it has; give them time to say.
+        waitFor([&] { for (const QVariant &v : workers) if (v.value<QObject *>()->property("status").toString() == QLatin1String("starting")) return false; return true; }, 20000);
+        QStringList odd, summary;
+        bool aiMissing = false;
+        for (const QVariant &v : workers) {
+            QObject *w = v.value<QObject *>();
+            const QString status = w->property("status").toString();
+            summary << w->property("name").toString() + "=" + status;
+            if (!known.contains(status)) odd << status;
+            const QStringList gone = w->property("missing").toStringList() + w->property("missingOptional").toStringList();
+            for (const char *ai : {"torch", "transformers", "PIL", "pix2tex", "faster_whisper"})
+                if (gone.contains(QLatin1String(ai)) && (w->property("name") == QLatin1String("ocr") || w->property("name") == QLatin1String("audio"))) aiMissing = true;
+        }
+        qInfo("UITEST note  services: %s", qPrintable(summary.join(QStringLiteral(", "))));
+        r.check("every helper reports a state a person can read", odd.isEmpty(), odd.join(QStringLiteral(", ")));
+        r.check("no helper is left starting after the check", !summary.join(QLatin1Char(' ')).contains(QLatin1String("=starting")));
+        QQuickItem *banner = findOne(win, QStringLiteral("addOnBanner"));
+        r.check("the add-on banner shows exactly when an AI package is missing", banner && banner->isVisible() == aiMissing,
+                QStringLiteral("missing=%1 banner=%2").arg(aiMissing).arg(banner && banner->isVisible()));
+        int restarted = 0;
+        for (QQuickItem *b : findAll(win, QStringLiteral("serviceRestart"))) {
+            if (!b->isVisible() || !b->isEnabled()) continue;
+            // Settings scrolls: bring the button into view the way a finger would.
+            for (QQuickItem *up = b->parentItem(); up; up = up->parentItem()) {
+                if (!up->inherits("QQuickFlickable")) continue;
+                QQuickItem *content = up->property("contentItem").value<QQuickItem *>();
+                const qreal want = b->mapToItem(content, QPointF(0, 0)).y() - up->height() / 2;
+                const qreal most = std::max<qreal>(0, up->property("contentHeight").toReal() - up->height());
+                up->setProperty("contentY", std::clamp<qreal>(want, 0, most));
+                spin(60);
+                break;
+            }
+            const QRectF box = b->mapRectToScene(QRectF(0, 0, b->width(), b->height()));
+            if (!QRectF(0, 0, win->width(), win->height()).contains(box.center())) continue;
+            r.check("a Restart button is finger-sized", b->height() >= 40);
+            tap(win, b);
+            ++restarted;
+        }
+        r.check("Restart can be pressed", restarted > 0);
+        waitFor([&] { for (const QVariant &v : workers) if (v.value<QObject *>()->property("status").toString() == QLatin1String("starting")) return false; return true; }, 20000);
+        root->setProperty("settingsVisible", false);
+        spin(200);
+    };
     // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
         progressChecks();
+        servicesChecks();
         qInstallMessageHandler(g_previous);
         return r.failures;
     }
@@ -1315,6 +1369,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12f. (above)
     progressChecks();
+
+    // ---- 12g. (above)
+    servicesChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

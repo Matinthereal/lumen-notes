@@ -87,19 +87,12 @@ Rectangle {
                 Text { text: "This laptop exposes no hinge switch or accelerometer to Linux, so tablet mode and rotation are yours to set (HARDWARE.md)."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
                 Section { text: "Background services" }
-
-                RowL { Lbl { text: "Helper processes" }
-
-                       Text { text: pingWorker.state + (pingWorker.restarts > 0 ? " · restarted " + pingWorker.restarts + "×" : "")
-
-                              color: pingWorker.state === "ready" ? Ui.good : Ui.warning; font.pixelSize: Ui.small + 1 }
-
-                       Button { text: "Restart"; font.pixelSize: 11; onClicked: { pingWorker.restart(); page.toast("Restarting the helper") } } }
-
-                Text { text: "PDF, audio, handwriting, LaTeX, cards and Claude each run on demand and restart themselves after a crash."
-
-                       color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
-
+                ServicesSection {
+                    id: services
+                    Layout.fillWidth: true
+                    onToast: (m) => page.toast(m)
+                    Connections { target: page; function onVisibleChanged() { if (page.visible) services.checkAll() } }
+                }
 
                 Section { text: "Transcription" }
                 RowL { Lbl { text: "Live model" } ComboBox { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }

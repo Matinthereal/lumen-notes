@@ -146,6 +146,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("maths"), &maths);
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
     engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
+    // Every helper, in the order Settings › Background services lists them.
+    engine.rootContext()->setContextProperty(QStringLiteral("workers"), QVariant::fromValue(QList<QObject *>{
+        &pdfWorker, &audioWorker, &ocrWorker, &mathsWorker, &latexWorker, &cardsWorker, &claudeWorker, &pingWorker}));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     const bool probeMode = app.arguments().contains(QStringLiteral("--probe"));
