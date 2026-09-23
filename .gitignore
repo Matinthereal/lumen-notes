@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .cache/
 compile_commands.json
+AppDir/
+squashfs-root/
+*.AppImage
+packaging/windows/Output/

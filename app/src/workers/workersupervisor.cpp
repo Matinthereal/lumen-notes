@@ -14,8 +14,13 @@ QString WorkerSupervisor::workersDir()
 {
     const QByteArray env = qgetenv("LUMEN_WORKERS_DIR");
     if (!env.isEmpty()) return QString::fromLocal8Bit(env);
+#ifdef Q_OS_WIN
+    // Windows installs are flat: workers/ sits next to lumen.exe, not under a bin/ + share/ split.
+    const QString installed = QCoreApplication::applicationDirPath() + QStringLiteral("/workers");
+#else
     // Installed layout: <prefix>/share/lumen/workers next to <prefix>/bin/lumen; else the source tree.
     const QString installed = QCoreApplication::applicationDirPath() + QStringLiteral("/../share/lumen/workers");
+#endif
     if (QFileInfo::exists(installed + "/lumen_workers/rpc.py")) return QDir::cleanPath(installed);
     return QStringLiteral(LUMEN_WORKERS_SOURCE_DIR);
 }

@@ -102,8 +102,14 @@ int main(int argc, char *argv[])
     WorkerSupervisor claudeWorker(QStringLiteral("claude"));
     const QByteArray promptsEnv = qgetenv("LUMEN_PROMPTS_DIR");
     QString promptsDir = promptsEnv.isEmpty() ? QStringLiteral(LUMEN_PROMPTS_SOURCE_DIR) : QString::fromLocal8Bit(promptsEnv);
-    if (promptsEnv.isEmpty() && QFileInfo::exists(QCoreApplication::applicationDirPath() + "/../share/lumen/prompts/ask.md"))
-        promptsDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../share/lumen/prompts");
+#ifdef Q_OS_WIN
+    // Flat Windows install: prompts/ next to lumen.exe (see workersDir() for the same split).
+    const QString installedPrompts = QCoreApplication::applicationDirPath() + QStringLiteral("/prompts");
+#else
+    const QString installedPrompts = QCoreApplication::applicationDirPath() + QStringLiteral("/../share/lumen/prompts");
+#endif
+    if (promptsEnv.isEmpty() && QFileInfo::exists(installedPrompts + "/ask.md"))
+        promptsDir = QDir::cleanPath(installedPrompts);
     ClaudeService claude(db, library, textBlocks, audio, &claudeWorker, promptsDir);
     WorkerSupervisor cardsWorker(QStringLiteral("cards"));
     Cards cards(db, library, &cardsWorker);

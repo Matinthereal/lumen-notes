@@ -1,0 +1,151 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  QT_VERSION: 6.11.2
+  # QtQuick's shader baker (qsb) and the virtual keyboard used in tablet mode are addon modules;
+  # everything else (Core/Gui/Quick/Qml/Network/Test) ships with the base Qt install.
+  QT_MODULES: qtshadertools qtvirtualkeyboard
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          modules: ${{ env.QT_MODULES }}
+          cache: true
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libsqlite3-dev pkg-config patchelf
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # No .venv here, so the tests that shell out to the Python ML workers (pymupdf, faster-whisper,
+      # pix2tex/transformers) can't pass; app_ui (--uitest) is a slower full sweep run separately in
+      # dev, not on every push. Everything else -- storage, ink, canvas, the ping worker, app_smoke --
+      # only needs Qt and a plain Python 3, both of which this runner has.
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure -E '^(app_ui|pdf|audio|ocr|maths|papers)$'
+
+      - name: Install into AppDir
+        run: cmake --install build --prefix "${{ github.workspace }}/AppDir/usr"
+
+      - name: Build AppImage
+        env:
+          QML_SOURCES_PATHS: ${{ github.workspace }}/app/qml
+          # The bundled linuxdeploy-plugin-qt ships an old `strip` that can choke on RELR
+          # relocations from a newer toolchain (seen locally on Fedora 44); skip stripping rather
+          # than risk it failing the build over a few MB of debug symbols.
+          NO_STRIP: 1
+          # linuxdeploy-plugin-qt only bundles the platform plugin it sees linked (xcb); the app's
+          # own headless tests and --screenshot need offscreen too.
+          EXTRA_PLATFORM_PLUGINS: libqoffscreen.so
+          # linuxdeploy's own bundled patchelf is old enough to corrupt the RELR relocations a
+          # current toolchain emits (segfaults on load, discovered testing this workflow locally) --
+          # use the runner's own current patchelf instead.
+          PATCHELF: /usr/bin/patchelf
+        run: |
+          mkdir -p build/tools && cd build/tools
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+          cd "${{ github.workspace }}"
+          ./build/tools/linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+            --appdir AppDir --executable AppDir/usr/bin/lumen \
+            --desktop-file packaging/lumen-notes.desktop --icon-file packaging/lumen-notes.svg \
+            --plugin qt --output appimage
+
+      # Proves the AppImage actually starts and finds its QML/workers, not just that it built.
+      - name: Smoke-test AppImage
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_FORCE_STDERR_LOGGING: 1
+          LUMEN_DATA_DIR: ${{ github.workspace }}/appimage-smoke-data
+        run: |
+          appimage=$(echo ./Lumen*.AppImage)
+          "$appimage" --appimage-extract-and-run --smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-linux-appimage
+          path: Lumen*.AppImage
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: ${{ env.QT_MODULES }}
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # No system sqlite3/pkg-config on Windows, and the KWin/Plasma D-Bus tablet-mode integration
+      # is Linux-only -- see the LUMEN_BUNDLED_SQLITE and LUMEN_ENABLE_DBUS options in CMakeLists.txt.
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUMEN_BUNDLED_SQLITE=ON -DLUMEN_ENABLE_DBUS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure -E '^(app_ui|pdf|audio|ocr|maths|papers)$'
+
+      - name: Install
+        run: cmake --install build --prefix "${{ github.workspace }}\install"
+
+      - name: windeployqt
+        run: windeployqt --qmldir app\qml "${{ github.workspace }}\install\lumen.exe"
+
+      - name: Build installer
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DLumenInstallDir="${{ github.workspace }}\install" packaging\windows\lumen.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-windows-installer
+          path: packaging/windows/Output/Lumen-Setup-*.exe
+
+  release:
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/lumen-linux-appimage/Lumen*.AppImage
+            dist/lumen-windows-installer/Lumen-Setup-*.exe
