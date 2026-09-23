@@ -23,7 +23,8 @@ Rectangle {
     SystemPalette { id: pal }
     // Never wider than the page it floats over: on a narrow window the row scrolls sideways
     // instead of running off the edge with the last controls unreachable.
-    readonly property real maxWidth: parent ? parent.width - 24 : 1600
+    property real sideInset: 0             // room to leave at each edge (the breadcrumb and its arrows)
+    readonly property real maxWidth: parent ? parent.width - 24 - 2 * sideInset : 1600
     implicitWidth: Math.min(row.implicitWidth + 20, maxWidth)
     implicitHeight: Ui.target + 12
     radius: 12

@@ -16,6 +16,7 @@ Item {
     readonly property alias editor: area
     readonly property alias formatter: fmt
     readonly property real barWidth: formatBar.width
+    property real sideInset: 0             // room the page keeps clear at each edge (the breadcrumb)
     SystemPalette { id: pal }
 
     property string lastSaved: ""
@@ -155,7 +156,7 @@ Item {
         objectName: "chrome"
         visible: !typed.presenting
         anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 12 }
-        width: Math.min(parent.width - 24, bar.implicitWidth + 16)
+        width: Math.min(parent.width - 24 - 2 * typed.sideInset, bar.implicitWidth + 16)
         height: Ui.target + 4
         radius: Ui.radiusLg
         color: pal.window

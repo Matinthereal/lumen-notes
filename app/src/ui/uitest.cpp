@@ -464,8 +464,6 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
             chord(win, Qt::Key_Return, Qt::NoModifier);
             spin(250);
             r.check("a typed tag is added", pageTagNames(inked).contains(QStringLiteral("exam")), pageTagNames(inked).join(QLatin1Char(',')));
-            QQuickItem *keys = nullptr;
-            Q_UNUSED(keys);
             if (QQmlEngine *engine = qmlEngine(root))
                 if (QObject *k = engine->rootContext()->contextProperty(QStringLiteral("keys")).value<QObject *>())
                     QMetaObject::invokeMethod(k, "dropFocus");

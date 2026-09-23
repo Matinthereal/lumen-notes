@@ -436,6 +436,7 @@ Window {
                 visible: root.pageTyped
                 pageId: root.pageTyped ? root.currentPageId : 0
                 presenting: root.presenting
+                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
                 onPageLinkActivated: (url) => root.followLink(url)
             }
             Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
@@ -532,6 +533,7 @@ Window {
             Toolbar {
                 id: toolbar
                 visible: root.currentPageId > 0 && !root.pageTyped && !root.presenting
+                sideInset: crumbRow.visible ? crumbRow.buttonsWidth + 16 : 0
                 canvas: canvas
                 pageId: root.currentPageId
                 tablet: root.tablet
