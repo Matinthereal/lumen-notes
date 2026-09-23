@@ -1,4 +1,6 @@
 #include "tabletmode.h"
+#include <QInputDevice>
+#include <QPointingDevice>
 #include <QDBusConnection>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -77,4 +79,23 @@ void TabletMode::onPropertiesChanged(const QString &iface, const QVariantMap &ch
 {
     if (iface != QLatin1String("org.kde.KWin.TabletModeManager")) return;
     if (changed.contains(QStringLiteral("tabletMode"))) onKwinTabletChanged(changed.value(QStringLiteral("tabletMode")).toBool());
+}
+
+// Which of the ways to write this machine actually has. Asked once, on the first run: the answer
+// decides whether new pages start typed or handwritten and whether the on-screen keyboard is
+// wanted at all.
+bool TabletMode::penAvailable()
+{
+    for (const QInputDevice *d : QInputDevice::devices())
+        if (d->type() == QInputDevice::DeviceType::Stylus || d->type() == QInputDevice::DeviceType::Puck
+            || d->type() == QInputDevice::DeviceType::Airbrush)
+            return true;
+    return false;
+}
+
+bool TabletMode::touchAvailable()
+{
+    for (const QInputDevice *d : QInputDevice::devices())
+        if (d->type() == QInputDevice::DeviceType::TouchScreen) return true;
+    return false;
 }

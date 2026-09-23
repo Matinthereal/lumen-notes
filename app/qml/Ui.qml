@@ -53,6 +53,12 @@ QtObject {
     readonly property real borderAlpha: 0.37
     readonly property real mutedAlpha: 0.68               // secondary text: ≥4.5:1 on this palette
 
+    // Text on the accent: the theme's highlightedText measured 1.96:1 on this highlight, so pick
+    // the readable one from the accent's own brightness instead (WCAG 1.4.3 wants 4.5).
+    function onAccent(accent) {
+        return (0.299 * accent.r + 0.587 * accent.g + 0.114 * accent.b) > 0.5 ? Qt.rgba(0.08, 0.08, 0.08, 1) : Qt.rgba(1, 1, 1, 1)
+    }
+
     // ---- meaning, at a contrast that survives the theme
     readonly property color danger: dark ? "#FB4934" : "#9D0006"
     readonly property color warning: dark ? "#FE8019" : "#AF3A03"

@@ -14,6 +14,9 @@ class TabletMode : public QObject {
     Q_PROPERTY(bool kwinAvailable READ kwinAvailable NOTIFY tabletChanged)
     Q_PROPERTY(bool kwinTablet READ kwinTablet NOTIFY tabletChanged)
     Q_PROPERTY(QString rotation READ rotation NOTIFY rotationChanged)
+    // What this machine has to write with, for the first run's defaults.
+    Q_PROPERTY(bool penAvailable READ penAvailable CONSTANT)
+    Q_PROPERTY(bool touchAvailable READ touchAvailable CONSTANT)
 public:
     explicit TabletMode(QObject *parent = nullptr);
     ~TabletMode() override;
@@ -24,6 +27,8 @@ public:
     QString rotation() const { return m_rotation; }
     Q_INVOKABLE void rotateDisplay(const QString &to);   // "none" | "left" | "right" | "inverted"
     Q_INVOKABLE void refreshRotation();
+    static bool penAvailable();
+    static bool touchAvailable();
 signals:
     void tabletChanged();
     void rotationChanged();

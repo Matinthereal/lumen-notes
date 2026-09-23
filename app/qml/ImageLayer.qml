@@ -139,7 +139,7 @@ Item {
                 Accessible.role: Accessible.Button
                 Accessible.name: label
                 Text { id: cropLabel; anchors.centerIn: parent; text: parent.label; font.pixelSize: Ui.text
-                       color: parent.primary ? pal.highlightedText : pal.windowText }
+                       color: parent.primary ? Ui.onAccent(pal.highlight) : pal.windowText }
                 TapHandler { id: cropTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
             }
             CropAction { objectName: "cropDone"; label: "Trim"; primary: true; onClicked: picLayer.applyCrop() }

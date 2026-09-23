@@ -150,6 +150,7 @@ Window {
     }
     FileDialog { id: importDialog; property var notebookId: 0; title: "Import PDF as a section"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: pdf.importAsSection(selectedFile, notebookId, "") }
     FileDialog { id: exportDialog; title: "Export section as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: { const info = library.page(root.currentPageId); if (info.id) pdf.exportPages("section", info.sectionId, selectedFile) } }
+    FileDialog { id: exportPageDialog; title: "Export this page as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: if (root.currentPageId) pdf.exportPages("page", root.currentPageId, selectedFile) }
     SearchPalette {
         id: search; parent: Overlay.overlay
         onOpenResult: (pageId, kind, refId) => { root.openPage(pageId); if (kind === "ocr") Qt.callLater(() => { for (const r of ocr.results(pageId)) if (r.id === refId) canvas.flashRect(Qt.rect(r.x, r.y, r.w, r.h)) }) }
@@ -378,6 +379,7 @@ Window {
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 enabled: visible && opacity > 0.5
                 onExportRequested: exportDialog.open()
+                onExportPageRequested: exportPageDialog.open()
                 onPictureRequested: pictureDialog.open()
                 onToast: (m) => toast.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
@@ -464,15 +466,52 @@ Window {
 
             // Where you are, top-left of the desk: out of the corner a right hand covers, off the
             // page itself, and never longer than the space it has.
-            Text {
+            Row {
                 anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
                           top: parent.top; leftMargin: 14; rightMargin: 14; topMargin: 14 }
-                width: Math.min(implicitWidth, page.width * 0.4)
-                horizontalAlignment: root.leftHanded ? Text.AlignRight : Text.AlignLeft
-                elide: Text.ElideMiddle
-                text: root.pageLabel + (pageStore.dirty ? "  ·  saving…" : "")
-                color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                spacing: 10
                 visible: root.currentPageId > 0 && !canvas.inking
+                Text {
+                    width: Math.min(implicitWidth, page.width * 0.4)
+                    horizontalAlignment: root.leftHanded ? Text.AlignRight : Text.AlignLeft
+                    elide: Text.ElideMiddle
+                    text: root.pageLabel
+                    color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                }
+                // Is my work safe? Answered where you are looking, without a dialog: the page is
+                // saved as you write, and this says when a copy of everything last left the app.
+                Row {
+                    objectName: "chrome"
+                    spacing: 5
+                    readonly property double backedUp: backupTool.lastBackup
+                    readonly property string ago: {
+                        if (!backedUp) return "no backup yet"
+                        const mins = Math.max(0, Math.round((Date.now() / 1000 - backedUp) / 60))
+                        if (mins < 60) return "backed up " + mins + " min ago"
+                        const hours = Math.round(mins / 60)
+                        return hours < 48 ? "backed up " + hours + " h ago" : "backed up " + Math.round(hours / 24) + " days ago"
+                    }
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 7; height: 7; radius: 3.5
+                        color: pageStore.dirty ? Ui.warning : Ui.good
+                    }
+                    Text {
+                        text: pageStore.dirty ? "Saving…" : "Saved"
+                        color: Qt.alpha(pal.windowText, 0.5); font.pixelSize: Ui.small
+                    }
+                    HoverHandler { id: saveHover }
+                    ToolTip.visible: saveHover.hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: "Every page is saved on this computer as you write — " + parent.ago
+                                  + ". Tap to make a backup copy now."
+                    TapHandler {
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: {
+                            toast.show(parent.parent.ago + " · " + backupTool.folder, function() { toast.show(backupTool.runNow(), null) }, "Back up now")
+                        }
+                    }
+                }
             }
             Text {
                 anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
@@ -507,9 +546,7 @@ Window {
                     implicitHeight: Ui.target + 8
                     radius: 10
                     color: primary ? pal.highlight : "transparent"
-                    // The theme's highlightedText measured 1.96:1 on this highlight; pick the
-                    // readable one from the accent's own luminance instead (WCAG 1.4.3 wants 4.5).
-                    readonly property color onAccent: (0.299 * pal.highlight.r + 0.587 * pal.highlight.g + 0.114 * pal.highlight.b) > 0.5 ? pal.window : pal.windowText
+                    readonly property color onAccent: Ui.onAccent(pal.highlight)
                     border.color: primary ? "transparent" : Qt.alpha(pal.text, 0.25)
                     border.width: primary ? 0 : 1
                     opacity: tap.pressed ? 0.75 : 1
@@ -803,7 +840,8 @@ Window {
     HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
-        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1") }
+        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1"); root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onHandChosen: (left) => root.leftHanded = left
     }
 
     // ================================================================ shortcuts (Goodnotes-shaped)

@@ -814,6 +814,96 @@ int uitest::run(QQuickWindow *win, QObject *root)
         qInstallMessageHandler(g_previous);
         return r.failures;
     }
+    // ---- 12j. The first run sets itself up from what the machine has, the page says whether it is
+    // saved, and a single page can be exported on its own.
+    const auto polishChecks = [&] {
+        QObject *lib = nullptr, *tabletMode = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root)) {
+            lib = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
+            tabletMode = engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>();
+        }
+        if (!lib || !tabletMode) { r.check("the library and tablet-mode services are there", false); return; }
+        const auto setting = [&](const QString &key, const QString &fallback) {
+            QString out;
+            QMetaObject::invokeMethod(lib, "setting", Q_RETURN_ARG(QString, out), Q_ARG(QString, key), Q_ARG(QString, fallback));
+            return out;
+        };
+        const bool pen = tabletMode->property("penAvailable").toBool();
+        const bool touch = tabletMode->property("touchAvailable").toBool();
+        qInfo("UITEST note  this machine reports pen=%d touch=%d", pen, touch);
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QString()));
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QString()));
+        root->setProperty("onboardingVisible", true);
+        spin(400);
+        QQuickItem *typed = findOne(win, QStringLiteral("setupTyped"));
+        QQuickItem *ink = findOne(win, QStringLiteral("setupInk"));
+        QQuickItem *start = findOne(win, QStringLiteral("onboardingStart"));
+        r.check("the first run offers the kind of page to start with", typed && ink && start);
+        if (!typed || !ink || !start) { root->setProperty("onboardingVisible", false); return; }
+        r.check("and picks the one this machine suits", (pen ? ink : typed)->property("on").toBool(),
+                QStringLiteral("typed=%1 ink=%2").arg(typed->property("on").toBool()).arg(ink->property("on").toBool()));
+        r.check("its choices are finger-sized", start->height() >= 40 && typed->height() >= 40);
+        tap(win, typed);
+        spin(100);
+        r.check("a choice can be changed", typed->property("on").toBool() && !ink->property("on").toBool());
+        tap(win, start);
+        spin(300);
+        r.check("Start puts the first run away", !root->property("onboardingVisible").toBool());
+        r.check("and writes what was chosen", setting(QStringLiteral("page.sizeMode"), QString()) == QLatin1String("typed"),
+                setting(QStringLiteral("page.sizeMode"), QStringLiteral("(unset)")));
+        const bool touchNow = tabletMode->property("touchAvailable").toBool();
+        r.check("and the on-screen keyboard follows the machine",
+                setting(QStringLiteral("keyboard.mode"), QString()) == (touchNow ? QLatin1String("tablet") : QLatin1String("never")),
+                setting(QStringLiteral("keyboard.mode"), QStringLiteral("(unset)")));
+
+        // The save indicator: it says Saved when nothing is waiting, and Saving… while it is.
+        ensurePage();
+        spin(200);
+        QQuickItem *saved = itemWithText(win->contentItem(), QStringLiteral("Saved"));
+        QQuickItem *saving = itemWithText(win->contentItem(), QStringLiteral("Saving…"));
+        r.check("the page says whether it is saved", saved || saving);
+
+        // Export just this page: the page menu offers it, next to exporting the whole section.
+        QQuickItem *overflow = nullptr;
+        for (QQuickItem *i : findAll(win, QStringLiteral("chrome")))
+            for (QQuickItem *k : i->childItems())
+                if (k->property("tip").toString().startsWith(QLatin1String("Page style"))) overflow = k;
+        if (!overflow) {
+            QList<QQuickItem *> stack{win->contentItem()};
+            while (!stack.isEmpty()) {
+                QQuickItem *item = stack.takeLast();
+                if (item->property("tip").toString().startsWith(QLatin1String("Page style")) && item->isVisible()) { overflow = item; break; }
+                stack << item->childItems();
+            }
+        }
+        r.check("the toolbar has its page menu", overflow != nullptr);
+        if (overflow) {
+            // On a narrow window the toolbar scrolls; its last button can be off the edge.
+            for (QQuickItem *up = overflow->parentItem(); up; up = up->parentItem()) {
+                if (!up->inherits("QQuickFlickable")) continue;
+                up->setProperty("contentX", std::max<qreal>(0, up->property("contentWidth").toReal() - up->width()));
+                spin(120);
+                break;
+            }
+        }
+        if (overflow && QRectF(0, 0, win->width(), win->height()).contains(centre(overflow))) {
+            tap(win, overflow);
+            spin(300);
+            QStringList offered;
+            for (QQuickItem *t : findAll(win, QStringLiteral("actionSheetLabel"))) offered << t->property("text").toString();
+            r.check("the page menu offers exporting this page on its own", sheetAction(win, QStringLiteral("Export this page as PDF")) != nullptr,
+                    offered.join(QStringLiteral(" | ")));
+            r.check("and still offers the whole section", sheetAction(win, QStringLiteral("Export this section as PDF")) != nullptr);
+            pressEscape(win);
+            spin(150);
+        }
+    };
+
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("polish")) {
+        polishChecks();
+        qInstallMessageHandler(g_previous);
+        return r.failures;
+    }
     // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
         progressChecks();
@@ -1526,6 +1616,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12i. (above)
     pictureChecks();
+
+    // ---- 12j. (above)
+    polishChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

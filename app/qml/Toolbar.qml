@@ -11,6 +11,7 @@ Rectangle {
     property var pageId: 0
     property bool tablet: false
     signal exportRequested()
+    signal exportPageRequested()
     signal pictureRequested()
     signal presetsChanged()
     signal paperChosen(string colour)
@@ -248,6 +249,7 @@ Rectangle {
             { label: "Page style: " + canvas.pageStyle, icon: "draw-rectangle", action: () => styleMenu.openFrom(moreButton) },
             { label: "Paper colour…", icon: "color-picker", action: () => paperMenu.openFrom(moreButton) },
             { label: "Clear the page (undoable)", icon: "edit-clear-all", action: () => canvas.clearAll() },
+            { label: "Export this page as PDF", icon: "document-export", action: () => bar.exportPageRequested() },
             { label: "Export this section as PDF", icon: "document-export", action: () => bar.exportRequested() }
         ]
     }
