@@ -2,7 +2,9 @@
 #include <QSignalSpy>
 #include <QTouchEvent>
 #include <QtTest>
+#include <QWindow>
 #include "canvas/inkcanvas.h"
+#include "input/tableteventfilter.h"
 
 // Drives InkCanvas through its TabletSink with synthesized samples (no window needed: an item
 // outside a window maps scene == local). This is the "replay a recorded tablet stream" test.
@@ -179,6 +181,40 @@ private slots:
         }
         c->setPageStyle("nonsense-style");
         QCOMPARE(c->pageStyle(), QStringLiteral("dotted"));    // anything unknown falls back, never blank
+    }
+    void penStrokeStaysWithTheCanvasItLandedOn() {
+        // Split view: two canvases side by side, one pen. A stroke that starts on the right and
+        // wanders over the divider must stay on the right; the next one on the left goes left.
+        std::unique_ptr<InkCanvas> left(make()), right(make());
+        right->setX(800);
+        TabletEventFilter filter;
+        filter.setSink(left.get());
+        filter.addSink(right.get());
+        QWindow window;
+        filter.attachWindow(&window);
+        QPointingDevice pen(QStringLiteral("test pen"), 77, QInputDevice::DeviceType::Stylus, QPointingDevice::PointerType::Pen,
+                            QInputDevice::Capability::Position | QInputDevice::Capability::Pressure, 1, 1);
+        quint64 t = 1000;
+        const auto send = [&](QEvent::Type type, QPointF at) {
+            const Qt::MouseButtons held = type == QEvent::TabletRelease ? Qt::NoButton : Qt::MouseButtons(Qt::LeftButton);
+            QTabletEvent ev(type, &pen, at, at, type == QEvent::TabletRelease ? 0.0 : 0.5, 0, 0, 0, 0, 0, Qt::NoModifier, Qt::LeftButton, held);
+            ev.setTimestamp(t += 8);
+            QCoreApplication::sendEvent(&window, &ev);
+        };
+        const auto drag = [&](QPointF from, QPointF to) {
+            send(QEvent::TabletPress, from);
+            for (int i = 1; i <= 12; ++i) send(QEvent::TabletMove, from + (to - from) * i / 12.0);
+            send(QEvent::TabletRelease, to);
+        };
+        drag({1000, 300}, {700, 320});
+        QCOMPARE(right->strokeCount(), 1);
+        QCOMPARE(left->strokeCount(), 0);
+        drag({200, 300}, {400, 300});
+        QCOMPARE(left->strokeCount(), 1);
+        QCOMPARE(right->strokeCount(), 1);
+        right->setVisible(false);                   // split closed: the right canvas declines
+        drag({1000, 300}, {1100, 300});
+        QCOMPARE(right->strokeCount(), 1);
     }
 };
 QTEST_MAIN(TstCanvas)

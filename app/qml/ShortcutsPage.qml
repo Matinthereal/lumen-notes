@@ -32,6 +32,7 @@ Rectangle {
             ["Ctrl+N · Ctrl+Shift+N", "New page · new section"],
             ["PgUp · PgDn", "Previous · next page"],
             ["Ctrl+P", "All pages in this section, as thumbnails"],
+            ["Ctrl+Shift+S", "Split view: another page beside this one (drag the divider to resize)"],
             ["Ctrl+D", "Duplicate this page"],
             ["Ctrl+B", "Star this page"],
             ["Ctrl+W", "Close the page — nothing open is a fine place to be"],

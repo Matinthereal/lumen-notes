@@ -17,6 +17,7 @@ Rectangle {
     signal deleting(string kind, var id)   // fired before the row is removed, so neighbours can still be computed
     signal importPdf(var notebookId)
     signal closePage()
+    signal openBeside(var pageId)
 
     SystemPalette { id: pal }
     color: pal.window
@@ -83,6 +84,7 @@ Rectangle {
             items.push({ label: starred ? "Remove star" : "Star this page", icon: starred ? "edit-clear" : "bookmarks",
                          action: () => library.setStarred(row.id, !starred) })
             items.push({ label: "Duplicate", icon: "edit-copy", action: () => { const id = library.duplicatePage(row.id); if (id) side.openPage(id) } })
+            if (!row.current) items.push({ label: "Open beside", icon: "view-split", action: () => side.openBeside(row.id) })
         }
         if (row.kind === "page" && row.current) items.push({ label: "Close page", icon: "window-close", action: () => side.closePage() })
         items.push({ label: "Rename", icon: "edit-rename", action: () => renamer.begin(row) })

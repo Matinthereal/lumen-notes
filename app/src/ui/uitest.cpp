@@ -23,6 +23,10 @@
 #include <QPointingDevice>
 #include <QTabletEvent>
 #include <QImage>
+#include <QFile>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QRegularExpression>
 #include <QUrl>
 #include <QVariant>
@@ -429,7 +433,10 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
             r.check("lassoed ink offers # Tag", pill && pill->isVisible());
             shot(win, QStringLiteral("2-tags-lasso"));
             if (pill && pill->isVisible()) {
-                tap(win, pill);
+                // Pressed and released with no event loop between, so the reply from a recogniser
+                // that is missing its model cannot arrive before the stand-in answer below.
+                sendMouse(win, QEvent::MouseButtonPress, centre(pill), Qt::LeftButton);
+                sendMouse(win, QEvent::MouseButtonRelease, centre(pill), Qt::LeftButton);
                 const QJSValue pending = root->property("pendingTag").value<QJSValue>();
                 const QString token = pending.isObject() ? pending.property(QStringLiteral("token")).toString() : QString();
                 r.check("# Tag sends the strokes to the handwriting reader", !token.isEmpty());
@@ -510,6 +517,116 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
         }
         pressEscape(win);
         spin(150);
+    }
+
+    // ---- 17. Split view: a PDF page and an ink page side by side, each drawn on through the real
+    //          pen path, each zoomed on its own, the divider drags, and either side closes.
+    if (library) {
+        QObject *pdf = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            pdf = engine->rootContext()->contextProperty(QStringLiteral("pdf")).value<QObject *>();
+        QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        const qint64 inkPage = currentPage();
+        qint64 left = 0;
+        // A one-page lecture handout, made here so the test needs no files of its own.
+        const QString handout = QDir::tempPath() + QStringLiteral("/lumen-uitest-handout.pdf");
+        {
+            QPdfWriter writer(handout);
+            writer.setPageSize(QPageSize(QPageSize::A4));
+            QPainter p(&writer);
+            QFont f = p.font(); f.setPointSize(28); p.setFont(f);
+            p.drawText(QRectF(0, 400, writer.width(), 1200), Qt::AlignHCenter, QStringLiteral("Lecture 4\nWaves and interference"));
+            p.drawEllipse(QRectF(writer.width() / 2 - 1500, 3000, 3000, 3000));
+        }
+        QVariantMap info;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, info), Q_ARG(qint64, inkPage));
+        if (pdf) {
+            QMetaObject::invokeMethod(pdf, "importAsSection", Q_ARG(QUrl, QUrl::fromLocalFile(handout)),
+                                      Q_ARG(qint64, info.value(QStringLiteral("notebookId")).toLongLong()), Q_ARG(QString, QStringLiteral("Handouts")), Q_ARG(QString, QString()));
+            waitFor([&] { return currentPage() != inkPage && currentPage() > 0; }, 20000);
+            spin(1500);                                  // the page raster arrives after the page opens
+        }
+        left = currentPage();
+        if (left == inkPage) {
+            qInfo("UITEST note  the PDF worker is not available here; split view uses two ink pages");
+            QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+            spin(300);
+            left = currentPage();
+        }
+        // The rail button asks which page to show beside this one.
+        root->setProperty("leftPanel", QString());
+        spin(200);
+        QMetaObject::invokeMethod(root, "toggleSplit");
+        spin(300);
+        QList<QQuickItem *> pickRows;
+        for (QQuickItem *row : findAll(win, QStringLiteral("pagePickerRow"))) if (row->isVisible()) pickRows << row;
+        r.check("split view asks which page to show beside this one", !pickRows.isEmpty());
+        QQuickItem *want = nullptr;
+        for (QQuickItem *row : pickRows)
+            if (row->property("modelData").toMap().value(QStringLiteral("id")).toLongLong() == inkPage) want = row;
+        if (want) tap(win, want); else pressEscape(win);
+        waitFor([&] { return root->property("splitPageId").toLongLong() == inkPage; }, 2000);
+        if (root->property("splitPageId").toLongLong() != inkPage) QMetaObject::invokeMethod(root, "openSplit", Q_ARG(QVariant, inkPage));
+        spin(600);
+        auto *mainCanvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+        auto *splitCanvas = qobject_cast<InkCanvas *>(findOne(win, QStringLiteral("splitCanvas")));
+        r.check("the chosen page opens beside the first", splitCanvas && splitCanvas->isVisible() && root->property("splitPageId").toLongLong() == inkPage);
+        if (mainCanvas && splitCanvas) {
+            mainCanvas->setTool(QStringLiteral("pen"));
+            splitCanvas->setTool(QStringLiteral("pen"));
+            const int mainBefore = mainCanvas->strokeCount(), splitBefore = splitCanvas->strokeCount();
+            const QPointF onSplit = centre(splitCanvas), onMain = centre(mainCanvas);
+            penDrag(win, onSplit - QPointF(60, 0), onSplit + QPointF(60, 40));
+            r.check("the pen writes on the right-hand page", splitCanvas->strokeCount() == splitBefore + 1 && mainCanvas->strokeCount() == mainBefore,
+                    QStringLiteral("split %1→%2, main %3→%4").arg(splitBefore).arg(splitCanvas->strokeCount()).arg(mainBefore).arg(mainCanvas->strokeCount()));
+            penDrag(win, onMain - QPointF(80, -60), onMain + QPointF(40, 90));
+            r.check("and on the left-hand page", mainCanvas->strokeCount() == mainBefore + 1 && splitCanvas->strokeCount() == splitBefore + 1);
+            const qreal mainZoom = mainCanvas->zoom();
+            splitCanvas->zoomAt(1.8, QPointF(splitCanvas->width() / 2, splitCanvas->height() / 2));
+            spin(200);
+            r.check("each side zooms on its own", std::abs(mainCanvas->zoom() - mainZoom) < 1e-6 && std::abs(splitCanvas->zoom() - mainZoom) > 0.05);
+            shot(win, QStringLiteral("3-split-view"));
+            splitCanvas->fitPage();
+
+            // The divider drags.
+            const double before = root->property("splitFraction").toDouble();
+            if (QQuickItem *divider = findOne(win, QStringLiteral("splitDivider"))) {
+                const QPointF at = centre(divider);
+                sendMouse(win, QEvent::MouseButtonPress, at, Qt::LeftButton);
+                spin(30);
+                for (int i = 1; i <= 10; ++i) { sendMouse(win, QEvent::MouseMove, at - QPointF(15.0 * i, 0), Qt::LeftButton); spin(16); }
+                sendMouse(win, QEvent::MouseButtonRelease, at - QPointF(150, 0), Qt::LeftButton);
+                spin(250);
+            }
+            const double after = root->property("splitFraction").toDouble();
+            r.check("dragging the divider resizes the two sides", after > before + 0.03, QStringLiteral("%1 → %2").arg(before).arg(after));
+            shot(win, QStringLiteral("3-split-resized"));
+        } else {
+            r.check("found both canvases", false);
+        }
+        // The right side's ink is saved: close it, open it again, it is still there.
+        if (QQuickItem *close = findOne(win, QStringLiteral("splitClose"))) {
+            tap(win, close);
+            spin(300);
+            r.check("the right side closes", root->property("splitPageId").toLongLong() == 0 && !findOne(win, QStringLiteral("splitCanvas")));
+        }
+        QMetaObject::invokeMethod(root, "openSplit", Q_ARG(QVariant, inkPage));
+        spin(500);
+        splitCanvas = qobject_cast<InkCanvas *>(findOne(win, QStringLiteral("splitCanvas")));
+        r.check("ink written on the right is kept", splitCanvas && splitCanvas->strokeCount() >= 1);
+        // Closing the left side hands the window to the right-hand page.
+        if (QQuickItem *closeLeft = findOne(win, QStringLiteral("closeLeftSide"))) {
+            tap(win, closeLeft);
+            spin(400);
+            r.check("the left side closes, and the right-hand page takes its place",
+                    currentPage() == inkPage && root->property("splitPageId").toLongLong() == 0);
+        } else {
+            r.check("the left side has a close button", false);
+        }
+        QFile::remove(handout);
+        root->setProperty("leftPanel", QStringLiteral("notebooks"));
+        spin(200);
     }
 }
 

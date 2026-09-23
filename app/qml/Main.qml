@@ -63,6 +63,7 @@ Window {
         if (!pageId) return
         const info = library.page(pageId)
         if (!info.id) return
+        if (pageId === splitPageId) closeSplit()     // one page, one side: it moves over here
         canvas.resetHistory()
         canvas.clearBackground()
         pageStore.load(pageId)
@@ -86,6 +87,36 @@ Window {
         let id = Number(saved || "0")
         if (!id || !library.page(id).id) id = library.firstPageId()
         openPage(id)
+        const beside = Number(library.setting("split.page", "0"))
+        if (beside && beside !== currentPageId && library.page(beside).id) splitPageId = beside
+    }
+
+    // ---- Split view: a second page beside this one, with its own canvas and store.
+    property var splitPageId: 0
+    property real splitFraction: Math.min(0.75, Math.max(0.25, Number(library.setting("split.fraction", "0.5"))))
+    // The room the page and the split share: everything but the rail and the docked panels.
+    readonly property real workWidth: root.width - rail.width - (leftSlot.visible ? leftSlot.width + 1 : 0) - (rightSlot.visible ? rightSlot.width + 1 : 0)
+    function openSplit(pageId) {
+        if (!pageId || !library.page(pageId).id) return
+        if (pageId === currentPageId) { toastBar.show("That page is already open on the left", null); return }
+        splitPageId = pageId
+        library.setSetting("split.page", String(pageId))
+    }
+    function closeSplit() {
+        splitPageId = 0
+        library.setSetting("split.page", "0")
+    }
+    function closeMainSide() { const keep = splitPageId; closeSplit(); openPage(keep) }
+    function swapSides() {
+        const left = currentPageId, right = splitPageId
+        if (!left || !right) return
+        closeSplit()
+        openPage(right)
+        openSplit(left)
+    }
+    function toggleSplit() {
+        if (splitPageId) closeSplit()
+        else { pagePicker.excludePageId = currentPageId; pagePicker.open() }
     }
     // No page open is a real, supported state — nothing is auto-opened to fill the hole.
     function closePage() {
@@ -180,6 +211,8 @@ Window {
         onOpenResult: (pageId, kind, refId) => { root.openPage(pageId); if (kind === "ocr") Qt.callLater(() => { for (const r of ocr.results(pageId)) if (r.id === refId) canvas.flashRect(Qt.rect(r.x, r.y, r.w, r.h)) }) }
     }
 
+    PagePicker { id: pagePicker; onChosen: (id) => root.openSplit(id) }
+
     Loader { id: probeLoader; anchors.fill: parent; active: root.probeMode; sourceComponent: ProbePage {} }
 
     // ================================================================ layout
@@ -199,6 +232,8 @@ Window {
             onRightPanelChanged: root.rightPanel = rightPanel
             onSearchRequested: search.open()
             onBrowserRequested: if (root.currentPageId) root.browserVisible = true
+            onSplitRequested: if (root.currentPageId) root.toggleSplit()
+            splitOpen: root.splitPageId > 0
             onTrashRequested: root.trashVisible = true
             onSettingsRequested: root.settingsVisible = !root.settingsVisible
             onTabletRequested: tabletMode.tablet = !tabletMode.tablet
@@ -490,6 +525,29 @@ Window {
                 color: pal.text; font.pixelSize: 12; font.family: "monospace"
             }
 
+            // In split view the left side can be closed too; the right-hand page then takes over.
+            Item {
+                objectName: "chrome"
+                visible: root.splitPageId > 0 && root.currentPageId > 0 && !canvas.inking
+                // Beside the divider, level with the page arrows: clear of the toolbar at any width.
+                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12; verticalCenterOffset: -34 }
+                width: Ui.target + 8; height: Ui.target + 8
+                z: 7
+                Rectangle {
+                    objectName: "closeLeftSide"
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: closeLeftTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : Qt.alpha(pal.window, 0.9)
+                    border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Close this side"
+                    Icon { anchors.centerIn: parent; name: "window-close" }
+                    HoverHandler { id: closeLeftHover }
+                    TapHandler { id: closeLeftTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: root.closeMainSide() }
+                    ToolTip.visible: closeLeftHover.hovered; ToolTip.delay: 600; ToolTip.text: "Close this side — the page on the right takes its place"
+                }
+            }
+
             // ---- Nothing open. A real state with its own way back, not a blank screen.
             Item {
                 id: emptyState
@@ -674,6 +732,50 @@ Window {
             }
         }
 
+        // Split view: a divider you can drag, and the second page.
+        Item {
+            id: splitDivider
+            objectName: "splitDivider"
+            visible: splitLoader.active
+            Layout.fillHeight: true
+            implicitWidth: 12
+            property real startFraction: 0.5
+            Rectangle { anchors { top: parent.top; bottom: parent.bottom; horizontalCenter: parent.horizontalCenter } width: 1; color: Qt.alpha(pal.text, Ui.hairline) }
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6; height: 48; radius: 3
+                color: dividerDrag.active ? pal.highlight : Qt.alpha(pal.text, dividerHover.hovered ? 0.45 : 0.28)
+            }
+            HoverHandler { id: dividerHover; cursorShape: Qt.SplitHCursor }
+            DragHandler {
+                id: dividerDrag
+                target: null
+                margin: 10
+                yAxis.enabled: false
+                onActiveChanged: {
+                    if (active) splitDivider.startFraction = root.splitFraction
+                    else library.setSetting("split.fraction", String(root.splitFraction))
+                }
+                onTranslationChanged: root.splitFraction = Math.min(0.75, Math.max(0.25, splitDivider.startFraction - translation.x / Math.max(1, root.workWidth)))
+            }
+        }
+        Loader {
+            id: splitLoader
+            active: root.splitPageId > 0 && !root.probeMode
+            visible: active
+            Layout.fillHeight: true
+            Layout.bottomMargin: Ui.keyboardInset
+            Layout.preferredWidth: active ? Math.round((root.workWidth - splitDivider.implicitWidth) * root.splitFraction) : 0
+            sourceComponent: SplitPane {
+                pageId: root.splitPageId
+                onCloseRequested: root.closeSplit()
+                onPickRequested: { pagePicker.excludePageId = root.currentPageId; pagePicker.open() }
+                onSwapRequested: root.swapSides()
+                onPageLinkActivated: (url) => { const id = library.linkTarget(url); if (id) root.openSplit(id); else toastBar.show("That page has been deleted", null) }
+                onToast: (m) => toastBar.show(m, null)
+            }
+        }
+
         Rectangle { visible: rightSlot.visible; Layout.fillHeight: true; implicitWidth: 1; color: Qt.alpha(pal.text, 0.14) }
         Item {
             id: rightSlot
@@ -695,6 +797,7 @@ Window {
                 onOpenPage: (pageId) => { root.openPage(pageId); if (root.tablet) root.leftPanel = "" }
                 onImportPdf: (notebookId) => { importDialog.notebookId = notebookId; importDialog.open() }
                 onClosePage: root.closePage()
+                onOpenBeside: (pageId) => root.openSplit(pageId)
                 property var infoBeforeDelete: ({})
                 onDeleting: (kind, id) => { infoBeforeDelete = library.page(root.currentPageId) }
                 onDeleted: (kind, id, name) => {
@@ -815,6 +918,7 @@ Window {
         onClosed: root.browserVisible = false
         onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
+        onOpenBeside: (pageId) => { root.browserVisible = false; root.openSplit(pageId) }
     }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
@@ -881,6 +985,7 @@ Window {
     Shortcut { sequence: "Ctrl+J"; onActivated: root.toggleRight("claude") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+H"; onActivated: root.toggleRight("handwriting") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+L"; onActivated: root.toggleRight("page") }
+    Shortcut { enabled: !root.overlayUp && root.currentPageId > 0; sequence: "Ctrl+Shift+S"; onActivated: root.toggleSplit() }
     Shortcut { sequence: "Ctrl+Shift+C"; onActivated: root.toggleLeft("cards") }
     Shortcut { sequence: "Ctrl+Shift+P"; onActivated: root.toggleLeft("papers") }
     Shortcut { sequence: "Ctrl+Shift+R"; onActivated: root.reviewVisible = !root.reviewVisible }

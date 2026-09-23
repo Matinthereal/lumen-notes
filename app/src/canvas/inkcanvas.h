@@ -154,6 +154,7 @@ public:
     // TabletSink
     bool tabletSample(const TabletSample &s) override;
     void tabletProximity(bool entering, const TabletSample &s) override;
+    bool wantsPoint(const QPointF &windowPos) const override { return isVisible() && isEnabled() && contains(mapFromScene(windowPos)); }
 
 signals:
     void toolChanged();

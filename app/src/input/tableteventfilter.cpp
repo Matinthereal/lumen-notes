@@ -72,8 +72,8 @@ bool TabletEventFilter::eventFilter(QObject *watched, QEvent *event)
         // Delivered to the application object only.
         const auto s = fromEvent(static_cast<QTabletEvent *>(event));
         emit sampleSeen(s);
-        if (m_sink)
-            m_sink->tabletProximity(event->type() == QEvent::TabletEnterProximity, s);
+        for (TabletSink *sink : std::as_const(m_sinks))
+            sink->tabletProximity(event->type() == QEvent::TabletEnterProximity, s);
         return false;
     }
     case QEvent::TabletPress:
@@ -83,7 +83,14 @@ bool TabletEventFilter::eventFilter(QObject *watched, QEvent *event)
             return false;
         const auto s = fromEvent(static_cast<QTabletEvent *>(event));
         emit sampleSeen(s);
-        if (m_sink && m_sink->tabletSample(s)) {
+        TabletSink *target = m_active;
+        for (auto it = m_sinks.cbegin(); !target && it != m_sinks.cend(); ++it)
+            if ((*it)->wantsPoint(s.windowPos)) target = *it;
+        if (!target && !m_sinks.isEmpty()) target = m_sinks.first();
+        const bool used = target && target->tabletSample(s);
+        if (s.kind == TabletSample::Kind::Press && used) m_active = target;
+        if (s.kind == TabletSample::Kind::Release) m_active = nullptr;
+        if (used) {
             event->accept();
             return true; // consumed: Qt Quick never sees it, no mouse synthesis
         }

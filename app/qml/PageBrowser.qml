@@ -15,6 +15,7 @@ Rectangle {
     signal tagChosen(string tag)
     signal closed()
     signal openPage(var pageId)
+    signal openBeside(var pageId)
     signal toast(string message)
 
     SystemPalette { id: pal }
@@ -256,6 +257,7 @@ Rectangle {
                             { label: "Duplicate", icon: "edit-copy", action: () => { const id = library.duplicatePage(pid); if (id) browser.toast("Page duplicated") } },
                             { label: "Move to…", icon: "folder", action: () => mover.begin([pid]) },
                             { label: "Open", icon: "document-open", action: () => browser.openPage(pid) },
+                            { label: "Open beside", icon: "view-split", action: () => browser.openBeside(pid) },
                             { label: "Delete", icon: "edit-delete", danger: true, action: () => { library.remove("page", pid); browser.toast("Page moved to the trash") } }
                         ]
                         sheet.openFrom(cell)

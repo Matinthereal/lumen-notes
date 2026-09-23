@@ -27,6 +27,7 @@
 #include "media/shapes.h"
 #include "ui/thumbnails.h"
 #include "ui/uitest.h"
+#include "ui/splitbinder.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -88,6 +89,7 @@ int main(int argc, char *argv[])
         return r.ok ? 0 : 1;
     }
     PageStore pageStore(db, paths::journalDir());
+    PageStore splitStore(db, paths::journalDir());      // the right-hand page in split view
 
     WorkerSupervisor pingWorker(QStringLiteral("ping"));
     PingMeter pingMeter(&pingWorker);
@@ -109,6 +111,7 @@ int main(int argc, char *argv[])
     WorkerSupervisor mathsWorker(QStringLiteral("maths"));
     OcrService ocr(db, library, &ocrWorker);
     QObject::connect(&pageStore, &PageStore::saved, &ocr, &OcrService::schedule);
+    QObject::connect(&splitStore, &PageStore::saved, &ocr, &OcrService::schedule);
     PapersService papers(db, library, pdf, &pdfWorker);
     Images images(db);
     Shapes shapes(db);
@@ -117,8 +120,10 @@ int main(int argc, char *argv[])
     BackupTool backupTool(library);
     Thumbnails thumbnails(db);
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
+    QObject::connect(&splitStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
     TabletEventFilter tabletFilter;
     KeyInjector keys;
+    SplitBinder splitBinder(tabletFilter, splitStore);
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("theme"), new ThemeIconProvider);
@@ -127,6 +132,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("pingMeter"), &pingMeter);
     engine.rootContext()->setContextProperty(QStringLiteral("library"), &library);
     engine.rootContext()->setContextProperty(QStringLiteral("pageStore"), &pageStore);
+    engine.rootContext()->setContextProperty(QStringLiteral("splitStore"), &splitStore);
+    engine.rootContext()->setContextProperty(QStringLiteral("splitBinder"), &splitBinder);
     engine.rootContext()->setContextProperty(QStringLiteral("pdf"), &pdf);
     engine.rootContext()->setContextProperty(QStringLiteral("textBlocks"), &textBlocks);
     engine.rootContext()->setContextProperty(QStringLiteral("audio"), &audio);
@@ -174,6 +181,7 @@ int main(int argc, char *argv[])
         } else if (auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"))) {
             tabletFilter.setSink(canvas);
             pageStore.attach(canvas->document());
+
             QMetaObject::invokeMethod(win, "openLastPage");
         }
     }
@@ -231,10 +239,13 @@ int main(int argc, char *argv[])
     }
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &pageStore, &PageStore::unload);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &splitStore, &PageStore::unload);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &audio, &AudioService::finishForQuit);
     const int rc = app.exec();
+    splitBinder.detach();
     tabletFilter.setSink(nullptr);
     pageStore.unload();
+    splitStore.unload();
     cardsWorker.stop();
     mathsWorker.stop();
     ocrWorker.stop();

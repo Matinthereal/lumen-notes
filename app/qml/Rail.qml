@@ -12,6 +12,8 @@ Rectangle {
     property bool tablet: false
     signal searchRequested()
     signal browserRequested()
+    signal splitRequested()
+    property bool splitOpen: false
     signal trashRequested()
     signal settingsRequested()
     signal tabletRequested()
@@ -53,6 +55,7 @@ Rectangle {
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-sidetree"; tip: "Notebooks (Ctrl+\\)"; on: rail.leftPanel === "notebooks"; onClicked: rail.leftPanel = rail.leftPanel === "notebooks" ? "" : "notebooks" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "edit-find"; tip: "Search everything (Ctrl+K)"; onClicked: rail.searchRequested() }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-preview"; tip: "All pages in this section (Ctrl+P)"; onClicked: rail.browserRequested() }
+        RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-split"; tip: rail.splitOpen ? "Close split view (Ctrl+Shift+S)" : "Split view: another page beside this one (Ctrl+Shift+S)"; on: rail.splitOpen; onClicked: rail.splitRequested() }
         Rectangle { Layout.alignment: Qt.AlignHCenter; implicitWidth: Ui.rail - 24; implicitHeight: 1; color: Qt.alpha(pal.text, 0.14); Layout.topMargin: 4; Layout.bottomMargin: 4 }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "tools-wizard"; tip: "Claude (Ctrl+J)"; on: rail.rightPanel === "claude"; onClicked: rail.rightPanel = rail.rightPanel === "claude" ? "" : "claude" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-list-text"; tip: "Transcript"; on: rail.rightPanel === "transcript"; onClicked: rail.rightPanel = rail.rightPanel === "transcript" ? "" : "transcript" }

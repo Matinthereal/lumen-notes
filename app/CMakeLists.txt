@@ -98,11 +98,14 @@ qt_add_qml_module(lumen
         qml/BacklinkRow.qml
         qml/PagePanel.qml
         qml/TagChip.qml
+        qml/SplitPane.qml
+        qml/PagePicker.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp
         src/canvas/inkcanvas.h src/canvas/inkcanvas.cpp src/canvas/inkcanvas_render.cpp
         src/ui/uitest.h src/ui/uitest.cpp
+        src/ui/splitbinder.h src/ui/splitbinder.cpp
         src/text/documentformatter.h src/text/documentformatter.cpp
 )
 target_include_directories(lumen PRIVATE src src/input src/canvas src/text)
