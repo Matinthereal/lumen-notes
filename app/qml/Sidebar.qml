@@ -16,6 +16,8 @@ Rectangle {
     signal deleted(string kind, var id, string name)
     signal deleting(string kind, var id)   // fired before the row is removed, so neighbours can still be computed
     signal importPdf(var notebookId)
+    signal exportNotebook(var notebookId)
+    signal importNotebook()
     signal closePage()
     signal openBeside(var pageId)
 
@@ -72,6 +74,7 @@ Rectangle {
         if (row.kind === "notebook") {
             items.push({ label: "New section", icon: "list-add", action: () => { const s = library.createSection(row.id, "New section"); side.expandedNotebooks[row.id] = true; side.expandedSections[s] = true; side.rebuild(); renamer.begin({ kind: "section", id: s, name: "New section" }, true) } })
             items.push({ label: "Import PDF as slides", icon: "document-import", action: () => side.importPdf(row.id) })
+            items.push({ label: "Export notebook…", icon: "document-export", action: () => side.exportNotebook(row.id) })
             items.push({ label: "Next colour", icon: "color-picker", action: () => { const cs = ["#1F3A93", Ui.danger, Ui.good, Ui.warning, "#5B2A86", "#0F7C8A", "#5C6B7A"]; library.setNotebookColour(row.id, cs[(cs.indexOf(row.colour) + 1) % cs.length]) } })
         } else if (row.kind === "section") {
             items.push({ label: "New typed page", icon: "list-add", action: () => { const p = library.createPage(row.id, "", "typed"); side.expandedSections[row.id] = true; side.openPage(p) } })
@@ -122,6 +125,16 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 10; Layout.topMargin: 14; Layout.bottomMargin: 8
             Text { text: "Notebooks"; color: pal.windowText; font.pixelSize: Ui.text + 5; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Rectangle {
+                objectName: "importNotebook"
+                implicitWidth: Ui.target - 6; implicitHeight: Ui.target - 6; radius: 8; color: importHover.hovered ? Qt.alpha(pal.text, 0.1) : "transparent"
+                Icon { anchors.centerIn: parent; name: "document-import"; implicitWidth: Ui.icon; implicitHeight: Ui.icon; opacity: 0.8 }
+                Accessible.role: Accessible.Button
+                Accessible.name: "Import a notebook"
+                HoverHandler { id: importHover }
+                TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: side.importNotebook() }
+                ToolTip.visible: importHover.hovered; ToolTip.text: "Import a notebook from a .lumen file"; ToolTip.delay: 600
+            }
             Rectangle {
                 implicitWidth: Ui.target - 6; implicitHeight: Ui.target - 6; radius: 8; color: addHover.hovered ? Qt.alpha(pal.text, 0.1) : "transparent"
                 Icon { anchors.centerIn: parent; name: "folder-new"; implicitWidth: Ui.icon; implicitHeight: Ui.icon; opacity: 0.8 }

@@ -22,6 +22,7 @@
 #include "papers/papersservice.h"
 #include "ui/tabletmode.h"
 #include "ui/backuptool.h"
+#include "ui/notebooktool.h"
 #include "media/images.h"
 #include "maths/mathsservice.h"
 #include "media/shapes.h"
@@ -118,6 +119,7 @@ int main(int argc, char *argv[])
     MathsService maths(mathsWorker);
     TabletMode tabletMode;
     BackupTool backupTool(library);
+    NotebookTool notebookTool(db, library);
     Thumbnails thumbnails(db);
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
     QObject::connect(&splitStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
@@ -143,6 +145,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("papers"), &papers);
     engine.rootContext()->setContextProperty(QStringLiteral("tabletMode"), &tabletMode);
     engine.rootContext()->setContextProperty(QStringLiteral("backupTool"), &backupTool);
+    engine.rootContext()->setContextProperty(QStringLiteral("notebooks"), &notebookTool);
     engine.rootContext()->setContextProperty(QStringLiteral("thumbnails"), &thumbnails);
     engine.rootContext()->setContextProperty(QStringLiteral("images"), &images);
     engine.rootContext()->setContextProperty(QStringLiteral("shapes"), &shapes);

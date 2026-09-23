@@ -19,6 +19,7 @@ qt_add_library(lumen_core STATIC
     src/storage/pagestore.h        src/storage/pagestore.cpp
     src/storage/library.h          src/storage/library.cpp
     src/storage/backup.h           src/storage/backup.cpp
+    src/storage/notebookfile.h     src/storage/notebookfile.cpp
     src/storage/attachments.h      src/storage/attachments.cpp
     src/pdf/pdfservice.h           src/pdf/pdfservice.cpp
     src/ui/themeiconprovider.h     src/ui/themeiconprovider.cpp
@@ -36,6 +37,7 @@ qt_add_library(lumen_core STATIC
     src/papers/papersservice.h     src/papers/papersservice.cpp
     src/ui/tabletmode.h            src/ui/tabletmode.cpp
     src/ui/backuptool.h            src/ui/backuptool.cpp
+    src/ui/notebooktool.h          src/ui/notebooktool.cpp
     src/ui/thumbnails.h            src/ui/thumbnails.cpp
 )
 target_include_directories(lumen_core PUBLIC src)

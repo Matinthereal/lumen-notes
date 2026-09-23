@@ -767,6 +767,69 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
         waitFor([&] { return currentPage() == second; }, 2000);
         r.check("Alt+→ too", currentPage() == second);
     }
+
+    // ---- 21. A notebook in one file: exported, imported back, and the copy is a real notebook.
+    if (library) {
+        QObject *notebooks = nullptr;
+        if (QQmlEngine *engine = qmlEngine(root))
+            notebooks = engine->rootContext()->contextProperty(QStringLiteral("notebooks")).value<QObject *>();
+        QVariantMap here;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, here), Q_ARG(qint64, currentPage()));
+        const qint64 notebook = here.value(QStringLiteral("notebookId")).toLongLong();
+        const QString file = QDir::tempPath() + QStringLiteral("/lumen-uitest-notebook.lumen");
+        QFile::remove(file);
+        QVariantMap saved, loaded;
+        if (notebooks && notebook) {
+            QMetaObject::invokeMethod(notebooks, "exportNotebook", Q_RETURN_ARG(QVariantMap, saved),
+                                      Q_ARG(qint64, notebook), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            r.check("a notebook exports to one file", saved.value(QStringLiteral("ok")).toBool() && QFileInfo(file).size() > 0,
+                    saved.value(QStringLiteral("error")).toString());
+            QString what;
+            QMetaObject::invokeMethod(notebooks, "describe", Q_RETURN_ARG(QString, what), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            r.check("the file says what is in it", what.contains(QLatin1String("page")), what);
+            int before = 0;
+            QVariantList list;
+            QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, list));
+            before = list.size();
+            QMetaObject::invokeMethod(notebooks, "importNotebook", Q_RETURN_ARG(QVariantMap, loaded), Q_ARG(QUrl, QUrl::fromLocalFile(file)));
+            spin(400);
+            QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, list));
+            r.check("and imports back as a notebook of its own",
+                    loaded.value(QStringLiteral("ok")).toBool() && list.size() == before + 1
+                        && loaded.value(QStringLiteral("pages")).toInt() == saved.value(QStringLiteral("pages")).toInt(),
+                    loaded.value(QStringLiteral("error")).toString());
+            root->setProperty("leftPanel", QStringLiteral("notebooks"));
+            spin(500);
+            // The imported notebook is the last thing in the list: show that end of it.
+            if (QQuickItem *list = findOne(win, QStringLiteral("sidebarList"))) QMetaObject::invokeMethod(list, "positionViewAtEnd");
+            spin(300);
+            shot(win, QStringLiteral("5-notebook-file"));
+        } else {
+            r.check("the notebook file service is available to QML", false);
+        }
+        // And the menu that offers it.
+        revealCurrent(win, root);
+        QQuickItem *notebookRow = nullptr;
+        {
+            QQuickItem *list = findOne(win, QStringLiteral("sidebarList"));
+            const QRectF viewport = list ? list->mapRectToScene(QRectF(0, 0, list->width(), list->height())) : QRectF();
+            for (QQuickItem *row : findAll(win, QStringLiteral("sidebarRow"))) {
+                if (!row->isVisible() || row->property("rowKind").toString() != QLatin1String("notebook")) continue;
+                if (!viewport.isNull() && !viewport.contains(centre(row))) continue;   // a delegate parked outside the list
+                notebookRow = row;
+                break;
+            }
+        }
+        if (notebookRow) {
+            hold(win, notebookRow);
+            r.check("a notebook's menu offers to export it", sheetAction(win, QStringLiteral("Export notebook…")) != nullptr);
+            pressEscape(win);
+            spin(150);
+        }
+        QQuickItem *importButton = findOne(win, QStringLiteral("importNotebook"));
+        r.check("the sidebar offers to import one", importButton && importButton->isVisible());
+        QFile::remove(file);
+    }
 }
 
 } // namespace

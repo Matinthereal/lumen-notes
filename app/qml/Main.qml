@@ -284,6 +284,33 @@ Window {
         nameFilters: ["Pictures (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.tif *.tiff)"]
         onAccepted: imageLayer.insertFile(selectedFile)
     }
+    // A whole notebook as one file: everything on its pages, and the pictures and PDFs they use.
+    FileDialog {
+        id: notebookExportDialog
+        property var notebookId: 0
+        title: "Export notebook"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Lumen notebook (*.lumen)"]
+        defaultSuffix: "lumen"
+        onAccepted: {
+            const r = notebooks.exportNotebook(notebookExportDialog.notebookId, selectedFile)
+            toastBar.show(r.ok ? "Exported “" + r.name + "” — " + r.pages + (r.pages === 1 ? " page" : " pages")
+                               : "Could not export: " + r.error, null)
+        }
+    }
+    FileDialog {
+        id: notebookImportDialog
+        title: "Import a notebook"
+        nameFilters: ["Lumen notebook (*.lumen)", "All files (*)"]
+        onAccepted: {
+            const r = notebooks.importNotebook(selectedFile)
+            if (!r.ok) { toastBar.show("Could not import: " + r.error, null); return }
+            toastBar.show("Imported “" + r.name + "” — " + r.pages + (r.pages === 1 ? " page" : " pages"), null)
+            const sections = library.sections(r.notebookId)
+            const first = sections.length ? library.pages(sections[0].id)[0] : null
+            if (first) root.openPage(first.id)
+        }
+    }
     FileDialog { id: importDialog; property var notebookId: 0; title: "Import PDF as a section"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: pdf.importAsSection(selectedFile, notebookId, "") }
     FileDialog { id: exportDialog; title: "Export section as PDF"; fileMode: FileDialog.SaveFile; nameFilters: ["PDF files (*.pdf)"]; defaultSuffix: "pdf"; onAccepted: { const info = library.page(root.currentPageId); if (info.id) pdf.exportPages("section", info.sectionId, selectedFile) } }
     SearchPalette {
@@ -974,6 +1001,8 @@ Window {
                 visible: root.leftPanel === "notebooks"
                 onOpenPage: (pageId) => { root.openPage(pageId); if (root.tablet) root.leftPanel = "" }
                 onImportPdf: (notebookId) => { importDialog.notebookId = notebookId; importDialog.open() }
+                onExportNotebook: (notebookId) => { notebookExportDialog.notebookId = notebookId; notebookExportDialog.open() }
+                onImportNotebook: notebookImportDialog.open()
                 onClosePage: root.closePage()
                 onOpenBeside: (pageId) => root.openSplit(pageId)
                 property var infoBeforeDelete: ({})

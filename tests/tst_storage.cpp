@@ -10,6 +10,7 @@
 #include "media/shapes.h"
 #include "storage/paths.h"
 #include "storage/pagestore.h"
+#include "storage/notebookfile.h"
 #include "storage/schema.h"
 #include "storage/strokecodec.h"
 #include "text/textblocks.h"
@@ -392,6 +393,117 @@ private slots:
         QCOMPARE(out[3].toMap().value("blockId").toLongLong(), second);
         QCOMPARE(out[3].toMap().value("y").toDouble(), 400.0);
         QVERIFY(tb.outline(page + 999).isEmpty());
+    }
+    void aNotebookTravelsInOneFile() {
+        QTemporaryDir from, to, out;
+        const QString file = out.path() + "/Physics.lumen";
+        qint64 pagesExported = 0;
+        {   // ---- the library it leaves
+            qputenv("LUMEN_DATA_DIR", from.path().toUtf8());
+            QDir().mkpath(paths::attachmentsDir());
+            Database db; QVERIFY(db.open(from.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+            Library lib(db);
+            TextBlocks tb(db, lib);
+            Images images(db);
+            Shapes shapes(db);
+            const qint64 nb = lib.createNotebook("Physics", "#1F6FEB");
+            const qint64 other = lib.createNotebook("Chemistry", "#12855B");
+            const qint64 sec = lib.createSection(nb, "Waves");
+            const qint64 a = lib.createPage(sec, "lined", "a4");
+            const qint64 b = lib.createPage(sec, "", "typed");
+            const qint64 outside = lib.createPage(lib.createSection(other, "Bonding"));
+            lib.rename("page", a, "Interference");
+            lib.rename("page", b, "Notes");
+            lib.setStarred(a, true);
+            lib.addPageTag(a, "exam");
+
+            // ink
+            QVector<Stroke> ink{randomStroke(1, 12), randomStroke(2, 9)};
+            {
+                Database::Query q(db, "INSERT INTO stroke_blob(page_id, schema, data, stroke_count) VALUES (?,?,?,?)");
+                q.bind(1, a).bind(2, strokecodec::kVersion).bind(3, strokecodec::encode(ink)).bind(4, ink.size());
+                QVERIFY(q.run());
+            }
+            // typed text, one link inside the notebook and one to a page that stays behind
+            const qint64 block = tb.create(b, 20, 30, 400);
+            tb.setMarkdown(block, lib.resolveLinks(QStringLiteral("see [[Interference]] and [away](lumen://page/%1)").arg(outside)));
+            QCOMPARE(lib.backlinks(a).size(), 1);
+            shapes.create(a, "rect", 10, 20, 100, 60, "#E0403C", "", 2.5);
+
+            QImage picture(40, 20, QImage::Format_RGB32);
+            picture.fill(Qt::magenta);
+            const QString png = from.path() + "/diagram.png";
+            QVERIFY(picture.save(png, "PNG"));
+            QVERIFY(images.insertFile(a, QUrl::fromLocalFile(png), 50, 60, 120) > 0);
+
+            const notebookfile::Result r = notebookfile::exportNotebook(db, nb, file);
+            QVERIFY2(r.ok, qPrintable(r.error));
+            QCOMPARE(r.name, QStringLiteral("Physics"));
+            QCOMPARE(r.pages, 2);
+            QCOMPARE(r.attachments, 1);
+            pagesExported = r.pages;
+            QVERIFY(QFileInfo(file).size() > 0);
+            QCOMPARE(notebookfile::describe(file), QStringLiteral("Physics · 2 pages"));
+        }
+        {   // ---- and the library it lands in
+            qputenv("LUMEN_DATA_DIR", to.path().toUtf8());
+            QDir().mkpath(paths::attachmentsDir());
+            Database db; QVERIFY(db.open(to.path() + "/t.db")); QVERIFY(ensureSchema(db) > 0);
+            Library lib(db);
+            TextBlocks tb(db, lib);
+            Images images(db);
+            Shapes shapes(db);
+            lib.createNotebook("Physics", "#000");          // a name clash, on purpose
+
+            const notebookfile::Result r = notebookfile::importNotebook(db, file);
+            QVERIFY2(r.ok, qPrintable(r.error));
+            QCOMPARE(r.name, QStringLiteral("Physics (imported)"));
+            QCOMPARE(r.pages, int(pagesExported));
+            QVERIFY(r.notebookId > 0);
+
+            const QVariantList sections = lib.sections(r.notebookId);
+            QCOMPARE(sections.size(), 1);
+            const qint64 sec = sections[0].toMap().value("id").toLongLong();
+            const QVariantList pages = lib.pages(sec);
+            QCOMPARE(pages.size(), 2);
+            const qint64 a = pages[0].toMap().value("id").toLongLong(), b = pages[1].toMap().value("id").toLongLong();
+            QCOMPARE(lib.page(a).value("title").toString(), QStringLiteral("Interference"));
+            QCOMPARE(lib.page(a).value("style").toString(), QStringLiteral("lined"));
+            QVERIFY(lib.isStarred(a));
+            QCOMPARE(lib.pageTags(a).size(), 1);
+            QCOMPARE(lib.pageTags(a)[0].toMap().value("name").toString(), QStringLiteral("exam"));
+            QCOMPARE(shapes.count(a), 1);
+            QCOMPARE(images.count(a), 1);
+            QVERIFY2(QFileInfo::exists(images.list(a)[0].toMap().value("path").toString()),
+                     "the picture's bytes must come with the notebook");
+            {
+                Database::Query q(db, "SELECT stroke_count, data FROM stroke_blob WHERE page_id=?");
+                q.bind(1, a);
+                QVERIFY(q.step());
+                QCOMPARE(q.i32(0), 2);
+                QVector<Stroke> back;
+                QVERIFY(strokecodec::decode(q.blob(1), back));
+                QCOMPARE(back.size(), 2);
+            }
+            // The link inside the notebook now points at the page's new id; the one that pointed
+            // outside it points nowhere rather than at some unrelated page.
+            const QString text = tb.pageText(b);
+            QVERIFY2(text.contains(QStringLiteral("lumen://page/%1").arg(a)), qPrintable(text));
+            QVERIFY2(text.contains(QStringLiteral("lumen://page/0")), qPrintable(text));
+            QCOMPARE(lib.backlinks(a).size(), 1);
+            QCOMPARE(lib.backlinks(a)[0].toMap().value("id").toLongLong(), b);
+            QVERIFY(!lib.search("Interference").isEmpty());   // searchable without opening it
+
+            // Importing the same file twice makes a second notebook, never a merge.
+            const notebookfile::Result again = notebookfile::importNotebook(db, file);
+            QVERIFY(again.ok);
+            QVERIFY(again.notebookId != r.notebookId);
+            QCOMPARE(again.name, QStringLiteral("Physics (imported 2)"));
+            QCOMPARE(lib.notebooks().size(), 3);
+            QVERIFY(!notebookfile::importNotebook(db, to.path() + "/t.db").ok);   // not an export file
+            QVERIFY(!notebookfile::importNotebook(db, to.path() + "/nope.lumen").ok);
+        }
+        qputenv("LUMEN_DATA_DIR", QByteArray());
     }
     void schemaSixIndexesLinksAlreadyInText() {
         QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());

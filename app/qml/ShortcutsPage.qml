@@ -42,6 +42,7 @@ Rectangle {
             ["Ctrl+0 · Ctrl+1", "Fit the page · fit the width"],
             ["Ctrl+= · Ctrl+-", "Zoom in · out"],
             ["Ctrl+Shift+G", "Add a picture"],
+            ["Hold a notebook in the sidebar", "Rename, new section, import PDF, export as a .lumen file"],
             ["Hold a row in the sidebar", "Rename, delete, duplicate, close"]
         ]},
         { title: "Recording and transcript", keys: [
