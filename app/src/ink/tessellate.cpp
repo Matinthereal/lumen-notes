@@ -1,5 +1,6 @@
 #include "tessellate.h"
 #include <cmath>
+#include <numbers>
 
 float PressureCurve::widthFor(float baseWidth, float pressure) const
 {
@@ -179,13 +180,13 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
     }
 
     if (n == 1) {
-        appendArc(out, pts[0].x, pts[0].y, hw[0], 0.f, 2.f * float(M_PI), 14, feather);
+        appendArc(out, pts[0].x, pts[0].y, hw[0], 0.f, 2.f * std::numbers::pi_v<float>, 14, feather);
         return;
     }
 
     if (pen) {
         const float ang = std::atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
-        appendArc(out, pts[0].x, pts[0].y, hw[0], ang + float(M_PI) / 2, ang + 3 * float(M_PI) / 2, 7, feather);
+        appendArc(out, pts[0].x, pts[0].y, hw[0], ang + std::numbers::pi_v<float> / 2, ang + 3 * std::numbers::pi_v<float> / 2, 7, feather);
     }
 
     Side run; QVector<float> nxs, nys;
@@ -215,7 +216,7 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
                     nxs.append(nx); nys.append(ny);
                     flushRun(out, run, feather, nxs, nys);
                     run = Side{}; nxs.clear(); nys.clear();
-                    appendArc(out, p.x, p.y, hw[i], 0.f, 2.f * float(M_PI), 10, feather);
+                    appendArc(out, p.x, p.y, hw[i], 0.f, 2.f * std::numbers::pi_v<float>, 10, feather);
                     continue;
                 }
                 const float cosHalf = std::abs((-sy / sl) * nx + (sx / sl) * ny);
@@ -230,7 +231,7 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
 
     if (pen) {
         const float ang = std::atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x);
-        appendArc(out, pts[n - 1].x, pts[n - 1].y, hw[n - 1], ang - float(M_PI) / 2, ang + float(M_PI) / 2, 7, feather);
+        appendArc(out, pts[n - 1].x, pts[n - 1].y, hw[n - 1], ang - std::numbers::pi_v<float> / 2, ang + std::numbers::pi_v<float> / 2, 7, feather);
     } else if (feather > 0) {
         // Highlighter: square ends get a feathered rim too.
     }

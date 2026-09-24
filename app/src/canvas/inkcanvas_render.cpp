@@ -13,6 +13,7 @@
 #include <QSGVertexColorMaterial>
 #include <cmath>
 #include <cstring>
+#include <numbers>
 
 namespace {
 struct RGBA { unsigned char r, g, b, a; };
@@ -570,14 +571,14 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
             const float r = float(m_eraserRadius);
             m_cursorNode->geometry()->setDrawingMode(QSGGeometry::DrawLineStrip);
             for (int i = 0; i <= 32; ++i) {
-                const float a = float(i % 32) / 32 * 2 * float(M_PI);
+                const float a = float(i % 32) / 32 * 2 * std::numbers::pi_v<float>;
                 shape.append({float(m_hoverLocal.x()) + r * std::cos(a), float(m_hoverLocal.y()) + r * std::sin(a), 1.f});
             }
         } else if (hovering && (m_tool == Tool::Pen || m_tool == Tool::Highlighter)) {
             m_cursorNode->geometry()->setDrawingMode(QSGGeometry::DrawTriangleStrip);
             const float r = 2.f;
             for (int i = 0; i <= 12; ++i) {
-                const float a = float(i) / 12 * 2 * float(M_PI);
+                const float a = float(i) / 12 * 2 * std::numbers::pi_v<float>;
                 shape.append({float(m_hoverLocal.x()), float(m_hoverLocal.y()), 1.f});
                 shape.append({float(m_hoverLocal.x()) + r * std::cos(a), float(m_hoverLocal.y()) + r * std::sin(a), 0.4f});
             }

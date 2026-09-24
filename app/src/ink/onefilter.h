@@ -1,5 +1,6 @@
 #pragma once
 #include <cmath>
+#include <numbers>
 
 // The 1€ filter (Casiez, Roustan, Vogel 2012): jitter-free when slow, lag-free when fast. Used on
 // pen x/y before the points are stored. Deterministic for a given sample sequence.
@@ -29,7 +30,7 @@ public:
 private:
     static double alpha(double cutoff, double dt)
     {
-        const double tau = 1.0 / (2.0 * M_PI * cutoff);
+        const double tau = 1.0 / (2.0 * std::numbers::pi * cutoff);
         return 1.0 / (1.0 + tau / dt);
     }
     static double lerp(double a, double b, double t) { return a + (b - a) * t; }

@@ -3,6 +3,7 @@
 #include "geometry.h"
 #include <QPointF>
 #include <cmath>
+#include <numbers>
 
 namespace {
 
@@ -31,7 +32,7 @@ QVector<int> findCorners(const QVector<InkPoint> &p, float minTurnDeg)
         const float la = std::hypot(ax, ay), lb = std::hypot(bx, by);
         if (la < 1e-3f || lb < 1e-3f) continue;
         const float cosang = std::clamp((ax * bx + ay * by) / (la * lb), -1.f, 1.f);
-        const float turn = std::acos(cosang) * 180.f / float(M_PI);
+        const float turn = std::acos(cosang) * 180.f / std::numbers::pi_v<float>;
         if (turn >= minTurnDeg) {
             if (turn > bestTurn) { bestTurn = turn; best = i; }
         } else if (best >= 0) {
@@ -86,7 +87,7 @@ ShapeKind recognizeShape(const QVector<InkPoint> &pts, QVector<InkPoint> &out)
         if (shaft > 25.f && maxDeviationFromChord(pts, 0, k) < std::max(0.05f * shaft, 3.f)) {
             const float ang = std::atan2(pts[k].y - pts[0].y, pts[k].x - pts[0].x);
             const float head = std::clamp(shaft * 0.22f, 8.f, 40.f);
-            const float a1 = ang + float(M_PI) - 0.5f, a2 = ang + float(M_PI) + 0.5f;
+            const float a1 = ang + std::numbers::pi_v<float> - 0.5f, a2 = ang + std::numbers::pi_v<float> + 0.5f;
             const InkPoint tip = at(t0, pts[k].x, pts[k].y, pts[k].tMs);
             out = {at(t0, pts[0].x, pts[0].y, 0), tip,
                    at(t0, tip.x + head * std::cos(a1), tip.y + head * std::sin(a1), tip.tMs + 1), tip,
@@ -112,7 +113,7 @@ ShapeKind recognizeShape(const QVector<InkPoint> &pts, QVector<InkPoint> &out)
                 bool axis = true;
                 for (int i = 0; i < 4; ++i) {
                     const QPointF d = c[(i + 1) % 4] - c[i];
-                    const float a = std::abs(std::atan2(d.y(), d.x())) * 180.f / float(M_PI);
+                    const float a = std::abs(std::atan2(d.y(), d.x())) * 180.f / std::numbers::pi_v<float>;
                     const float off = std::min({a, std::abs(a - 90.f), std::abs(a - 180.f)});
                     if (off > 12.f) axis = false;
                 }
@@ -134,7 +135,7 @@ ShapeKind recognizeShape(const QVector<InkPoint> &pts, QVector<InkPoint> &out)
         if (maxErr < 0.22f) {
             const int segs = 64;
             for (int i = 0; i <= segs; ++i) {
-                const float a = float(i) / segs * 2 * float(M_PI) - float(M_PI) / 2;
+                const float a = float(i) / segs * 2 * std::numbers::pi_v<float> - std::numbers::pi_v<float> / 2;
                 out.append(at(t0, cx + rx * std::cos(a), cy + ry * std::sin(a), quint32(i * 4)));
             }
             return ShapeKind::Ellipse;

@@ -24,6 +24,7 @@
 #include <QVariantList>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 InkCanvas::InkCanvas(QQuickItem *parent) : QQuickItem(parent), m_undo(&m_doc)
 {
@@ -547,7 +548,7 @@ void InkCanvas::extendStroke(QPointF page, float pressure, float tiltX, float ti
         const double dx = page.x() - first.x, dy = page.y() - first.y;
         const double len = std::hypot(dx, dy);
         if (len > 1e-3) {
-            const double step = M_PI / 4.0;
+            const double step = std::numbers::pi / 4.0;
             const double angle = std::round(std::atan2(dy, dx) / step) * step;
             page = QPointF(first.x + std::cos(angle) * len, first.y + std::sin(angle) * len);
         }
