@@ -2,7 +2,6 @@
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QtTest>
-#include <signal.h>
 #include "ink/inkdocument.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -40,8 +39,7 @@ private slots:
         p.start(QCoreApplication::applicationDirPath() + "/soak_writer", {dir.path(), "1000000"});
         QVERIFY(p.waitForStarted(5000));
         QTest::qWait(delayMs + QRandomGenerator::global()->bounded(200));
-        const qint64 pid = p.processId();
-        ::kill(pid_t(pid), SIGKILL);
+        p.kill(); // SIGKILL on Unix, TerminateProcess on Windows: the unflushed tail must not lose acked strokes
         p.waitForFinished(5000);
         int lastAck = -1;
         for (const QByteArray &line : p.readAllStandardOutput().split('\n'))
