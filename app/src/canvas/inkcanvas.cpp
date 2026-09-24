@@ -239,7 +239,7 @@ void InkCanvas::resetHistory()
 void InkCanvas::setPressureCeiling(qreal c)
 {
     c = std::clamp(c, 0.2, 1.0);
-    if (qFuzzyCompare(c, m_curve.ceiling)) return;
+    if (qFuzzyCompare(float(c), m_curve.ceiling)) return;
     m_curve.ceiling = float(c);
     markAllChunksDirty();
     emit styleChanged();
