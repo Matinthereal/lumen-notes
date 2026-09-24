@@ -8,7 +8,11 @@ on:
     branches: [main]
 
 env:
-  QT_VERSION: 6.11.3
+  # Newest Qt aqt can install on Windows: Qt split the Windows repo into per-arch
+  # folders in 6.11 (qt6_6112_msvc2022_64/ etc.), and aqtinstall 3.3.0 still asks
+  # for the old combined Updates.xml, so 6.11+ 404s on windows_x86. Revisit when
+  # aqt learns the new layout.
+  QT_VERSION: 6.10.3
   # QtQuick's shader baker (qsb) and the virtual keyboard used in tablet mode are addon modules;
   # everything else (Core/Gui/Quick/Qml/Network/Test) ships with the base Qt install.
   QT_MODULES: qtshadertools qtvirtualkeyboard
