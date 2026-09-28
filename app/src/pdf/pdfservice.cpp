@@ -6,6 +6,7 @@
 #include "storage/paths.h"
 #include "storage/strokecodec.h"
 #include "workers/workersupervisor.h"
+#include <QImageReader>
 #include <QDir>
 #include <QImage>
 #include <QTransform>
@@ -132,8 +133,12 @@ void PdfService::requestWords(qint64 pageId)
 // page, so they are written out once beside the other cached renders and that file is sent.
 static QString exportablePicture(const QString &path, const QRectF &crop, int rotation, qint64 id)
 {
-    if (rotation % 360 == 0 && crop == QRectF(0, 0, 1, 1)) return path;
-    QImage img(path);
+    // A photo the camera marked as turned is stored sideways; the PDF gets it upright.
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const bool turnedByCamera = reader.transformation() != QImageIOHandler::TransformationNone;
+    if (rotation % 360 == 0 && crop == QRectF(0, 0, 1, 1) && !turnedByCamera) return path;
+    QImage img = reader.read();
     if (img.isNull()) return path;
     if (rotation % 360 != 0) img = img.transformed(QTransform().rotate(rotation), Qt::SmoothTransformation);
     const QRect box(qRound(crop.x() * img.width()), qRound(crop.y() * img.height()),

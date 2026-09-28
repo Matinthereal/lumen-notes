@@ -34,7 +34,7 @@ void Thumbnails::render(qint64 pageId)
     // Read on the GUI thread (SQLite connection is not shared), paint on the pool.
     QVector<Stroke> strokes;
     double pw = 794, ph = 1123; bool pdf = false, typed = false; QString style = "dotted"; QString paper;
-    struct Pic { QString path; QRectF rect; };
+    struct Pic { QString path; QRectF rect; QRectF crop; int rotation; };
     QVector<Pic> pics;
     struct Shp { QString kind, stroke, fill; QRectF rect; double width; };
     QVector<Shp> shps;
@@ -60,9 +60,11 @@ void Thumbnails::render(qint64 pageId)
         if (paper.isEmpty()) paper = QStringLiteral("#22262B");   // the same default Main.qml uses
     }
     {
-        Database::Query q(m_db, "SELECT i.attachment, a.mime, i.x, i.y, i.w, i.h FROM image i JOIN attachment a ON a.sha256=i.attachment WHERE i.page_id=? ORDER BY i.id");
+        Database::Query q(m_db, "SELECT i.attachment, a.mime, i.x, i.y, i.w, i.h, i.crop_x, i.crop_y, i.crop_w, i.crop_h, i.rotation"
+                                " FROM image i JOIN attachment a ON a.sha256=i.attachment WHERE i.page_id=? ORDER BY i.id");
         q.bind(1, pageId);
-        while (q.step()) pics.append({attachments::pathFor(q.text(0), q.text(1)), QRectF(q.f64(2), q.f64(3), q.f64(4), q.f64(5))});
+        while (q.step()) pics.append({attachments::pathFor(q.text(0), q.text(1)), QRectF(q.f64(2), q.f64(3), q.f64(4), q.f64(5)),
+                                      QRectF(q.f64(6), q.f64(7), q.f64(8), q.f64(9)), q.i32(10)});
     }
     {
         Database::Query q(m_db, "SELECT kind, x, y, w, h, stroke, fill, width FROM shape WHERE page_id=? ORDER BY sort, id");
@@ -123,11 +125,27 @@ void Thumbnails::render(qint64 pageId)
         }
         p.scale(s, s);
         for (const Pic &pic : pics) {                      // pictures sit under the ink here too
+            // Decoded just big enough that the trimmed part fills its place, then turned and
+            // trimmed the way the page shows it. The scale is in the file's own orientation,
+            // before the camera's turn is applied.
             QImageReader reader(pic.path);
             reader.setAutoTransform(true);
-            reader.setScaledSize(QSize(std::max(1, int(pic.rect.width() * s)), std::max(1, int(pic.rect.height() * s))));
-            const QImage loaded = reader.read();
-            if (!loaded.isNull()) p.drawImage(pic.rect, loaded);
+            const QSize raw = reader.size();
+            const bool cameraTurned = reader.transformation() & QImageIOHandler::TransformationRotate90;
+            const bool turned = (pic.rotation % 180 != 0) != cameraTurned;
+            const double fullW = turned ? raw.height() : raw.width(), fullH = turned ? raw.width() : raw.height();
+            if (fullW > 0 && fullH > 0) {
+                const double k = std::clamp(std::max(pic.rect.width() * s / (std::max(0.02, pic.crop.width()) * fullW),
+                                                     pic.rect.height() * s / (std::max(0.02, pic.crop.height()) * fullH)) * 2.0, 0.01, 1.0);
+                reader.setScaledSize(QSize(std::max(1, int(raw.width() * k)), std::max(1, int(raw.height() * k))));
+            }
+            QImage loaded = reader.read();
+            if (loaded.isNull()) continue;
+            if (pic.rotation % 360 != 0) loaded = loaded.transformed(QTransform().rotate(pic.rotation), Qt::SmoothTransformation);
+            if (pic.crop != QRectF(0, 0, 1, 1))
+                loaded = loaded.copy(QRect(qRound(pic.crop.x() * loaded.width()), qRound(pic.crop.y() * loaded.height()),
+                                           std::max(1, qRound(pic.crop.width() * loaded.width())), std::max(1, qRound(pic.crop.height() * loaded.height()))));
+            p.drawImage(pic.rect, loaded);
         }
         const QColor barColour = ink.isValid() ? ink : (darkPaper ? QColor(Qt::white) : QColor(0x1A, 0x1A, 0x1A));
         p.setPen(Qt::NoPen);

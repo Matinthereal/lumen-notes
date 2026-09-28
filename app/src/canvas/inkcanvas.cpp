@@ -1118,6 +1118,11 @@ void InkCanvas::setImages(const QVariantList &images)
                 loaded = loaded.copy(box.intersected(loaded.rect()));
             }
             if (loaded.isNull()) return;
+            // A 12-megapixel photo is 48 MB of texture and far more than the page can show even
+            // zoomed right in; 2560 px along the long side is sharp at any zoom the app allows.
+            constexpr int kLongest = 2560;
+            if (std::max(loaded.width(), loaded.height()) > kLongest)
+                loaded = loaded.scaled(kLongest, kLongest, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             loaded = loaded.convertToFormat(QImage::Format_ARGB32_Premultiplied);
             InkCanvas *target = self.data();
             if (!target) return;

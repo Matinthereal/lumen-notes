@@ -13,6 +13,9 @@
 #include <QTest>
 #endif
 #include <QQuickItem>
+#include <QImageWriter>
+#include <QMimeData>
+#include <QDropEvent>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -978,6 +981,153 @@ void stickyChecks(QQuickWindow *win, QObject *root, Report &r, qint64 pageId)
     spin(100);
 }
 
+// Adding pictures: a phone photo the right way up, a big one fitted to the view, its actions in
+// a bar under it, four corners to resize from, Undo that keeps a trim, and dropping files in.
+void pictureAddChecks(QQuickWindow *win, QObject *root, Report &r, qint64 pageId)
+{
+    QObject *images = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root))
+        images = engine->rootContext()->contextProperty(QStringLiteral("images")).value<QObject *>();
+    auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+    QQuickItem *layer = findOne(win, QStringLiteral("imageLayer"));
+    if (!images || !canvas || !layer) { r.check("the pictures service, canvas and layer are there", false); return; }
+    QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId));
+    spin(300);
+    const auto list = [&] {
+        QVariantList l;
+        QMetaObject::invokeMethod(images, "list", Q_RETURN_ARG(QVariantList, l), Q_ARG(qint64, pageId));
+        return l;
+    };
+    const auto one = [&](qint64 id) {
+        QVariantMap m;
+        QMetaObject::invokeMethod(images, "image", Q_RETURN_ARG(QVariantMap, m), Q_ARG(qint64, id));
+        return m;
+    };
+    for (const QVariant &v : list()) QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, v.toMap().value(QStringLiteral("id")).toLongLong()));
+    const QDir tmp(QDir::temp());
+
+    // A phone photo: stored sideways, with the camera's note to turn it.
+    const QString phone = tmp.filePath(QStringLiteral("lumen-uitest-phone.jpg"));
+    {
+        QImage sideways(400, 200, QImage::Format_RGB32);
+        sideways.fill(QColor(0x2E, 0x86, 0xAB));
+        QImageWriter w(phone, "jpeg");
+        w.setTransformation(QImageIOHandler::TransformationRotate90);
+        w.write(sideways);
+    }
+    canvas->setTool(QStringLiteral("pen"));
+    const QPointF middle = canvas->viewCentrePage();
+    QMetaObject::invokeMethod(layer, "insertAt", Q_ARG(QVariant, QVariantList{QUrl::fromLocalFile(phone)}), Q_ARG(QVariant, middle));
+    spin(400);
+    QVariantList now = list();
+    r.check("a picture is added", now.size() == 1);
+    if (now.isEmpty()) return;
+    QVariantMap pic = now.first().toMap();
+    const qint64 id = pic.value(QStringLiteral("id")).toLongLong();
+    r.check("a phone photo stands the way the camera held it", pic.value(QStringLiteral("h")).toDouble() > pic.value(QStringLiteral("w")).toDouble() * 1.8,
+            QStringLiteral("%1 x %2").arg(pic.value(QStringLiteral("w")).toDouble()).arg(pic.value(QStringLiteral("h")).toDouble()));
+    r.check("it lands centred on what you are looking at",
+            qAbs(pic.value(QStringLiteral("x")).toDouble() + pic.value(QStringLiteral("w")).toDouble() / 2 - middle.x()) < 2);
+    QQuickItem *doneBtn = findOne(win, QStringLiteral("picDone"));
+    r.check("and selected, with its actions under it", doneBtn && doneBtn->isVisible() && canvas->property("tool").toString() == QLatin1String("lasso"));
+    r.check("which are fingertip-sized", doneBtn && doneBtn->height() >= 44);
+    paperBackdrop(win, root);
+    shot(win, QStringLiteral("notes-picture-added"));
+
+    // Pull the top-left corner out: bigger, same shape, the bottom-right corner stays where it was.
+    const double w0 = pic.value(QStringLiteral("w")).toDouble(), h0 = pic.value(QStringLiteral("h")).toDouble();
+    const double right0 = pic.value(QStringLiteral("x")).toDouble() + w0, bottom0 = pic.value(QStringLiteral("y")).toDouble() + h0;
+    QQuickItem *topLeft = nullptr;
+    for (QQuickItem *g : findAll(win, QStringLiteral("picGrip")))
+        if (g->isVisible() && (!topLeft || centre(g).x() + centre(g).y() < centre(topLeft).x() + centre(topLeft).y())) topLeft = g;
+    r.check("a selected picture has a grip on each corner", findAll(win, QStringLiteral("picGrip")).size() >= 4 && topLeft);
+    if (topLeft) {
+        const QPointF from = centre(topLeft);
+        sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) { sendMouse(win, QEvent::MouseMove, from - QPointF(3 * i, 6 * i), Qt::LeftButton); spin(16); }
+        sendMouse(win, QEvent::MouseButtonRelease, from - QPointF(24, 48), Qt::LeftButton);
+        spin(300);
+        pic = one(id);
+        const double w1 = pic.value(QStringLiteral("w")).toDouble(), h1 = pic.value(QStringLiteral("h")).toDouble();
+        r.check("the top-left corner makes it bigger", w1 > w0 + 10, QStringLiteral("%1 → %2").arg(w0).arg(w1));
+        r.check("keeping its shape", qAbs(w1 / h1 - w0 / h0) < 0.01);
+        r.check("with the opposite corner still", qAbs(pic.value(QStringLiteral("x")).toDouble() + w1 - right0) < 1.5
+                && qAbs(pic.value(QStringLiteral("y")).toDouble() + h1 - bottom0) < 1.5);
+    }
+
+    // Trim it from the bar, delete it, and Undo: it comes back trimmed.
+    QQuickItem *trimBtn = findOne(win, QStringLiteral("picTrim"));
+    if (trimBtn) tap(win, trimBtn);
+    spin(250);
+    QQuickItem *grip = nullptr;
+    for (QQuickItem *g : findAll(win, QStringLiteral("cropGrip")))
+        if (g->isVisible() && (!grip || centre(g).x() + centre(g).y() < centre(grip).x() + centre(grip).y())) grip = g;
+    if (grip) {
+        const QPointF from = centre(grip);
+        sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        for (int i = 1; i <= 6; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(4, 8) * i, Qt::LeftButton); spin(16); }
+        sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(24, 48), Qt::LeftButton);
+        spin(120);
+    }
+    if (QQuickItem *cropDone = findOne(win, QStringLiteral("cropDone"))) tap(win, cropDone);
+    spin(300);
+    const double trimmed = one(id).value(QStringLiteral("cropH")).toDouble();
+    r.check("the bar's Trim trims it", trimmed < 0.999, QStringLiteral("cropH %1").arg(trimmed));
+    shot(win, QStringLiteral("notes-picture-trimmed"));
+    if (QQuickItem *del = findOne(win, QStringLiteral("picDelete"))) {
+        qInfo("UITEST note  picDelete visible=%d at %g,%g size %gx%g", del->isVisible(), centre(del).x(), centre(del).y(), del->width(), del->height());
+        tap(win, del);
+    }
+    spin(300);
+    r.check("the bar's Delete removes it", list().isEmpty());
+    if (QQuickItem *undo = itemWithText(win->contentItem(), QStringLiteral("Undo"))) tap(win, undo);
+    spin(300);
+    now = list();
+    r.check("and Undo brings it back still trimmed", now.size() == 1 && qAbs(now.first().toMap().value(QStringLiteral("cropH")).toDouble() - trimmed) < 1e-6);
+
+    // A big picture fits the view instead of running off the page.
+    const QString big = tmp.filePath(QStringLiteral("lumen-uitest-big.png"));
+    { QImage b(3000, 2000, QImage::Format_RGB32); b.fill(QColor(0xE0, 0x7A, 0x5F)); b.save(big); }
+    QMetaObject::invokeMethod(layer, "insertAt", Q_ARG(QVariant, QVariantList{QUrl::fromLocalFile(big)}), Q_ARG(QVariant, canvas->viewCentrePage()));
+    spin(400);
+    QVariantMap bigPic;
+    for (const QVariant &v : list()) if (v.toMap().value(QStringLiteral("id")).toLongLong() != now.first().toMap().value(QStringLiteral("id")).toLongLong()) bigPic = v.toMap();
+    const QSizeF sheet = canvas->pageSize();
+    r.check("a big picture is shrunk onto the sheet", !bigPic.isEmpty() && bigPic.value(QStringLiteral("w")).toDouble() <= sheet.width() * 0.71
+            && bigPic.value(QStringLiteral("x")).toDouble() >= 0 && bigPic.value(QStringLiteral("x")).toDouble() + bigPic.value(QStringLiteral("w")).toDouble() <= sheet.width() + 0.5,
+            QStringLiteral("w %1 on a %2 sheet").arg(bigPic.value(QStringLiteral("w")).toDouble()).arg(sheet.width()));
+    doneBtn = findOne(win, QStringLiteral("picDone"));
+    if (doneBtn) tap(win, doneBtn);
+    spin(200);
+    r.check("Done puts it down and gives the pen back", canvas->property("tool").toString() == QLatin1String("pen")
+            && !(findOne(win, QStringLiteral("picDone")) && findOne(win, QStringLiteral("picDone"))->isVisible()));
+
+    // Drop two files from a file manager onto the page.
+    const int before = list().size();
+    auto *mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(phone), QUrl::fromLocalFile(big)});
+    const QPoint at = canvas->mapToScene(canvas->toScreen(QPointF(300, 400))).toPoint();
+    QDragEnterEvent enter(at, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(win, &enter);
+    QDragMoveEvent move(at, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(win, &move);
+    spin(100);
+    QDropEvent drop(at, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(win, &drop);
+    spin(400);
+    r.check("pictures dropped from the file manager land on the page", list().size() == before + 2,
+            QStringLiteral("%1 → %2").arg(before).arg(list().size()));
+    shot(win, QStringLiteral("notes-picture-dropped"));
+    delete mime;
+    if (QQuickItem *d = findOne(win, QStringLiteral("picDone")); d && d->isVisible()) tap(win, d);
+    for (const QVariant &v : list()) QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, v.toMap().value(QStringLiteral("id")).toLongLong()));
+    QFile::remove(phone);
+    QFile::remove(big);
+    canvas->setTool(QStringLiteral("pen"));
+    if (QQuickItem *old = canvas->findChild<QQuickItem *>(QStringLiteral("uitestPaper"))) old->deleteLater();
+    spin(150);
+}
+
 // New pages, the note-taking mode, sticky notes and the sidebar holding still.
 // Also runnable on its own with LUMEN_UITEST_ONLY=notes.
 void notesChecks(QQuickWindow *win, QObject *root, Report &r)
@@ -1111,6 +1261,8 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
     r.check("typing only puts the handwriting panel's button away", !handwritingButton || !handwritingButton->isVisible());
     setMode(QStringLiteral("both"));
     stickyChecks(win, root, r, ink);
+    pictureAddChecks(win, root, r, ink);
+
 
     root->setProperty("settingsVisible", true);
     spin(300);

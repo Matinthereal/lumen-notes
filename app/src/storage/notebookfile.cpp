@@ -21,7 +21,7 @@ const char *kCols[][2] = {
     {"page", "id, section_id, title, sort, style, size_mode, width, height, created, modified, starred, paper"},
     {"stroke_blob", "page_id, schema, data, stroke_count"},
     {"text_block", "id, page_id, x, y, w, markdown, created_t, recording_id, sort, h, colour"},
-    {"image", "id, page_id, attachment, x, y, w, h"},
+    {"image", "id, page_id, attachment, x, y, w, h, crop_x, crop_y, crop_w, crop_h, rotation"},
     {"pdf_page", "page_id, attachment, page_index"},
     {"shape", "id, page_id, kind, x, y, w, h, stroke, fill, width, sort"},
     {"tag", "id, name"},
@@ -49,7 +49,8 @@ bool makeTables(Database &db)
         "  width REAL, height REAL, created INTEGER, modified INTEGER, starred INTEGER, paper TEXT)",
         "CREATE TABLE ex.stroke_blob (page_id INTEGER PRIMARY KEY, schema INTEGER, data BLOB, stroke_count INTEGER)",
         "CREATE TABLE ex.text_block (id INTEGER PRIMARY KEY, page_id INTEGER, x REAL, y REAL, w REAL, markdown TEXT, created_t INTEGER, recording_id INTEGER, sort INTEGER, h REAL, colour TEXT)",
-        "CREATE TABLE ex.image (id INTEGER PRIMARY KEY, page_id INTEGER, attachment TEXT, x REAL, y REAL, w REAL, h REAL)",
+        "CREATE TABLE ex.image (id INTEGER PRIMARY KEY, page_id INTEGER, attachment TEXT, x REAL, y REAL, w REAL, h REAL,"
+        "  crop_x REAL, crop_y REAL, crop_w REAL, crop_h REAL, rotation INTEGER)",
         "CREATE TABLE ex.pdf_page (page_id INTEGER PRIMARY KEY, attachment TEXT, page_index INTEGER)",
         "CREATE TABLE ex.shape (id INTEGER PRIMARY KEY, page_id INTEGER, kind TEXT, x REAL, y REAL, w REAL, h REAL, stroke TEXT, fill TEXT, width REAL, sort INTEGER)",
         "CREATE TABLE ex.tag (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
@@ -319,13 +320,21 @@ Result importNotebook(Database &db, const QString &path)
         }
     }
     {
-        Database::Query q(db, "SELECT id, page_id, attachment, x, y, w, h FROM im.image");
-        Database::Query ins(db, "INSERT INTO image(page_id, attachment, x, y, w, h) VALUES (?,?,?,?,?,?)");
+        // A file from before trims and turns has none: the whole picture, the right way up.
+        bool trims = false;
+        {
+            Database::Query c(db, "PRAGMA im.table_info(image)");
+            while (c.step()) if (c.text(1) == QLatin1String("rotation")) trims = true;
+        }
+        Database::Query q(db, trims ? "SELECT id, page_id, attachment, x, y, w, h, crop_x, crop_y, crop_w, crop_h, rotation FROM im.image"
+                                    : "SELECT id, page_id, attachment, x, y, w, h, 0, 0, 1, 1, 0 FROM im.image");
+        Database::Query ins(db, "INSERT INTO image(page_id, attachment, x, y, w, h, crop_x, crop_y, crop_w, crop_h, rotation) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
         while (q.step()) {
             const qint64 page = pageIds.value(q.i64(1));
             if (!page) continue;
             ins.reset();
-            ins.bind(1, page).bind(2, q.text(2)).bind(3, q.f64(3)).bind(4, q.f64(4)).bind(5, q.f64(5)).bind(6, q.f64(6));
+            ins.bind(1, page).bind(2, q.text(2)).bind(3, q.f64(3)).bind(4, q.f64(4)).bind(5, q.f64(5)).bind(6, q.f64(6))
+               .bind(7, q.f64(7)).bind(8, q.f64(8)).bind(9, q.f64(9)).bind(10, q.f64(10)).bind(11, q.i32(11));
             if (!ins.run()) return fail(out, db.lastError());
         }
     }

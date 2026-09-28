@@ -12,6 +12,7 @@ Item {
     readonly property real z0: board ? board.zoom : 1        // bindings in the delegates run before board is assigned
     readonly property bool editing: board ? board.tool === "lasso" : false
     property var selectedId: 0
+    readonly property bool inHand: editing && (selectedId > 0 || croppingId > 0)
     signal toast(string message)
 
     // Pen, finger, trackpad and mouse: named once so no handler here can quietly leave one out.
@@ -28,32 +29,57 @@ Item {
         board.setImages(list)
         if (selectedId && !list.some(im => im.id === selectedId)) selectedId = 0
     }
-    // Drop a picture in the middle of what you are looking at, at a sane size for the page.
-    function insertFile(url) {
+    // What a new picture may take up: most of what you can see, and never more than the sheet.
+    function box() {
+        const seenW = board.width / Math.max(z0, 0.05), seenH = board.height / Math.max(z0, 0.05)
+        const sheet = board.pageSize
+        return board.infinite ? Qt.size(seenW * 0.6, seenH * 0.6)
+                              : Qt.size(Math.min(sheet.width * 0.7, seenW * 0.7), Math.min(sheet.height * 0.55, seenH * 0.7))
+    }
+    // A new picture lands centred where you are looking (or where it was dropped), whole, on the
+    // sheet, and selected, with its actions under it. The tool you had comes back with Done.
+    property string toolBefore: "pen"
+    function landed(id, what) {
+        if (!id) return false
+        const im = images.image(id)
+        if (!board.infinite) {
+            const sheet = board.pageSize
+            const nx = Math.max(0, Math.min(im.x, sheet.width - im.w)), ny = Math.max(0, Math.min(im.y, sheet.height - im.h))
+            if (nx !== im.x || ny !== im.y) images.setGeometry(id, nx, ny, im.w, im.h)
+        }
+        if (board.tool !== "lasso") toolBefore = board.tool
+        board.tool = "lasso"
+        selectedId = id
+        picLayer.toast(what)
+        return true
+    }
+    function insertFile(url) { insertAt([url], board.viewCentrePage()) }
+    function insertAt(urls, at) {
         if (!pageId) { picLayer.toast("Open a page first"); return }
-        const at = board.viewCentrePage()
-        const id = images.insertFile(pageId, url, Math.max(0, at.x - 210), Math.max(0, at.y - 150), Math.min(420, board.pageSize.width * 0.6))
-        if (id) { selectedId = id; board.tool = "lasso"; picLayer.toast("Picture added — drag it with the lasso tool") }
+        const b = box()
+        let placed = 0, last = 0
+        for (const url of urls) {
+            // More than one at once: each a little below and right of the one before, like a fan of cards.
+            const id = images.place(pageId, url, at.x + placed * 28, at.y + placed * 28, b.width, b.height)
+            if (id) { ++placed; last = id }
+        }
+        if (placed) landed(last, placed === 1 ? "Picture added" : placed + " pictures added")
     }
     function pasteClipboard() {
         if (!pageId) { picLayer.toast("Open a page first"); return true }   // handled: do not also paste ink
         if (!images.clipboardHasImage()) return false
-        const at = board.viewCentrePage()
-        const id = images.insertClipboard(pageId, Math.max(0, at.x - 210), Math.max(0, at.y - 150), Math.min(420, board.pageSize.width * 0.6))
-        if (id) { selectedId = id; board.tool = "lasso"; picLayer.toast("Picture pasted — drag it with the lasso tool") }
-        return id > 0
+        const at = board.viewCentrePage(), b = box()
+        return landed(images.placeClipboard(pageId, at.x, at.y, b.width, b.height), "Picture pasted")
     }
+    function done() { selectedId = 0; croppingId = 0; if (board.tool === "lasso") board.tool = toolBefore || "pen" }
     signal toastAction(string message, string actionLabel, var fn)
     signal optionsAsked(rect where)
     function removeSelected() {
         if (!selectedId) return
-        const gone = images.image(selectedId)      // everything needed to put it back
+        const gone = images.image(selectedId)      // everything needed to put it back, trim and turn too
         images.remove(selectedId)
         selectedId = 0
-        picLayer.toastAction("Picture removed", "Undo", function() {
-            const id = images.insertFile(picLayer.pageId, "file://" + gone.path, gone.x, gone.y, gone.w)
-            if (id) images.setGeometry(id, gone.x, gone.y, gone.w, gone.h)
-        })
+        picLayer.toastAction("Picture removed", "Undo", function() { images.restore(gone) })
     }
 
     // ---- crop and turn. Neither touches the file: the picture carries the part of itself to show
@@ -114,7 +140,7 @@ Item {
         id: cropBar
         objectName: "chrome"
         visible: picLayer.croppingId > 0
-        readonly property var pic: visible ? images.image(picLayer.croppingId) : ({})
+        readonly property var pic: visible && picLayer.barTick >= 0 ? images.image(picLayer.croppingId) : ({})
         readonly property real centreX: visible ? (pic.x + pic.w / 2) * picLayer.z0 + picLayer.board.pan.x : 0
         readonly property real bottomY: visible ? (pic.y + pic.h) * picLayer.z0 + picLayer.board.pan.y : 0
         x: Math.max(8, Math.min(picLayer.width - width - 8, centreX - width / 2))
@@ -147,6 +173,39 @@ Item {
         }
     }
 
+    // The selected picture's actions, under it and outside the zoom, so they stay fingertip-sized
+    // and nobody has to know about the double tap.
+    Rectangle {
+        id: picBar
+        objectName: "chrome"
+        readonly property var pic: picLayer.selectedId > 0 && picLayer.barTick >= 0 ? images.image(picLayer.selectedId) : ({})
+        readonly property bool whole: !visible || (pic.cropW >= 1 && pic.cropH >= 1 && (pic.rotation || 0) === 0)
+        visible: picLayer.editing && picLayer.selectedId > 0 && picLayer.croppingId === 0 && picLayer.barTick >= 0
+        readonly property real centreX: visible ? (pic.x + pic.w / 2) * picLayer.z0 + picLayer.board.pan.x : 0
+        readonly property real bottomY: visible ? (pic.y + pic.h) * picLayer.z0 + picLayer.board.pan.y : 0
+        readonly property real topY: visible ? pic.y * picLayer.z0 + picLayer.board.pan.y : 0
+        x: Math.max(8, Math.min(picLayer.width - width - 8, centreX - width / 2))
+        y: bottomY + 12 + height < picLayer.height - 8 ? bottomY + 12 : Math.max(8, topY - height - 12)
+        z: 5
+        implicitWidth: picRow.implicitWidth + 20; implicitHeight: Ui.target + 8
+        radius: height / 2
+        color: Qt.alpha(pal.window, 0.97)
+        border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+        Row {
+            id: picRow
+            anchors.centerIn: parent
+            spacing: 6
+            CropAction { objectName: "picTrim"; label: "Trim"; onClicked: picLayer.startCrop() }
+            CropAction { objectName: "picTurn"; label: "Turn"; onClicked: picLayer.rotateSelected() }
+            CropAction { objectName: "picReset"; label: "Reset"; visible: !picBar.whole; onClicked: picLayer.resetSelected() }
+            CropAction { objectName: "picDelete"; label: "Delete"; onClicked: picLayer.removeSelected() }
+            CropAction { objectName: "picDone"; label: "Done"; primary: true; onClicked: picLayer.done() }
+        }
+    }
+    // images.image() is not a binding source: bump this when the picture under the bar changes.
+    property int barTick: 0
+    Connections { target: images; function onChanged(pid) { if (pid === picLayer.pageId) picLayer.barTick++ } }
+
     Item {
         id: pageSpace
         transform: [ Scale { xScale: picLayer.z0; yScale: picLayer.z0 }, Translate { x: picLayer.board.pan.x; y: picLayer.board.pan.y } ]
@@ -171,6 +230,9 @@ Item {
                 property real dw: 0
                 property real dh: 0
                 function resetDrag() { dx = 0; dy = 0; dw = 0; dh = 0 }
+                // A finger on a corner grip is a resize from the moment it lands, never a move: the
+                // move handler would otherwise race the grip for the same press.
+                property int gripsHeld: 0
                 function commit() {
                     const w = width, h = height
                     const sheet = picLayer.board.pageSize
@@ -204,7 +266,7 @@ Item {
                 DragHandler {
                     id: move
                     target: null
-                    enabled: picLayer.croppingId !== frame.iid
+                    enabled: picLayer.croppingId !== frame.iid && frame.gripsHeld === 0
                     onActiveChanged: {
                         if (active) { picLayer.selectedId = frame.iid; return }
                         frame.commit()
@@ -264,34 +326,40 @@ Item {
                     CropGrip { objectName: "cropGrip"; sx: 1; sy: 1 }
                 }
 
-                // corner grip: resize, aspect kept
-                Rectangle {
+                // A grip on every corner: pull any of them to resize, the picture keeps its shape and
+                // the opposite corner stays put. Painted 16 px on screen, grabbed from 44.
+                component SizeGrip: Rectangle {
+                    property int sx: 1           // which corner: -1 left/top, 1 right/bottom
+                    property int sy: 1
                     visible: frame.selected && picLayer.croppingId !== frame.iid
-                    width: 14 / Math.max(picLayer.z0, 0.2); height: width; radius: width / 2
-                    x: parent.width - width / 2; y: parent.height - height / 2
+                    width: 16 / Math.max(picLayer.z0, 0.2); height: width; radius: width / 2
+                    x: (sx < 0 ? 0 : frame.width) - width / 2; y: (sy < 0 ? 0 : frame.height) - height / 2
                     color: pal.highlight
+                    border.color: pal.window; border.width: 2 / Math.max(picLayer.z0, 0.2)
+                    PointHandler {
+                        margin: 14 / Math.max(picLayer.z0, 0.2)
+                        onActiveChanged: frame.gripsHeld = Math.max(0, frame.gripsHeld + (active ? 1 : -1))
+                    }
                     DragHandler {
-                        id: size
                         target: null
-                        margin: 16
+                        margin: 14 / Math.max(picLayer.z0, 0.2)
                         onActiveChanged: if (!active) frame.commit()
                         onCanceled: frame.resetDrag()
                         onTranslationChanged: {
-                            const w = Math.max(24, frame.iw + translation.x / picLayer.z0)
-                            frame.dw = w - frame.iw
-                            frame.dh = w * frame.ih / Math.max(frame.iw, 1) - frame.ih      // aspect kept
+                            const k = Math.max(24 / Math.max(frame.iw, 1),
+                                               Math.max((frame.iw + parent.sx * translation.x / picLayer.z0) / Math.max(frame.iw, 1),
+                                                        (frame.ih + parent.sy * translation.y / picLayer.z0) / Math.max(frame.ih, 1)))
+                            frame.dw = frame.iw * k - frame.iw
+                            frame.dh = frame.ih * k - frame.ih
+                            frame.dx = parent.sx < 0 ? -frame.dw : 0
+                            frame.dy = parent.sy < 0 ? -frame.dh : 0
                         }
                     }
                 }
-                // delete
-                Rectangle {
-                    visible: frame.selected && picLayer.croppingId !== frame.iid
-                    width: 20 / Math.max(picLayer.z0, 0.2); height: width; radius: 4 / Math.max(picLayer.z0, 0.2)
-                    x: parent.width - width / 2; y: -height / 2
-                    color: Ui.danger
-                    Text { anchors.centerIn: parent; text: "×"; color: "white"; font.pixelSize: parent.height * 0.8 }
-                    TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { picLayer.selectedId = frame.iid; picLayer.removeSelected() } }
-                }
+                SizeGrip { objectName: "picGrip"; sx: -1; sy: -1 }
+                SizeGrip { objectName: "picGrip"; sx: 1; sy: -1 }
+                SizeGrip { objectName: "picGrip"; sx: -1; sy: 1 }
+                SizeGrip { objectName: "picGrip"; sx: 1; sy: 1 }
             }
         }
     }

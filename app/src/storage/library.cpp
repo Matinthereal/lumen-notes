@@ -422,7 +422,7 @@ qint64 Library::duplicatePage(qint64 pageId)
     if (!title.isEmpty()) rename(QStringLiteral("page"), copy, title + QStringLiteral(" (copy)"));
     for (const char *sql : {"INSERT INTO stroke_blob(page_id, schema, data, stroke_count) SELECT ?, schema, data, stroke_count FROM stroke_blob WHERE page_id=?",
                             "INSERT INTO text_block(page_id, x, y, w, markdown, created_t, recording_id, sort, h, colour) SELECT ?, x, y, w, markdown, created_t, recording_id, sort, h, colour FROM text_block WHERE page_id=?",
-                            "INSERT INTO image(page_id, attachment, x, y, w, h) SELECT ?, attachment, x, y, w, h FROM image WHERE page_id=?",
+                            "INSERT INTO image(page_id, attachment, x, y, w, h, crop_x, crop_y, crop_w, crop_h, rotation) SELECT ?, attachment, x, y, w, h, crop_x, crop_y, crop_w, crop_h, rotation FROM image WHERE page_id=?",
                             "INSERT INTO pdf_page(page_id, attachment, page_index) SELECT ?, attachment, page_index FROM pdf_page WHERE page_id=?",
                             "INSERT OR IGNORE INTO page_tag(page_id, tag_id) SELECT ?, tag_id FROM page_tag WHERE page_id=?"}) {
         Database::Query q(m_db, sql);

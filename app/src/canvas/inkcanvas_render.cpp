@@ -8,6 +8,7 @@
 #include <QSGGeometryNode>
 #include <QSGSimpleTextureNode>
 #include <QSGTexture>
+#include <QSGTextureMaterial>
 #include <QQuickWindow>
 #include <QSGTransformNode>
 #include <QSGVertexColorMaterial>
@@ -387,8 +388,10 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         for (PageImage &img : m_images) {
             if (img.needsTexture && window() && !img.pending.isNull()) {
                 delete img.texture;
-                img.texture = window()->createTextureFromImage(img.pending);
-                if (img.texture) img.texture->setFiltering(QSGTexture::Linear);
+                // Mipmaps: without them, a photo drawn at a fraction of its size is sampled from
+                // the full-size texture and comes out jagged and shimmering as you zoom.
+                img.texture = window()->createTextureFromImage(img.pending, QQuickWindow::TextureHasMipmaps);
+                if (img.texture) { img.texture->setFiltering(QSGTexture::Linear); img.texture->setMipmapFiltering(QSGTexture::Linear); }
                 img.pending = QImage();
                 img.needsTexture = false;
                 if (img.node) { img.node->setTexture(img.texture); img.node->markDirty(QSGNode::DirtyMaterial); }
@@ -397,6 +400,9 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
             if (!img.node) {
                 img.node = new QSGSimpleTextureNode;
                 img.node->setFiltering(QSGTexture::Linear);
+                // The node has no mipmap switch of its own; both of its materials take one.
+                static_cast<QSGOpaqueTextureMaterial *>(img.node->material())->setMipmapFiltering(QSGTexture::Linear);
+                static_cast<QSGOpaqueTextureMaterial *>(img.node->opaqueMaterial())->setMipmapFiltering(QSGTexture::Linear);
                 img.node->setOwnsTexture(false);
                 img.node->setTexture(img.texture);
                 m_imagesNode->appendChildNode(img.node);

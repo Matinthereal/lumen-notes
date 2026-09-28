@@ -103,7 +103,7 @@ Rectangle {
             id: shapeButton
             onClicked: { if (canvas.tool === "shape") shapeMenu.openFrom(shapeButton); else canvas.tool = "shape" }
         }
-        IconButton { icon: "insert-image"; tip: "Add a picture (Ctrl+Shift+G) — move it with the lasso"; onClicked: bar.pictureRequested() }
+        IconButton { icon: "insert-image"; tip: "Add a picture (Ctrl+Shift+G) — or drop one on the page"; onClicked: bar.pictureRequested() }
         Sep {}
 
         Repeater {

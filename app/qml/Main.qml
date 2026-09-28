@@ -434,6 +434,10 @@ Window {
             }
             ImageLayer {
                 id: imageLayer
+                objectName: "imageLayer"
+                // Above the shapes and sticky notes while a picture is in hand: its bar and grips must not
+                // end up under a note that happens to overlap it.
+                z: inHand ? 2 : 0
                 anchors.fill: parent
                 board: canvas
                 pageId: root.currentPageId
@@ -450,6 +454,8 @@ Window {
                 objectName: "shapeLayer"
                 anchors.fill: parent
                 visible: !root.pageTyped
+                // A picture in hand owns the pointer: an overlapping shape or note must not win its drags.
+                enabled: !imageLayer.inHand
                 board: canvas
                 pageId: root.currentPageId
                 strokeColour: canvas.penColor        // a new shape uses the pen in your hand
@@ -465,6 +471,7 @@ Window {
             StickyNotes {
                 id: stickies; anchors.fill: parent; canvas: canvas; pageId: root.currentPageId
                 visible: !root.pageTyped
+                enabled: !imageLayer.inHand
                 recordingT: function() { return audio.recording ? audio.nowMs() : 0 }
                 onPageLinkActivated: (url) => root.followLink(url)
                 onToast: (m) => toastBar.show(m, null)
@@ -478,6 +485,28 @@ Window {
                 presenting: root.presenting
                 onPageLinkActivated: (url) => root.followLink(url)
                 infoHeight: pageInfo.height + 4
+            }
+            // Pictures dragged in from the file manager land where they are dropped.
+            DropArea {
+                id: pictureDrop
+                anchors.fill: parent
+                enabled: root.currentPageId > 0 && !root.pageTyped && !root.presenting
+                function pictures(urls) { return Array.from(urls).filter(u => /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(u.toString())) }
+                onEntered: (drag) => { drag.accepted = drag.hasUrls && pictures(drag.urls).length > 0 }
+                onDropped: (drop) => {
+                    const urls = pictures(drop.urls)
+                    if (!urls.length) return
+                    imageLayer.insertAt(urls, canvas.toPage(Qt.point(drop.x, drop.y)))
+                    drop.acceptProposedAction()
+                }
+                Rectangle {
+                    anchors { fill: parent; margins: 12 }
+                    visible: pictureDrop.containsDrag
+                    radius: Ui.radiusLg
+                    color: Qt.alpha(pal.highlight, 0.08)
+                    border.color: pal.highlight; border.width: 2
+                    Text { anchors.centerIn: parent; text: "Drop to add to this page"; color: pal.highlight; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold }
+                }
             }
             Connections { target: canvas; function onTapped(page) { stickies.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.

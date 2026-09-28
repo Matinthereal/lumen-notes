@@ -21,6 +21,12 @@ public:
     Q_INVOKABLE QVariantList list(qint64 pageId) const;          // [{id, path, x, y, w, h}]
     Q_INVOKABLE qint64 insertFile(qint64 pageId, const QUrl &file, double x, double y, double maxWidth = 420);
     Q_INVOKABLE qint64 insertClipboard(qint64 pageId, double x, double y, double maxWidth = 420);
+    // Centred on (cx, cy), as big as fits the box without being blown up past its own pixels, and
+    // the right way up for a phone photo whose camera said it was turned.
+    Q_INVOKABLE qint64 place(qint64 pageId, const QUrl &file, double cx, double cy, double maxW, double maxH);
+    Q_INVOKABLE qint64 placeClipboard(qint64 pageId, double cx, double cy, double maxW, double maxH);
+    Q_INVOKABLE qint64 restore(const QVariantMap &picture);      // a removed picture back as it was, trim and turn too
+    static QSize uprightSize(const QString &path);                // pixels as shown, after the camera's own turn
     Q_INVOKABLE bool clipboardHasImage() const;
     Q_INVOKABLE void setGeometry(qint64 id, double x, double y, double w, double h);
     // The crop is in the turned picture's own coordinates, 0..1; the rect is where it goes on the page.
@@ -39,5 +45,8 @@ signals:
 
 private:
     qint64 insertStored(qint64 pageId, const QString &sha, const QString &mime, QSize pixels, double x, double y, double maxWidth);
+    qint64 store(qint64 pageId, const QString &sha, double x, double y, double w, double h);
+    QString storeFile(const QString &path, QSize *pixels);
+    QString storeClipboard(QSize *pixels);
     Database &m_db;
 };
