@@ -9,8 +9,11 @@ with an S Pen), works with mouse and keyboard too.
   styles, in four paper colours.
 - **Import and annotate PDFs** — a PDF becomes a section, one page per slide, with text selection,
   a highlighter that snaps to lines, and export back to PDF with your ink baked in.
-- **Type** Markdown blocks alongside your ink, with `$\LaTeX$` maths rendering, and turn
-  handwritten maths into LaTeX locally.
+- **Type** on typed pages — a real editor with headings, lists and checklists — or put **sticky
+  notes** on a handwritten page, with `$\LaTeX$` maths rendering; turn handwritten maths into
+  LaTeX locally. Tell it once whether you handwrite, type or both, and every new page follows.
+- **Pictures** from a file, the clipboard or dragged in from the file manager: sharp at any zoom,
+  phone photos the right way up, trimmed and turned without touching the file.
 - **Organise** as notebooks → sections → pages, with full-text search across typed text,
   recognised handwriting, audio transcripts and PDFs (Ctrl+K). Link pages with `[[Page title]]`
   (links survive renames, and every page lists what links to it), tag pages (or lasso some

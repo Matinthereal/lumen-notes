@@ -12,9 +12,11 @@ scripts/run.sh                    # from a build tree
 ```
 On Windows, Start menu → Lumen.
 
-First run looks at what the machine has (pen, touch, keyboard) and picks whether new pages start
-typed or handwritten; F1 brings those tips back. A notebook called *My notebook* is ready, with a
-typed welcome page.
+First run asks how you take notes — **handwriting, typing, or both** — with a guess from what the
+machine has (a pen suggests both); F1 brings it back, and Settings → Notes changes it any time. With
+*both*, every new page asks whether it is handwritten or typed; with one, it never asks, and typing
+only also puts the pen settings away. Pages of the other kind still open as they always did. A
+notebook called *My notebook* is ready, with a typed welcome page.
 
 ## Writing
 
@@ -27,7 +29,9 @@ typed welcome page.
 | Pan / zoom | one finger / pinch (touch is ignored while the pen is near) |
 | Pen colour, width, style | toolbar; "classic" is the default pen |
 | Page style | toolbar pill: dotted, grid, lined, Cornell, plain |
-| New page / section | Ctrl+N / Ctrl+Shift+N; PgUp/PgDn or the on-screen arrows move between pages; tap the page counter for a new page |
+| New page / section | Ctrl+N / Ctrl+Shift+N; PgUp/PgDn or the on-screen arrows move between pages; tap the page counter for a new page after this one |
+| Handwritten or typed? | when you take notes both ways, a new page asks: tap one, or press **H** or **T**; Enter repeats the last kind, Escape makes nothing |
+| Sticky note | tool 6 (Ctrl+T), then tap the page: type straight away. Drag it by its top band to move it, pull its corner to resize; the bar under an open note changes its colour or deletes it (with Undo) |
 | Fit page / fit width | Ctrl+0 / Ctrl+1 (or tap / long-press the zoom pill) |
 | Undo with fingers | two-finger double-tap |
 
@@ -42,15 +46,15 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
 
 | Do | How |
 |---|---|
-| Add a picture | Ctrl+Shift+G, the toolbar's picture button, or Ctrl+V with an image on the clipboard |
-| Move or resize a picture | switch to the lasso (4) — handles appear; with a pen in hand you write *over* pictures instead |
+| Add a picture | Ctrl+Shift+G, the toolbar's picture button, Ctrl+V with an image on the clipboard, or drag files onto the page from the file manager. It lands where you are looking (or where you dropped it), sized to fit, the right way up for a phone photo, and selected |
+| Move or resize a picture | a new picture is selected already; otherwise switch to the lasso (4). Drag it to move, pull any corner to resize (the shape is kept). The bar under it has **Trim**, **Turn**, **Reset**, **Delete** and **Done** — Done gives you back the pen. With a pen in hand you write *over* pictures |
 | Paper colour | the "paper" pill: white, cream, cool grey or charcoal, per page. The page keeps its own colour, so ink written under one theme stays readable under the other |
 | Page style | the style pill: dotted, lined, squared, **2 mm graph paper**, **isometric**, **music staves**, Cornell, plain |
 | Cross something out | scribble over it with the pen — a real back-and-forth rubs out what it crosses (a zig-zag drawing is left alone) |
 | Straight line | hold **Shift** while drawing: the stroke snaps to the nearest 45° |
 | Recolour or re-weight ink | lasso it, then tap a colour or a width |
 | Favourite pens | the three slots after the widths: tap to take one up, hold to store the pen you are using |
-| Trim or turn a picture | select it, then **Trim…** or **Turn** in its menu; **Original** brings back the whole picture. The file itself is never changed |
+| Trim or turn a picture | select it, then **Trim** or **Turn** in the bar under it; **Reset** brings back the whole picture. The file itself is never changed, and Undo after a delete brings it back trimmed |
 
 ## Notebooks, pages, and getting things back
 
@@ -58,21 +62,22 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
 |---|---|
 | Open a page | tap it in the sidebar — a tap never opens a menu |
 | Rename, delete, close, duplicate a page | **press and hold** the row (half a second — a line fills along it as you hold), or right-click |
-| New section / new page | the **+** on a notebook or section row |
+| New section / new page | the **+** on a notebook or section row (a section's + asks handwritten or typed when you use both) |
 | Close the page you are on | Ctrl+W, or "Close page" in the row's menu |
 | Nothing open | that is a normal state: the page area offers New page, Notebooks, and your recent pages. It is remembered, so the app starts there next time |
 | Undo a delete | the toast at the bottom — it waits while you hover or hold it. Pages, sections, notebooks, cards and papers all come back |
 | Audio you deleted | goes to the data folder's `trash` for 30 days; the toast's Undo restores it |
 | Things that ask first | deleting a recording entirely, and deleting a paper question — those two cannot be undone |
 | Everything in this section | Ctrl+P — thumbnails; tap to open, hold for duplicate/move/delete, select several to move or bin them together |
-| Duplicate a page | Ctrl+D (ink, typed blocks, pictures and any PDF backing come with it) |
+| Duplicate a page | Ctrl+D (ink, sticky notes, typed text, pictures and any PDF backing come with it) |
 | Star a page | Ctrl+B — starred pages sit at the top of the empty state and of search |
 | Recently deleted | Ctrl+Shift+D — restore anything from the last thirty days, or delete it for good |
 | Every key | Ctrl+/ |
 
 ## Typing, maths, search
 
-- Tool 6 (Ctrl+T) then tap: a Markdown block. `$x^2$` and `$$\int_0^1 x\,dx$$` render as maths.
+- On a handwritten page, tool 6 (Ctrl+T) then tap: a sticky note. Markdown works in it, and
+  `$x^2$` and `$$\int_0^1 x\,dx$$` render as maths. For pages of text, make a typed page.
 - Lasso handwritten maths → **∑ LaTeX** (Ctrl+M): recognised locally; *Improve with Claude* sends
   the picture only when you press it.
 - Ctrl+K searches typed text, recognised handwriting, transcripts and PDFs.

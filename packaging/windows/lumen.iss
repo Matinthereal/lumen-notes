@@ -8,7 +8,7 @@
 #endif
 
 #define MyAppName "Lumen"
-#define MyAppVersion "0.0.1"
+#define MyAppVersion "0.1.0"
 #define MyAppExeName "lumen.exe"
 #define MyAppPublisher "Lumen"
 
