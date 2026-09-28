@@ -26,23 +26,44 @@ Rectangle {
     ListModel { id: rows }
 
     function rebuild() {
-        rows.clear()
+        const next = []
         const info = library.page(currentPageId)
         for (const nb of library.notebooks()) {
             const nbOpen = expandedNotebooks[nb.id] === undefined ? nb.id === info.notebookId : expandedNotebooks[nb.id]
-            rows.append({ level: 0, kind: "notebook", id: nb.id, name: nb.name, colour: nb.colour, board: nb.board || "", secKind: "", expanded: nbOpen, count: nb.sectionCount, pageNo: 0, parentId: 0, current: false, last: false })
+            next.push({ level: 0, kind: "notebook", id: nb.id, name: nb.name, colour: nb.colour, board: nb.board || "", secKind: "", expanded: nbOpen, count: nb.sectionCount, pageNo: 0, parentId: 0, current: false, last: false })
             if (!nbOpen) continue
             const secs = library.sections(nb.id)
             for (let si = 0; si < secs.length; ++si) {
                 const sec = secs[si]
                 const secOpen = expandedSections[sec.id] === undefined ? sec.id === info.sectionId : expandedSections[sec.id]
-                rows.append({ level: 1, kind: "section", id: sec.id, name: sec.name, colour: nb.colour, board: "", secKind: sec.kind, expanded: secOpen, count: sec.pageCount, pageNo: 0, parentId: nb.id, current: false, last: si === secs.length - 1 })
+                next.push({ level: 1, kind: "section", id: sec.id, name: sec.name, colour: nb.colour, board: "", secKind: sec.kind, expanded: secOpen, count: sec.pageCount, pageNo: 0, parentId: nb.id, current: false, last: si === secs.length - 1 })
                 if (!secOpen) continue
                 const pages = library.pages(sec.id)
                 for (const pg of pages)
-                    rows.append({ level: 2, kind: "page", id: pg.id, name: pg.title, colour: nb.colour, board: "", secKind: "", expanded: false, count: 0, pageNo: pg.index + 1, parentId: sec.id, current: pg.id === currentPageId, last: pg.index === pages.length - 1 })
+                    next.push({ level: 2, kind: "page", id: pg.id, name: pg.title, colour: nb.colour, board: "", secKind: "", expanded: false, count: 0, pageNo: pg.index + 1, parentId: sec.id, current: pg.id === currentPageId, last: pg.index === pages.length - 1 })
             }
         }
+        syncRows(next)
+    }
+    // Brings the model to `next` a row at a time. Emptying it and filling it again (what this
+    // used to do) scrolled the list back to the top on every change: a new page, a rename, a save.
+    function syncRows(next) {
+        const key = (r) => r.kind + ":" + r.id
+        let i = 0
+        while (i < next.length) {
+            if (i >= rows.count) { rows.append(next[i]); ++i; continue }
+            const have = rows.get(i)
+            if (key(have) === key(next[i])) {
+                for (const role in next[i]) if (have[role] !== next[i][role]) rows.setProperty(i, role, next[i][role])
+                ++i
+                continue
+            }
+            let later = -1                                  // still there further down: the rows before it went
+            for (let j = i + 1; j < rows.count; ++j) if (key(rows.get(j)) === key(next[i])) { later = j; break }
+            if (later > 0) rows.remove(i, later - i)
+            else { rows.insert(i, next[i]); ++i }
+        }
+        if (rows.count > next.length) rows.remove(next.length, rows.count - next.length)
     }
     function clearCurrent() { currentPageId = 0; rebuild() }
     function revealPage(pageId) {
@@ -154,6 +175,8 @@ Rectangle {
                 id: row
                 objectName: "sidebarRow"
                 readonly property var rowPageId: row.kind === "page" ? row.id : 0
+                // Rows are updated in place, so a delegate can come to stand for a different page.
+                onRowPageIdChanged: if (rowPageId) thumbnails.ensure(rowPageId)
                 readonly property string rowKind: row.kind
                 readonly property bool rowCurrent: row.current
                 required property int index

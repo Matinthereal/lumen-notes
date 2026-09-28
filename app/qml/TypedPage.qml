@@ -42,7 +42,9 @@ Item {
         typed.blockId = 0
         if (typed.pageId > 0) {
             const blocks = textBlocks.list(typed.pageId)
-            typed.blockId = blocks.length ? blocks[0].id : textBlocks.create(typed.pageId, 0, 0, 794)
+            // Only a typed page gets its text block made here; any other page keeps what it has.
+            const own = library.page(typed.pageId).sizeMode === "typed"
+            typed.blockId = blocks.length ? blocks[0].id : (own ? textBlocks.create(typed.pageId, 0, 0, 794) : 0)
             typed.lastSaved = blocks.length ? (blocks[0].markdown || "") : ""
             fmt.setMarkdown(library.resolveLinks(typed.lastSaved))
         } else {
@@ -54,7 +56,9 @@ Item {
     }
     property int words: 0
     signal pageLinkActivated(string url)
-    onPageIdChanged: { linkPicker.close(); load(); refreshLinks(); Qt.callLater(() => { if (typed.visible) area.forceActiveFocus() }) }
+    // save() first: blockId still names the page being left, and its last 700 ms of typing may
+    // not have reached the database yet.
+    onPageIdChanged: { linkPicker.close(); save(); load(); refreshLinks(); Qt.callLater(() => { if (typed.visible) area.forceActiveFocus() }) }
 
     // ---- [[page]] links: typing [[ opens the picker; [[Exact title]] typed out in full links too.
     property var backlinks: []

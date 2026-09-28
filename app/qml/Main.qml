@@ -72,16 +72,20 @@ Window {
             backStack = backStack.concat([currentPageId]).slice(-50)
             forwardStack = []
         }
+        // The kind is cleared before the id moves and set after it, never alongside: for a moment
+        // in between, the page you are leaving would otherwise count as the kind you are going to,
+        // and a typed page's editor would give the handwritten page you left a full-page text block.
+        pageSizeMode = ""
         canvas.resetHistory()
         canvas.clearBackground()
         pageStore.load(pageId)
         pagePaper = info.paper || ""
-        pageSizeMode = info.sizeMode || ""
         canvas.pageStyle = info.style
         canvas.infinite = info.sizeMode === "infinite"
         canvas.pageSize = Qt.size(info.width, info.height)
         canvas.fitPage()
         currentPageId = pageId
+        pageSizeMode = info.sizeMode || ""
         pageLabel = info.notebookName + " › " + info.sectionName + (info.title.length ? " › " + info.title.replace("\u200b", "") : "")
         library.setSetting("lastPage", String(pageId))
         library.touchPage(pageId)

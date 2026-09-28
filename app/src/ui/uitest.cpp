@@ -842,6 +842,61 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
     }
 }
 
+// New pages, the note-taking mode, sticky notes and the sidebar holding still.
+// Also runnable on its own with LUMEN_UITEST_ONLY=notes.
+void notesChecks(QQuickWindow *win, QObject *root, Report &r)
+{
+    const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    QObject *library = nullptr, *textBlocks = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root)) {
+        library = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
+        textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+    }
+    if (!library || !textBlocks) { r.check("the library and text blocks are there", false); return; }
+    const auto blockCount = [&](qint64 pageId) {
+        QVariantList list;
+        QMetaObject::invokeMethod(textBlocks, "list", Q_RETURN_ARG(QVariantList, list), Q_ARG(qint64, pageId));
+        return list.size();
+    };
+    const auto open = [&](qint64 pageId) { QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId)); spin(300); };
+    root->setProperty("leftPanel", QStringLiteral("notebooks"));
+    spin(200);
+
+    // ---- A typed page never leaves a text block on the handwritten page you came from.
+    QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+    spin(300);
+    const qint64 ink = currentPage();
+    QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+    spin(300);
+    const qint64 typed = currentPage();
+    r.check("a new typed page opens", typed != ink && typed > 0);
+    open(ink);
+    open(typed);
+    open(ink);
+    r.check("going handwritten → typed → handwritten leaves no text block on the handwritten page",
+            blockCount(ink) == 0, QStringLiteral("%1 block(s)").arg(blockCount(ink)));
+    r.check("and the typed page has its one block", blockCount(typed) == 1, QStringLiteral("%1 block(s)").arg(blockCount(typed)));
+
+    // ---- The sidebar stays where you scrolled it when the library changes underneath.
+    QQuickItem *list = findOne(win, QStringLiteral("sidebarList"));
+    if (list) {
+        for (int i = 0; i < 14; ++i) QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(400);
+        const qreal room = list->property("contentHeight").toReal() - list->height();
+        r.check("the sidebar has enough rows to scroll", room > 200, QStringLiteral("room %1").arg(room));
+        list->setProperty("contentY", room / 2);
+        spin(150);
+        const qreal before = list->property("contentY").toReal();
+        QMetaObject::invokeMethod(library, "rename", Q_ARG(QString, QStringLiteral("page")), Q_ARG(qlonglong, ink),
+                                  Q_ARG(QString, QStringLiteral("Renamed while scrolled")));
+        spin(300);
+        const qreal after = list->property("contentY").toReal();
+        r.check("a rename does not scroll the sidebar", qAbs(after - before) < 1.0,
+                QStringLiteral("contentY %1 → %2").arg(before).arg(after));
+        shot(win, QStringLiteral("notes-sidebar-still"));
+    }
+}
+
 } // namespace
 
 int uitest::run(QQuickWindow *win, QObject *root)
@@ -860,6 +915,17 @@ int uitest::run(QQuickWindow *win, QObject *root)
     spin(400);
 
     const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("notes")) {
+        waitFor([&] { return currentPage() > 0; }, 3000);
+        if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        notesChecks(win, root, r);
+        r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
+                g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
+        qInstallMessageHandler(g_previous);
+        qInfo("UITEST %s (%d failure%s)", r.failures ? "FAILED" : "OK", r.failures, r.failures == 1 ? "" : "s");
+        return r.failures;
+    }
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("pages")) {
         waitFor([&] { return currentPage() > 0; }, 3000);
         if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
@@ -2153,6 +2219,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
     }
 
     pageFeatures(win, root, r);
+    notesChecks(win, root, r);
 
     // ---- 12e. Tooltips by touch (above).
     holdTipChecks();
