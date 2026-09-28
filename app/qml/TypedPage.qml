@@ -237,6 +237,9 @@ Item {
                     objectName: "typedEditor"
                     x: 56; y: 48
                     width: parent.width - 112
+                    // The whole sheet takes the tap, not just the lines written so far: on an empty
+                    // page that was one 20 px line to aim for. "Linked from" sits under the text.
+                    height: linkedFrom.visible ? implicitHeight : Math.max(implicitHeight, sheet.height - 96)
                     padding: 0
                     background: null
                     textFormat: TextEdit.RichText
