@@ -895,6 +895,96 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
                 QStringLiteral("contentY %1 → %2").arg(before).arg(after));
         shot(win, QStringLiteral("notes-sidebar-still"));
     }
+
+    // ---- New pages: "both" asks handwritten-or-typed, "ink" and "typed" just make one.
+    const auto setMode = [&](const QString &mode) {
+        QMetaObject::invokeMethod(library, "setSetting", Q_ARG(QString, QStringLiteral("notes.mode")), Q_ARG(QString, mode));
+        QMetaObject::invokeMethod(root, "refreshNotesMode");
+        spin(100);
+    };
+    const auto kindOf = [&](qint64 pageId) {
+        QVariantMap info;
+        QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, info), Q_ARG(qint64, pageId));
+        return info.value(QStringLiteral("sizeMode")).toString();
+    };
+    const auto chooserUp = [&] { QQuickItem *t = findOne(win, QStringLiteral("chooseTyped")); return t && t->isVisible(); };
+    open(ink);
+    setMode(QStringLiteral("both"));
+    QQuickItem *chip = root->property("newPageChip").value<QQuickItem *>();
+    r.check("the page counter is there to tap", chip && chip->isVisible());
+    if (chip) {
+        tap(win, chip);
+        spin(300);
+        r.check("with both ways on, + asks handwritten or typed", chooserUp());
+        QQuickItem *hw = findOne(win, QStringLiteral("chooseHandwritten"));
+        r.check("its two choices are big targets", hw && hw->height() >= 46 && hw->width() >= 46);
+        shot(win, QStringLiteral("notes-chooser"));
+        chord(win, Qt::Key_T, Qt::NoModifier);
+        spin(300);
+        r.check("T makes a typed page", !chooserUp() && currentPage() != ink && kindOf(currentPage()) == QLatin1String("typed"),
+                QStringLiteral("page %1 is %2").arg(currentPage()).arg(kindOf(currentPage())));
+        open(ink);
+        tap(win, chip);
+        spin(300);
+        chord(win, Qt::Key_Escape, Qt::NoModifier);
+        spin(250);
+        r.check("Escape puts the question away and makes nothing", !chooserUp() && currentPage() == ink);
+        tap(win, chip);
+        spin(300);
+        chord(win, Qt::Key_H, Qt::NoModifier);
+        spin(300);
+        r.check("H makes a handwritten page", currentPage() != ink && kindOf(currentPage()) == QLatin1String("a4"),
+                kindOf(currentPage()));
+    }
+    if (list) { QMetaObject::invokeMethod(list, "positionViewAtBeginning"); spin(200); }
+    bool sectionPlus = false;
+    for (QQuickItem *add : findAll(win, QStringLiteral("rowAddButton"))) {
+        const QQuickItem *rowItem = add->parentItem() ? add->parentItem()->parentItem() : nullptr;
+        if (!add->isVisible() || !rowItem || rowItem->property("rowKind").toString() != QLatin1String("section")) continue;
+        const qint64 was = currentPage();
+        tap(win, add);
+        spin(300);
+        r.check("a section's + asks too", chooserUp());
+        shot(win, QStringLiteral("notes-chooser-sidebar"));
+        pressEscape(win);
+        spin(200);
+        r.check("and nothing is made when it is put away", currentPage() == was);
+        sectionPlus = true;
+        break;
+    }
+    r.check("a section row with a + was found", sectionPlus);
+    setMode(QStringLiteral("ink"));
+    open(ink);
+    const auto askNew = [&] {
+        const qint64 was = currentPage();
+        QMetaObject::invokeMethod(root, "askNewPage", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()),
+                                  Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
+        spin(300);
+        return currentPage() != was;
+    };
+    r.check("handwriting only: a new page is made", askNew());
+    r.check("handwriting only: + makes a handwritten page, no question", !chooserUp() && kindOf(currentPage()) == QLatin1String("a4"),
+            kindOf(currentPage()));
+    setMode(QStringLiteral("typed"));
+    r.check("typing only: a new page is made", askNew());
+    r.check("typing only: + makes a typed page, no question", !chooserUp() && kindOf(currentPage()) == QLatin1String("typed"),
+            kindOf(currentPage()));
+    QQuickItem *handwritingButton = nullptr;
+    for (QQuickItem *b : findAll(win, QStringLiteral("railButton")))
+        if (b->property("tip").toString().startsWith(QLatin1String("Handwriting"))) handwritingButton = b;
+    r.check("typing only puts the handwriting panel's button away", !handwritingButton || !handwritingButton->isVisible());
+    setMode(QStringLiteral("both"));
+    root->setProperty("settingsVisible", true);
+    spin(300);
+    const QList<QQuickItem *> modeButtons = findAll(win, QStringLiteral("modeButton"));
+    r.check("Settings offers the three ways to take notes", modeButtons.size() == 3);
+    shot(win, QStringLiteral("notes-settings"));
+    root->setProperty("settingsVisible", false);
+    root->setProperty("onboardingVisible", true);
+    spin(300);
+    shot(win, QStringLiteral("notes-onboarding"));
+    root->setProperty("onboardingVisible", false);
+    spin(200);
 }
 
 } // namespace
@@ -1443,32 +1533,35 @@ int uitest::run(QQuickWindow *win, QObject *root)
         const bool pen = tabletMode->property("penAvailable").toBool();
         const bool touch = tabletMode->property("touchAvailable").toBool();
         qInfo("UITEST note  this machine reports pen=%d touch=%d", pen, touch);
-        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QString()));
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("notes.mode")), Q_ARG(QString, QString()));
         QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QString()));
         root->setProperty("onboardingVisible", true);
         spin(400);
         QQuickItem *typed = findOne(win, QStringLiteral("setupTyped"));
         QQuickItem *ink = findOne(win, QStringLiteral("setupInk"));
+        QQuickItem *both = findOne(win, QStringLiteral("setupBoth"));
         QQuickItem *start = findOne(win, QStringLiteral("onboardingStart"));
-        r.check("the first run offers the kind of page to start with", typed && ink && start);
-        if (!typed || !ink || !start) { root->setProperty("onboardingVisible", false); return; }
-        r.check("and picks the one this machine suits", (pen ? ink : typed)->property("on").toBool(),
-                QStringLiteral("typed=%1 ink=%2").arg(typed->property("on").toBool()).arg(ink->property("on").toBool()));
+        r.check("the first run asks how notes are taken", typed && ink && both && start);
+        if (!typed || !ink || !both || !start) { root->setProperty("onboardingVisible", false); return; }
+        r.check("and picks what this machine suits", (pen ? both : typed)->property("on").toBool(),
+                QStringLiteral("typed=%1 ink=%2 both=%3").arg(typed->property("on").toBool()).arg(ink->property("on").toBool()).arg(both->property("on").toBool()));
         r.check("its choices are finger-sized", start->height() >= 40 && typed->height() >= 40);
         tap(win, typed);
         spin(100);
-        r.check("a choice can be changed", typed->property("on").toBool() && !ink->property("on").toBool());
+        r.check("a choice can be changed", typed->property("on").toBool() && !ink->property("on").toBool() && !both->property("on").toBool());
         tap(win, start);
         spin(300);
         r.check("Start puts the first run away", !root->property("onboardingVisible").toBool());
-        r.check("and writes what was chosen", setting(QStringLiteral("page.sizeMode"), QString()) == QLatin1String("typed"),
-                setting(QStringLiteral("page.sizeMode"), QStringLiteral("(unset)")));
+        r.check("and writes what was chosen", setting(QStringLiteral("notes.mode"), QString()) == QLatin1String("typed"),
+                setting(QStringLiteral("notes.mode"), QStringLiteral("(unset)")));
         const bool touchNow = tabletMode->property("touchAvailable").toBool();
         r.check("and the on-screen keyboard follows the machine",
                 setting(QStringLiteral("keyboard.mode"), QString()) == (touchNow ? QLatin1String("tablet") : QLatin1String("never")),
                 setting(QStringLiteral("keyboard.mode"), QStringLiteral("(unset)")));
         // Put back what the rest of the run expects: handwritten pages and the default keyboard.
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("notes.mode")), Q_ARG(QString, QStringLiteral("both")));
         QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("page.sizeMode")), Q_ARG(QString, QStringLiteral("a4")));
+        QMetaObject::invokeMethod(root, "refreshNotesMode");
         QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QStringLiteral("tablet")));
         root->setProperty("keyboardMode", QStringLiteral("tablet"));
 

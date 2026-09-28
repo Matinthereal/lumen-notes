@@ -195,10 +195,35 @@ Window {
         openPage(library.createPage(sectionId, "", kind || ""))
     }
     function newPage(kind) {
+        if (!kind) { askNewPage(null); return }
         const info = library.page(currentPageId); if (!info.id) { newPageAnywhere(kind); return }
         const idx = library.pages(info.sectionId).findIndex(p => p.id === currentPageId)
-        openPage(library.createPage(info.sectionId, "", kind || "", idx))
+        openPage(library.createPage(info.sectionId, "", kind, idx))
     }
+    // How the maker takes notes: "both" asks handwritten-or-typed for each new page, "ink" and
+    // "typed" never ask, and hide what belongs only to the other kind.
+    property string notesMode: library.notesMode()
+    readonly property bool usesInk: notesMode !== "typed"
+    readonly property bool usesTyping: notesMode !== "ink"
+    function refreshNotesMode() { notesMode = library.notesMode() }
+    // Every + for a page comes through here. No section: after the open page, or where
+    // newPageAnywhere would land. `then` gets the new page's id, for callers that add to it.
+    function askNewPage(from, sectionId, afterIndex, then) {
+        let sid = sectionId || 0, after = afterIndex === undefined ? -1 : afterIndex
+        if (!sid) {
+            const info = library.page(currentPageId)
+            if (info.id) { sid = info.sectionId; after = library.pages(sid).findIndex(p => p.id === currentPageId) }
+        }
+        const make = (kind) => {
+            if (!sid) newPageAnywhere(kind)
+            else openPage(library.createPage(sid, "", kind, after))
+            if (then && currentPageId) then(currentPageId)
+        }
+        if (notesMode === "both") newPageChooser.ask(from, make)
+        else make(library.defaultPageKind())
+    }
+    NewPageChooser { id: newPageChooser }
+    readonly property Item newPageChip: pageChip       // for the UI test: its objectName is taken by "chrome"
     function newSection() {
         const info = library.page(currentPageId); if (!info.id) return
         openPage(library.createPage(library.createSection(info.notebookId, "New section")))
@@ -343,6 +368,7 @@ Window {
         Rail {
             id: rail
             objectName: "rail"
+            handwriting: root.usesInk
             visible: !root.presenting
             Layout.fillHeight: true
             Layout.preferredWidth: root.presenting ? 0 : Ui.rail
@@ -540,10 +566,11 @@ Window {
                 objectName: "chrome"
                 visible: root.currentPageId > 0 && page.pageList.length > 1 && !canvas.inking && !root.presenting
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: paperBar.visible ? paperBar.height + 16 : 10 }
+                id: pageChip
                 width: counter.implicitWidth + 22; height: Ui.target - 10; radius: height / 2; z: 6
                 color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
                 Text { id: counter; anchors.centerIn: parent; text: (page.pageIndex + 1) + " / " + page.pageList.length; color: pal.text; font.pixelSize: Ui.small + 1 }
-                TapHandler { onTapped: root.newPage() }
+                TapHandler { onTapped: root.askNewPage(pageChip) }
                 ToolTip.visible: ch.hovered; ToolTip.delay: 600; ToolTip.text: "Page " + (page.pageIndex + 1) + " of " + page.pageList.length + " — tap for a new page after this one"
                 HoverHandler { id: ch }
             }
@@ -837,8 +864,17 @@ Window {
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
                         spacing: 10
-                        EmptyAction { objectName: "emptyNewPage"; label: "New typed page"; icon: "document-new"; primary: true; onClicked: root.newPageAnywhere("typed") }
-                        EmptyAction { objectName: "emptyNewInkPage"; label: "Handwritten"; icon: "draw-freehand"; onClicked: root.newPageAnywhere("a4") }
+                        // Both ways: the two kinds side by side, the one used last first. One way: one button.
+                        readonly property bool typedFirst: root.currentPageId >= 0 && (root.notesMode === "typed"
+                            || (root.notesMode === "both" && library.setting("page.lastKind", "") === "typed"))
+                        EmptyAction { objectName: "emptyNewPage"; primary: true
+                                      label: root.notesMode !== "both" ? "New page" : parent.typedFirst ? "Typed page" : "Handwritten page"
+                                      icon: parent.typedFirst ? "input-keyboard" : "draw-freehand"
+                                      onClicked: root.newPageAnywhere(parent.typedFirst ? "typed" : library.inkPageSize()) }
+                        EmptyAction { objectName: "emptyNewOtherPage"; visible: root.notesMode === "both"
+                                      label: parent.typedFirst ? "Handwritten page" : "Typed page"
+                                      icon: parent.typedFirst ? "draw-freehand" : "input-keyboard"
+                                      onClicked: root.newPageAnywhere(parent.typedFirst ? library.inkPageSize() : "typed") }
                         EmptyAction { objectName: "emptyNotebooks"; label: "Notebooks"; icon: "folder"; onClicked: { root.leftPanel = "notebooks" } }
                     }
                     Text {
@@ -1085,6 +1121,7 @@ Window {
                 onImportNotebook: notebookImportDialog.open()
                 onClosePage: root.closePage()
                 onOpenBeside: (pageId) => root.openSplit(pageId)
+                onNewPageAsked: (sectionId, afterIndex, from) => root.askNewPage(from, sectionId, afterIndex)
                 property var infoBeforeDelete: ({})
                 onDeleting: (kind, id) => { infoBeforeDelete = library.page(root.currentPageId) }
                 onDeleted: (kind, id, name) => {
@@ -1159,7 +1196,7 @@ Window {
     DashboardPage { visible: root.dashboardVisible; anchors.fill: parent; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
     SettingsPage {
         visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
-        onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet"); root.refreshNotesMode() }
         onHandChanged: (left) => root.leftHanded = left
         onToast: (m) => toastBar.show(m, null)
     }
@@ -1208,18 +1245,22 @@ Window {
         onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.browserVisible = false; root.openPage(pageId) }
         onOpenBeside: (pageId) => { root.browserVisible = false; root.openSplit(pageId) }
+        onNewPageAsked: (from, tag) => root.askNewPage(from, pageBrowser.sectionId, -1, function(id) {
+            root.browserVisible = false
+            if (tag.length) library.addPageTag(id, tag)
+        })
         onPresent: (pageId) => { root.browserVisible = false; root.openPage(pageId); root.startPresenting() }
     }
     HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: parent; z: 40
-        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1"); root.keyboardMode = library.setting("keyboard.mode", "tablet") }
+        onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1"); root.keyboardMode = library.setting("keyboard.mode", "tablet"); root.refreshNotesMode() }
         onHandChosen: (left) => root.leftHanded = left
     }
 
     // ================================================================ shortcuts (Goodnotes-shaped)
     // While a full-screen surface is up, the page behind it is not what the keys mean.
-    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible || presenting
+    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible || presenting || newPageChooser.visible
     // Keys that mean something only to the ink canvas must never fire while you are typing.
     readonly property bool pageKeys: !overlayUp && !keys.focusIsText
     readonly property bool inkKeys: pageKeys && !pageTyped

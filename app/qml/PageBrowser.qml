@@ -17,6 +17,7 @@ Rectangle {
     signal openPage(var pageId)
     signal openBeside(var pageId)
     signal present(var pageId)
+    signal newPageAsked(Item from, string tag)
     signal toast(string message)
 
     SystemPalette { id: pal }
@@ -148,13 +149,10 @@ Rectangle {
             }
             BarButton { visible: browser.picking; label: "Clear"; onClicked: browser.selected = [] }
             BarButton {
+                id: browserNewPage
                 visible: !browser.picking && browser.sectionId > 0
                 label: browser.tag.length ? "New page #" + browser.tagName : "New page"
-                onClicked: {
-                    const id = library.createPage(browser.sectionId)
-                    if (browser.tag.length) library.addPageTag(id, browser.tag)
-                    browser.openPage(id)
-                }
+                onClicked: browser.newPageAsked(browserNewPage, browser.tag)
             }
             BarButton { visible: !browser.picking && pages.count > 0; label: "Present"; onClicked: browser.present(browser.currentPageId || pages.get(0).pid) }
             BarButton { label: "Close (Esc)"; onClicked: browser.closed() }

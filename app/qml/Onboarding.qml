@@ -20,14 +20,15 @@ Rectangle {
     property bool hasTouch: false
     // What was found, and what that makes sensible. Nothing is written until Start. Read when it
     // is shown, not when it is built: a pen or a touchscreen can appear after the app starts.
-    property string pageKind: "typed"
+    property string notesMode: "typed"          // both | ink | typed
     property string keyboardMode: "never"
     property bool leftHanded: false
     function look() {
         hasPen = tabletMode.penAvailable
         hasTouch = tabletMode.touchAvailable
-        const kind = library.setting("page.sizeMode", "")
-        pageKind = kind.length ? kind : (hasPen ? "a4" : "typed")
+        // A pen means handwriting is on the table, and a keyboard is always there: both.
+        const mode = library.setting("notes.mode", "")
+        notesMode = mode.length ? mode : (hasPen ? "both" : "typed")
         const keyboard = library.setting("keyboard.mode", "")
         keyboardMode = keyboard.length ? keyboard : (hasTouch ? "tablet" : "never")
         leftHanded = library.setting("ui.leftHanded", "0") === "1"
@@ -43,7 +44,7 @@ Rectangle {
     }
 
     function start() {
-        library.setSetting("page.sizeMode", page.pageKind)
+        library.setSetting("notes.mode", page.notesMode)
         library.setSetting("keyboard.mode", page.keyboardMode)
         library.setSetting("ui.leftHanded", page.leftHanded ? "1" : "0")
         page.handChosen(page.leftHanded)
@@ -81,10 +82,18 @@ Rectangle {
             component SetupLabel: Text { color: pal.text; font.pixelSize: Ui.text; Layout.preferredWidth: 150 }
 
             SetupRow {
-                SetupLabel { text: "New pages are" }
-                Choice { objectName: "setupTyped"; label: "Typed"; on: page.pageKind === "typed"; onChosen: page.pageKind = "typed" }
-                Choice { objectName: "setupInk"; label: "Handwritten"; on: page.pageKind === "a4"; onChosen: page.pageKind = "a4" }
+                SetupLabel { text: "I take notes by" }
+                Choice { objectName: "setupInk"; label: "Handwriting"; on: page.notesMode === "ink"; onChosen: page.notesMode = "ink" }
+                Choice { objectName: "setupTyped"; label: "Typing"; on: page.notesMode === "typed"; onChosen: page.notesMode = "typed" }
+                Choice { objectName: "setupBoth"; label: "Both"; on: page.notesMode === "both"; onChosen: page.notesMode = "both" }
                 Item { Layout.fillWidth: true }
+            }
+            Text {
+                text: page.notesMode === "both" ? "Each new page asks: handwritten or typed."
+                    : page.notesMode === "ink" ? "Every new page is paper for the pen. You can still open typed pages."
+                    : "Every new page is a text page for the keyboard. You can still open handwritten pages."
+                color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap
+                Layout.fillWidth: true; Layout.leftMargin: 158; Layout.topMargin: -6
             }
             SetupRow {
                 visible: page.hasPen || page.hasTouch
@@ -106,8 +115,8 @@ Rectangle {
             component Tip: RowLayout { property string icon; property string body; spacing: 12; Layout.fillWidth: true
                 Icon { name: "" + icon; implicitWidth: 24; implicitHeight: 24; Layout.alignment: Qt.AlignTop }
                 Text { text: body; color: pal.text; font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true } }
-            Tip { icon: "insert-text"; body: "Just start typing on a typed page. Ctrl+B, Ctrl+I and Ctrl+U format text, Ctrl+Alt+1–3 make headings." }
-            Tip { visible: page.hasPen || page.hasTouch; icon: "draw-freehand"
+            Tip { visible: page.notesMode !== "ink"; icon: "input-keyboard"; body: "Just start typing on a typed page. Ctrl+B, Ctrl+I and Ctrl+U format text, Ctrl+Alt+1–3 make headings." }
+            Tip { visible: page.notesMode !== "typed"; icon: "draw-freehand"
                   body: "On a handwritten page the toolbar at the top holds the pen, highlighter, eraser and lasso. Hold any button to see what it does." }
             Tip { icon: "edit-find"; body: "Ctrl+K searches everything you have typed and every PDF you have imported — and, with the AI add-on, your handwriting and lesson transcripts." }
             Tip { icon: "folder"; body: "Notebooks hold sections, sections hold pages. Everything is saved as you go and stays on this computer." }

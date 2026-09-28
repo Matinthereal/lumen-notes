@@ -25,6 +25,8 @@ Item {
         case "edit-select-lasso": return "M 12 4 C 5 4 3 9 5 13 C 7 17 12 18 12 18 C 19 18 21 13 19 9 C 17 6 14 4 12 4 M 8 18 A 2 2 0 1 0 8 22 A 2 2 0 1 0 8 18"
         case "edit-select-text": return "M 4 18 L 8 6 L 12 18 M 5.5 14 L 10.5 14 M 16 18 L 16 10 M 20 10 L 20 18 M 16 12 A 2.4 2.4 0 0 1 20 12"
         case "insert-text":     return "M 4 6 L 20 6 M 12 6 L 12 19 M 8 19 L 16 19"
+        case "sticky-note":     return "M 5 4 L 19 4 L 19 14 L 14 20 L 5 20 Z M 19 14 L 14 14 L 14 20 M 8.5 9 L 15.5 9 M 8.5 12.5 L 12.5 12.5"
+        case "input-keyboard":  return "M 3 7 L 21 7 L 21 17 L 3 17 Z M 6.5 10.5 L 7.5 10.5 M 10 10.5 L 11 10.5 M 13 10.5 L 14 10.5 M 16.5 10.5 L 17.5 10.5 M 8 14 L 16 14"
         case "draw-rectangle":  return "M 4 6 L 20 6 L 20 18 L 4 18 Z"
         case "draw-ellipse":    return "M 12 5 A 8 6.5 0 1 1 11.9 5"
         case "draw-triangle":   return "M 12 5 L 20 19 L 4 19 Z"

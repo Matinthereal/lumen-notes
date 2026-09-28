@@ -14,6 +14,7 @@ Rectangle {
     signal browserRequested()
     signal splitRequested()
     property bool splitOpen: false
+    property bool handwriting: true            // off when the maker only types: nothing to read
     signal trashRequested()
     signal settingsRequested()
     signal tabletRequested()
@@ -62,7 +63,7 @@ Rectangle {
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "tools-wizard"; tip: "Claude (Ctrl+J)"; on: rail.rightPanel === "claude"; onClicked: rail.rightPanel = rail.rightPanel === "claude" ? "" : "claude" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-list-text"; tip: "Transcript"; on: rail.rightPanel === "transcript"; onClicked: rail.rightPanel = rail.rightPanel === "transcript" ? "" : "transcript" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "document-properties"; tip: "This page: tags and links (Ctrl+Shift+L)"; on: rail.rightPanel === "page"; onClicked: rail.rightPanel = rail.rightPanel === "page" ? "" : "page" }
-        RailButton { Layout.alignment: Qt.AlignHCenter; icon: "edit-rename"; tip: "Handwriting read from this page (Ctrl+Shift+H)"; on: rail.rightPanel === "handwriting"; onClicked: rail.rightPanel = rail.rightPanel === "handwriting" ? "" : "handwriting" }
+        RailButton { visible: rail.handwriting; Layout.alignment: Qt.AlignHCenter; icon: "edit-rename"; tip: "Handwriting read from this page (Ctrl+Shift+H)"; on: rail.rightPanel === "handwriting"; onClicked: rail.rightPanel = rail.rightPanel === "handwriting" ? "" : "handwriting" }
         Rectangle { Layout.alignment: Qt.AlignHCenter; implicitWidth: Ui.rail - 24; implicitHeight: 1; color: Qt.alpha(pal.text, 0.14); Layout.topMargin: 4; Layout.bottomMargin: 4 }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-list-details"; tip: "Flashcards (Ctrl+Shift+C) · review Ctrl+Shift+R"; on: rail.leftPanel === "cards"; badge: cards.dueCount > 0 ? String(cards.dueCount) : ""; onClicked: rail.leftPanel = rail.leftPanel === "cards" ? "" : "cards" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "document-edit-verify"; tip: "Past papers (Ctrl+Shift+P)"; on: rail.leftPanel === "papers"; onClicked: rail.leftPanel = rail.leftPanel === "papers" ? "" : "papers" }

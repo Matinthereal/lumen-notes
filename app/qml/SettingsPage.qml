@@ -17,6 +17,11 @@ Rectangle {
     property int paperTick: 0
     property int handTick: 0
     property int keyboardTick: 0
+    // How notes are taken: "both" asks for each new page, "ink" and "typed" never ask, and the
+    // settings that only matter to the other kind step out of the way.
+    property string mode: library.notesMode()
+    property string inkSize: library.inkPageSize()
+    onVisibleChanged: if (visible) { mode = library.notesMode(); inkSize = library.inkPageSize() }
     SystemPalette { id: pal }
     // A Rectangle accepts no buttons, so without this a drag here would draw ink on the page behind.
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: (w) => w.accepted = true }
@@ -43,6 +48,24 @@ Rectangle {
                 component RowL: RowLayout { Layout.fillWidth: true; spacing: 12 }
                 component Lbl: Text { color: pal.text; font.pixelSize: 13; Layout.preferredWidth: 220; Layout.maximumWidth: 220; wrapMode: Text.WordWrap }
 
+                Section { text: "Notes" }
+                RowL { Lbl { text: "I take notes by" }
+                       Repeater { model: [["Handwriting and typing", "both"], ["Handwriting only", "ink"], ["Typing only", "typed"]]
+                                  delegate: Button { required property var modelData; objectName: "modeButton"; text: modelData[0]; font.pixelSize: 12
+                                                     implicitHeight: Ui.target; highlighted: page.mode === modelData[1]
+                                                     Accessible.name: text + (highlighted ? ", chosen" : "")
+                                                     onClicked: { page.save("notes.mode", modelData[1]); page.mode = modelData[1] } } } }
+                Text { text: page.mode === "both" ? "The + for a new page asks whether it is handwritten or typed."
+                           : page.mode === "ink" ? "New pages are always handwritten, and the pen settings are all here. Typed pages you already have still open."
+                           : "New pages are always typed, and the pen settings are put away. Handwritten pages you already have still open."
+                       color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 232; Layout.topMargin: -10 }
+                RowL { visible: page.mode !== "typed"; Lbl { text: "Handwritten pages are" }
+                       Repeater { model: [["A4 sheets", "a4"], ["Endless (infinite canvas)", "infinite"]]
+                                  delegate: Button { required property var modelData; objectName: "inkSizeButton"; text: modelData[0]; font.pixelSize: 12
+                                                     implicitHeight: Ui.target; highlighted: page.inkSize === modelData[1]
+                                                     onClicked: { page.save("page.inkSize", modelData[1]); page.inkSize = modelData[1] } } } }
+
+                ColumnLayout { Layout.fillWidth: true; spacing: 18; visible: page.mode !== "typed"
                 Section { text: "Pen" }
                 RowL { Lbl { text: "Pressure ceiling (firm stroke = full width)" } Slider { from: 0.4; to: 1.0; stepSize: 0.05; value: Number(library.setting("pen.ceiling", "0.85")); Layout.preferredWidth: 220; onMoved: { canvas.pressureCeiling = value; page.save("pen.ceiling", value) } } Text { text: canvas.pressureCeiling.toFixed(2); color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 RowL { Lbl { text: "Input smoothing (0 = raw)" } Slider { from: 0; to: 1; stepSize: 0.1; value: Number(library.setting("pen.smoothing", "0")); Layout.preferredWidth: 220; onMoved: { canvas.smoothing = value; page.save("pen.smoothing", value) } } }
@@ -50,6 +73,7 @@ Rectangle {
                 RowL { Lbl { text: "Shape snap when the pen rests" } Switch { id: snapSwitch; checked: canvas.shapeSnap; onToggled: { canvas.shapeSnap = checked; page.save("pen.shapeSnap", checked ? 1 : 0) }
                                                                 Connections { target: canvas; function onStyleChanged() { snapSwitch.checked = canvas.shapeSnap } } } }
                 RowL { Lbl { text: "Highlighter opacity" } Slider { from: 0.15; to: 0.6; stepSize: 0.05; value: Number(library.setting("pen.highlighterOpacity", "0.35")); Layout.preferredWidth: 220; onMoved: { canvas.highlighterOpacity = value; page.save("pen.highlighterOpacity", value) } } }
+                }
 
                 Section { text: "Touch" }
                 RowL { Lbl { text: "Writing hand" }
@@ -70,10 +94,6 @@ Rectangle {
                                   delegate: Button { required property var modelData; text: modelData[0]; font.pixelSize: 11
                                                      highlighted: page.paperTick >= 0 && library.setting("page.paper", "#22262B") === modelData[1]
                                                      onClicked: { page.save("page.paper", modelData[1]); paperTick = paperTick + 1 } } } }
-                RowL { Lbl { text: "New pages are" } ComboBox { textRole: "label"; valueRole: "value"; implicitWidth: 260
-                                                      model: [{ label: "Typed (keyboard)", value: "typed" }, { label: "Handwritten, A4", value: "a4" }, { label: "Handwritten, infinite", value: "infinite" }]
-                                                      Component.onCompleted: currentIndex = indexOfValue(library.setting("page.sizeMode", "typed"))
-                                                      onActivated: page.save("page.sizeMode", currentValue) } }
 
                 Section { text: "Tablet mode" }
 
@@ -110,8 +130,8 @@ Rectangle {
                 RowL { Lbl { text: "Backend" } Text { text: audio.backend; color: pal.text; font.pixelSize: 13 } Button { text: "Benchmark on the latest recording"; font.pixelSize: 11; onClicked: { const rs = audio.recordings(library.page(Number(library.setting("lastPage", "0"))).sectionId || 0); if (rs.length) audio.runBenchmark(rs[0].id); else page.toast("Record something in this section first") } } }
                 Connections { target: audio; function onBenchmarkDone(r) { let s = "Chosen: " + r.chosen + ". "; for (const x of r.results) s += x.backend + (x.available ? " " + x.realtime_factor + "× realtime" : " unavailable (" + (x.reason || "") + ")") + "; "; page.toast(s) } }
 
-                Section { text: "Handwriting" }
-                RowL { Lbl { text: "OCR model" } ComboBox { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11 } }
+                Section { visible: page.mode !== "typed"; text: "Handwriting" }
+                RowL { visible: page.mode !== "typed"; Lbl { text: "OCR model" } ComboBox { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11 } }
 
                 Section { text: "Backups" }
                 RowL { Lbl { text: "Folder" } TextField { id: backupPath; Layout.fillWidth: true; text: library.setting("backup.dir", ""); placeholderText: "~/Backups/lumen"; font.pixelSize: 12; onEditingFinished: page.save("backup.dir", text) } Button { text: "Choose…"; font.pixelSize: 11; onClicked: folderDlg.open() } }

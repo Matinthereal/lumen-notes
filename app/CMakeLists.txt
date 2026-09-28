@@ -132,6 +132,7 @@ qt_add_qml_module(lumen
         qml/ShortcutsPage.qml
         qml/PageBrowser.qml
         qml/TextLayer.qml
+        qml/NewPageChooser.qml
         qml/SearchPalette.qml
         qml/AudioPanel.qml
         qml/AiPanel.qml

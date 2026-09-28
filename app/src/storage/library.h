@@ -23,6 +23,11 @@ public:
     Q_INVOKABLE qint64 createNotebook(const QString &name, const QString &colour, const QString &board = {});
     Q_INVOKABLE qint64 createSection(qint64 notebookId, const QString &name, const QString &kind = QStringLiteral("notes"));
     Q_INVOKABLE qint64 createPage(qint64 sectionId, const QString &style = {}, const QString &sizeMode = {}, int afterIndex = -1);
+    // How the maker takes notes — "both", "ink" or "typed" — and so what a new page is when
+    // nothing more specific was asked for: typed, or handwritten ("a4" | "infinite").
+    Q_INVOKABLE QString notesMode() const;
+    Q_INVOKABLE QString inkPageSize() const;
+    Q_INVOKABLE QString defaultPageKind() const;
     Q_INVOKABLE void rename(const QString &kind, qint64 id, const QString &name);
     void suggestTitle(qint64 pageId, const QString &text);     // auto-title: only while the page has no maker-given name
     void tidyAutomaticTitles();                                // clears auto titles that turned out to be recognition noise

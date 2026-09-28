@@ -103,7 +103,7 @@ qint64 Library::createSection(qint64 notebookId, const QString &name, const QStr
 qint64 Library::createPage(qint64 sectionId, const QString &style, const QString &sizeMode, int afterIndex)
 {
     const QString st = style.isEmpty() ? setting("page.style", "dotted") : style;
-    const QString sm = sizeMode.isEmpty() ? setting("page.sizeMode", "typed") : sizeMode;
+    const QString sm = sizeMode.isEmpty() ? defaultPageKind() : sizeMode;
     qint64 sort = 0;
     if (afterIndex < 0) {
         Database::Query q(m_db, "SELECT COALESCE(MAX(sort),0)+1 FROM page WHERE section_id=?");
@@ -123,6 +123,28 @@ qint64 Library::createPage(qint64 sectionId, const QString &style, const QString
     QFile::remove(QStringLiteral("%1/%2.log").arg(paths::journalDir()).arg(id));   // a reused rowid must never inherit a stale journal
     emit changed();
     return id;
+}
+
+QString Library::notesMode() const
+{
+    const QString mode = setting(QStringLiteral("notes.mode"));
+    return mode == QLatin1String("ink") || mode == QLatin1String("typed") ? mode : QStringLiteral("both");
+}
+
+QString Library::inkPageSize() const
+{
+    // page.sizeMode held all three kinds before the mode existed; an infinite choice there carries over.
+    const QString size = setting(QStringLiteral("page.inkSize"), setting(QStringLiteral("page.sizeMode")));
+    return size == QLatin1String("infinite") ? size : QStringLiteral("a4");
+}
+
+QString Library::defaultPageKind() const
+{
+    const QString mode = notesMode();
+    if (mode == QLatin1String("typed")) return mode;
+    if (mode == QLatin1String("ink")) return inkPageSize();
+    const QString last = setting(QStringLiteral("page.lastKind"), setting(QStringLiteral("page.sizeMode")));
+    return last == QLatin1String("typed") ? last : inkPageSize();
 }
 
 static QString tableFor(const QString &kind) { return kind == "notebook" ? "notebook" : kind == "section" ? "section" : "page"; }

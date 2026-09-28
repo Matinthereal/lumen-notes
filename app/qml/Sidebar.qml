@@ -20,6 +20,7 @@ Rectangle {
     signal importNotebook()
     signal closePage()
     signal openBeside(var pageId)
+    signal newPageAsked(var sectionId, int afterIndex, Item from)
 
     SystemPalette { id: pal }
     color: pal.window
@@ -98,10 +99,15 @@ Rectangle {
             items.push({ label: "Export notebook…", icon: "document-export", action: () => side.exportNotebook(row.id) })
             items.push({ label: "Next colour", icon: "color-picker", action: () => { const cs = ["#1F3A93", Ui.danger, Ui.good, Ui.warning, "#5B2A86", "#0F7C8A", "#5C6B7A"]; library.setNotebookColour(row.id, cs[(cs.indexOf(row.colour) + 1) % cs.length]) } })
         } else if (row.kind === "section") {
-            items.push({ label: "New typed page", icon: "list-add", action: () => { const p = library.createPage(row.id, "", "typed"); side.expandedSections[row.id] = true; side.openPage(p) } })
-            items.push({ label: "New handwritten page", icon: "draw-freehand", action: () => { const p = library.createPage(row.id, "", "a4"); side.expandedSections[row.id] = true; side.openPage(p) } })
+            // A menu is already a choice, so both kinds are offered here outright; one way of
+            // taking notes gets the one.
+            const mode = library.notesMode()
+            if (mode !== "ink") items.push({ label: mode === "both" ? "New typed page" : "New page", icon: mode === "both" ? "input-keyboard" : "list-add",
+                                             action: () => { const p = library.createPage(row.id, "", "typed"); side.expandedSections[row.id] = true; side.openPage(p) } })
+            if (mode !== "typed") items.push({ label: mode === "both" ? "New handwritten page" : "New page", icon: mode === "both" ? "draw-freehand" : "list-add",
+                                               action: () => { const p = library.createPage(row.id, "", library.inkPageSize()); side.expandedSections[row.id] = true; side.openPage(p) } })
         } else {
-            items.push({ label: "New page after this", icon: "list-add", action: () => { const pages = library.pages(row.parentId); const idx = pages.findIndex(p => p.id === row.id); side.openPage(library.createPage(row.parentId, "", "", idx)) } })
+            items.push({ label: "New page after this", icon: "list-add", action: () => { const pages = library.pages(row.parentId); side.newPageAsked(row.parentId, pages.findIndex(p => p.id === row.id), null) } })
         }
         if (row.kind === "page") {
             const starred = library.isStarred(row.id)
@@ -254,7 +260,7 @@ Rectangle {
                         Icon { anchors.centerIn: parent; name: "list-add"; implicitWidth: Ui.icon - 4; implicitHeight: Ui.icon - 4; opacity: 0.7 }
                         HoverHandler { id: moreHover }
                         TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds   // an exclusive grab, so the row handler below does not also fire
-                                     onTapped: { if (row.kind === "notebook") { const s = library.createSection(row.id, "New section"); side.expandedNotebooks[row.id] = true; side.expandedSections[s] = true; side.rebuild(); renamer.begin({ kind: "section", id: s, name: "New section" }) } else { const p = library.createPage(row.id); side.expandedSections[row.id] = true; side.openPage(p) } } }
+                                     onTapped: { if (row.kind === "notebook") { const s = library.createSection(row.id, "New section"); side.expandedNotebooks[row.id] = true; side.expandedSections[s] = true; side.rebuild(); renamer.begin({ kind: "section", id: s, name: "New section" }) } else { side.expandedSections[row.id] = true; side.newPageAsked(row.id, -1, parent) } } }
                         ToolTip.visible: moreHover.hovered; ToolTip.delay: 600; ToolTip.text: row.kind === "notebook" ? "New section" : "New page"
                     }
                 }
