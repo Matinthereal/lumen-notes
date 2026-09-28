@@ -217,6 +217,17 @@ void penDrag(QQuickWindow *w, const QPointF &from, const QPointF &to, int steps 
     spin(150);
 }
 
+// The pen lifted away from the screen. A real pen says so; a test that only sends press, move and
+// release leaves the app believing it still hovers, and everything after it is treated as a palm.
+void penAway(QQuickWindow *)
+{
+    QTabletEvent ev(QEvent::TabletLeaveProximity, stylusDevice(), QPointF(), QPointF(), 0, 0, 0, 0, 0, 0,
+                    Qt::NoModifier, Qt::NoButton, Qt::NoButton);
+    ev.setTimestamp(g_stamp += 16);
+    QCoreApplication::sendEvent(QCoreApplication::instance(), &ev);
+    spin(600);                                   // past the palm window the pen leaves behind it
+}
+
 // Pixels a compositor would show the desktop through. Mesa hands Qt an alpha channel even when the
 // format asks for none, so anything that leaves alpha below 255 is a hole in the window.
 int seeThroughPixels(QQuickWindow *w)
@@ -596,6 +607,7 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
                     QStringLiteral("split %1→%2, main %3→%4").arg(splitBefore).arg(splitCanvas->strokeCount()).arg(mainBefore).arg(mainCanvas->strokeCount()));
             penDrag(win, onMain - QPointF(80, -60), onMain + QPointF(40, 90));
             r.check("and on the left-hand page", mainCanvas->strokeCount() == mainBefore + 1 && splitCanvas->strokeCount() == splitBefore + 1);
+            penAway(win);
             const qreal mainZoom = mainCanvas->zoom();
             splitCanvas->zoomAt(1.8, QPointF(splitCanvas->width() / 2, splitCanvas->height() / 2));
             spin(200);
@@ -1145,8 +1157,16 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
         return list.size();
     };
     const auto open = [&](qint64 pageId) { QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId)); spin(300); };
+    // A known start whatever ran before, here or in a library an earlier run left: a laptop, not a
+    // tablet, the keyboard only in tablet mode (it holds the whole window while it is up), and the
+    // notebooks panel open.
+    if (QQmlEngine *engine = qmlEngine(root))
+        if (QObject *tablet = engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>())
+            tablet->setProperty("tablet", false);
+    QMetaObject::invokeMethod(library, "setSetting", Q_ARG(QString, QStringLiteral("keyboard.mode")), Q_ARG(QString, QStringLiteral("tablet")));
+    root->setProperty("keyboardMode", QStringLiteral("tablet"));
     root->setProperty("leftPanel", QStringLiteral("notebooks"));
-    spin(200);
+    spin(300);
 
     // ---- A typed page never leaves a text block on the handwritten page you came from.
     QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
@@ -1279,6 +1299,12 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
         penDrag(win, canvas->mapToScene(canvas->toScreen(QPointF(120, 900))), canvas->mapToScene(canvas->toScreen(QPointF(320, 960))));
         r.check("and the pen still writes on the page while it is up", canvas->strokeCount() == before + 1,
                 QStringLiteral("%1 → %2").arg(before).arg(canvas->strokeCount()));
+        penAway(win);
+    }
+    // Leave nothing behind for the checks after these: the mouse off the rail, so its tooltip goes.
+    if (auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"))) {
+        sendMouse(win, QEvent::MouseMove, centre(canvas), Qt::NoButton);
+        spin(400);
     }
 
     root->setProperty("settingsVisible", true);
@@ -1287,6 +1313,18 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
     r.check("Settings offers the three ways to take notes", modeButtons.size() == 3);
     shot(win, QStringLiteral("notes-settings"));
     root->setProperty("settingsVisible", false);
+    QMetaObject::invokeMethod(root, "closePage");
+    spin(300);
+    QQuickItem *other = findOne(win, QStringLiteral("emptyNewOtherPage"));
+    r.check("with both ways on, the empty state offers both kinds", other && other->isVisible());
+    shot(win, QStringLiteral("notes-empty-both"));
+    setMode(QStringLiteral("ink"));
+    spin(200);
+    other = findOne(win, QStringLiteral("emptyNewOtherPage"));
+    r.check("with one way, it offers one", !other || !other->isVisible());
+    setMode(QStringLiteral("both"));
+    QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, ink));
+    spin(300);
     root->setProperty("onboardingVisible", true);
     spin(300);
     shot(win, QStringLiteral("notes-onboarding"));

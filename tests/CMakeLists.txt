@@ -65,7 +65,7 @@ set_tests_properties(app_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen
 # The frontend battle test: taps, holds, deletes and undoes in the real window, and fails on any
 # QML warning it provokes.
 add_test(NAME app_ui COMMAND lumen --uitest)
-set_tests_properties(app_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1;LUMEN_DATA_DIR=${CMAKE_BINARY_DIR}/uitest-data" TIMEOUT 600)
+set_tests_properties(app_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1;LUMEN_DATA_DIR=${CMAKE_BINARY_DIR}/uitest-data" TIMEOUT 900)
 
 # The maths worker: it must get school arithmetic and algebra right, and say so when it cannot.
 qt_add_executable(tst_maths tst_maths.cpp)
