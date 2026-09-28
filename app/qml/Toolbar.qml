@@ -96,7 +96,7 @@ Rectangle {
         IconButton { icon: "draw-eraser"; tip: "Eraser (3) — or hold the pen's button"; on: canvas.tool === "eraser"; onClicked: canvas.tool = "eraser" }
         IconButton { icon: "edit-select-lasso"; tip: "Lasso (4)"; on: canvas.tool === "lasso"; onClicked: canvas.tool = "lasso" }
         IconButton { visible: canvas.wordCount > 0; icon: "edit-select-text"; tip: "Select PDF text (5)"; on: canvas.tool === "text"; onClicked: canvas.tool = "text" }
-        IconButton { icon: "insert-text"; tip: "Text block (6): tap where it goes"; on: canvas.tool === "textblock"; onClicked: canvas.tool = "textblock" }
+        IconButton { objectName: "stickyTool"; icon: "sticky-note"; tip: "Sticky note (6): tap where it goes"; on: canvas.tool === "textblock"; onClicked: canvas.tool = "textblock" }
         IconButton {
             icon: "draw-rectangle"; tip: "Shapes (7) — drag to draw, then resize and recolour it"
             on: canvas.tool === "shape"

@@ -24,4 +24,5 @@ private:
     Database &m_db;
     QHash<qint64, int> m_version;
     QSet<qint64> m_inFlight;
+    QSet<qint64> m_again;          // asked for while one was being drawn: draw it once more after
 };

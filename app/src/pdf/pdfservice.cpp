@@ -186,12 +186,14 @@ QJsonObject PdfService::pagePayload(qint64 pageId) const
     pg.insert("images", pics);
     QJsonArray blocks;
     {   // typed blocks were missing from every export until now
-        Database::Query tb(m_db, "SELECT x, y, w, markdown FROM text_block WHERE page_id=? ORDER BY sort, id");
+        // Text on a handwritten page is a sticky note and exports as one; a typed page's is the page.
+        Database::Query tb(m_db, "SELECT b.x, b.y, b.w, b.markdown, b.h, b.colour, p.size_mode FROM text_block b JOIN page p ON p.id=b.page_id WHERE b.page_id=? ORDER BY b.sort, b.id");
         tb.bind(1, pageId);
         while (tb.step()) {
             const QString md = tb.text(3);
             if (md.trimmed().isEmpty()) continue;
-            blocks.append(QJsonObject{{"x", tb.f64(0)}, {"y", tb.f64(1)}, {"w", tb.f64(2)}, {"markdown", md}});
+            blocks.append(QJsonObject{{"x", tb.f64(0)}, {"y", tb.f64(1)}, {"w", tb.f64(2)}, {"markdown", md},
+                                      {"h", tb.f64(4)}, {"colour", tb.text(5)}, {"sticky", tb.text(6) != QLatin1String("typed")}});
         }
     }
     pg.insert("blocks", blocks);

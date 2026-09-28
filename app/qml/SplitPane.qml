@@ -164,7 +164,7 @@ Rectangle {
             strokeColour: splitCanvas.penColor
             onToast: (m) => pane.toast(m)
         }
-        TextLayer {
+        StickyNotes {
             anchors.fill: parent
             visible: !pane.typed
             canvas: splitCanvas

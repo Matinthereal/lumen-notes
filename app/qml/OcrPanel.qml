@@ -23,7 +23,7 @@ Rectangle {
         let lines = [], left = 1e9, bottom = 0
         for (const l of lineList) { lines.push(l.text); left = Math.min(left, l.x); bottom = Math.max(bottom, l.y + l.h) }
         panel.insertText(lines.join("\n"), left, bottom + 24)
-        panel.toast("Handwriting inserted as a text block")
+        panel.toast("Handwriting inserted as a sticky note")
     }
     function insertOne(text, x, y, h) { panel.insertText(text, x, y + h + 12); panel.toast("Line inserted as text") }
 

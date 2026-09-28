@@ -572,6 +572,39 @@ private slots:
         QCOMPARE(back.size(), 1);
         QCOMPARE(back[0].toMap().value("id").toLongLong(), b);
     }
+    void schemaEightMakesStickyNotesAndDropsStrayBlocks() {
+        QTemporaryDir dir; qputenv("LUMEN_DATA_DIR", dir.path().toUtf8());
+        const QString path = dir.path() + "/t.db";
+        qint64 ink = 0, typed = 0;
+        {
+            Database db; QVERIFY(db.open(path)); QCOMPARE(ensureSchema(db), kSchemaVersion);
+            Library lib(db);
+            const qint64 sec = lib.createSection(lib.createNotebook("N", "#000"), "S");
+            ink = lib.createPage(sec, {}, "a4"); typed = lib.createPage(sec, {}, "typed");
+            // A version-7 library: the typed editor's stray full-page block on a handwritten page,
+            // a real note beside it, and a typed page's own block that is still empty.
+            QVERIFY(db.exec(QStringLiteral("INSERT INTO text_block(page_id, x, y, w, markdown) VALUES (%1, 0, 0, 794, '')").arg(ink)));
+            QVERIFY(db.exec(QStringLiteral("INSERT INTO text_block(page_id, x, y, w, markdown) VALUES (%1, 40, 40, 380, 'keep me')").arg(ink)));
+            QVERIFY(db.exec(QStringLiteral("INSERT INTO text_block(page_id, x, y, w, markdown) VALUES (%1, 0, 0, 794, '')").arg(typed)));
+            QVERIFY(db.exec("UPDATE schema_version SET version=7"));
+        }
+        Database db; QVERIFY(db.open(path));
+        QCOMPARE(ensureSchema(db), kSchemaVersion);
+        Library lib(db);
+        TextBlocks blocks(db, lib);
+        const QVariantList onInk = blocks.list(ink);
+        QCOMPARE(onInk.size(), 1);
+        QCOMPARE(onInk[0].toMap().value("markdown").toString(), QStringLiteral("keep me"));
+        QVERIFY(onInk[0].toMap().contains("colour"));
+        QCOMPARE(blocks.list(typed).size(), 1);           // a typed page keeps its block, empty or not
+        const qint64 note = blocks.create(ink, 10, 10, 230, 0, 0, 200, QStringLiteral("#C9EBC4"));
+        QCOMPARE(blocks.block(note).value("h").toDouble(), 200.0);
+        blocks.setColour(note, QStringLiteral("#FFC8D6"));
+        blocks.setGeometry(note, 20, 20, 260);             // no height given: it keeps its own
+        QCOMPARE(blocks.block(note).value("colour").toString(), QStringLiteral("#FFC8D6"));
+        QCOMPARE(blocks.block(note).value("h").toDouble(), 200.0);
+        qputenv("LUMEN_DATA_DIR", QByteArray());
+    }
 };
 QTEST_GUILESS_MAIN(TstStorage)
 #include "tst_storage.moc"

@@ -177,6 +177,26 @@ def _draw_shape(page, sh: dict) -> None:
     shape.commit()
 
 
+STICKY_DEFAULT = "#FFE9A8"
+
+
+def _draw_sticky(page, block: dict, text: str) -> None:
+    """A sticky note: its colour, rounded, tall enough for its words, dark text on it."""
+    size, pad = 10.5, 14 / PT
+    x, y, w = float(block["x"]) / PT, float(block["y"]) / PT, float(block["w"]) / PT
+    per_line = max(1, int((w - 2 * pad) / (size * 0.5)))
+    lines = sum(max(1, -(-len(line) // per_line)) for line in text.split("\n"))
+    h = max(float(block.get("h") or 0) / PT, lines * size * 1.35 + 30 / PT + pad, 120 / PT)
+    fill = _rgb(block.get("colour") or STICKY_DEFAULT) or _rgb(STICKY_DEFAULT)
+    note = pymupdf.Rect(x, y, x + w, y + h)
+    try:
+        page.draw_rect(note, color=None, fill=fill, radius=8 / PT / max(min(note.width, note.height), 1))
+    except TypeError:                             # an older PyMuPDF without rounded corners
+        page.draw_rect(note, color=None, fill=fill)
+    page.insert_textbox(pymupdf.Rect(x + pad, y + 30 / PT, x + w - pad, y + h), text,
+                        fontsize=size, fontname="helv", color=(0.118, 0.133, 0.153), align=0)
+
+
 def export(pages: list[dict], out: str, **_: object) -> dict:
     """pages: [{src, index, width, height, polys: [{points: [[x,y,w]...], color: [r,g,b], opacity, round}]}]"""
     doc = pymupdf.open()
@@ -208,6 +228,9 @@ def export(pages: list[dict], out: str, **_: object) -> dict:
         for block in pg.get("blocks", []):       # typed notes, above the ink as on screen
             text = _plain_markdown(block.get("markdown", ""))
             if not text:
+                continue
+            if block.get("sticky"):
+                _draw_sticky(page, block, text)
                 continue
             rect = pymupdf.Rect(float(block["x"]) / PT, float(block["y"]) / PT,
                                 (float(block["x"]) + float(block["w"])) / PT, float(block["y"]) / PT + 10000)

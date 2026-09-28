@@ -20,7 +20,7 @@ Rectangle {
     readonly property var groups: [
         { title: "Writing", keys: [
             ["1 · 2 · 3 · 4", "Pen · highlighter · eraser · lasso"],
-            ["6", "Text block — then tap where it goes"],
+            ["6", "Sticky note — then tap where it goes"],
             ["Pen side button", "Hold: temporary eraser · double-press: undo"],
             ["Two-finger double-tap", "Undo"],
             ["Ctrl+Z · Ctrl+Shift+Z", "Undo · redo"],
@@ -64,7 +64,7 @@ Rectangle {
         ]},
         { title: "The app", keys: [
             ["Ctrl+/", "This list"],
-            ["Ctrl+E · Ctrl+H · Ctrl+L · Ctrl+T", "Eraser · highlighter · lasso · text block"],
+            ["Ctrl+E · Ctrl+H · Ctrl+L · Ctrl+T", "Eraser · highlighter · lasso · sticky note"],
             ["7", "Shapes"],
             ["Ctrl+M", "Lasso'd maths → LaTeX"],
             ["Ctrl+Shift+E · Ctrl+Shift+O", "Export section · import a PDF"],

@@ -131,7 +131,7 @@ qt_add_qml_module(lumen
         qml/TrashPage.qml
         qml/ShortcutsPage.qml
         qml/PageBrowser.qml
-        qml/TextLayer.qml
+        qml/StickyNotes.qml
         qml/NewPageChooser.qml
         qml/SearchPalette.qml
         qml/AudioPanel.qml

@@ -23,7 +23,11 @@ QString Thumbnails::pathFor(qint64 pageId) const
 
 void Thumbnails::ensure(qint64 pageId) { if (pathFor(pageId).isEmpty()) refresh(pageId); }
 
-void Thumbnails::refresh(qint64 pageId) { if (!m_inFlight.contains(pageId)) render(pageId); }
+void Thumbnails::refresh(qint64 pageId)
+{
+    if (m_inFlight.contains(pageId)) m_again.insert(pageId);
+    else render(pageId);
+}
 
 void Thumbnails::render(qint64 pageId)
 {
@@ -69,13 +73,21 @@ void Thumbnails::render(qint64 pageId)
     // the line, as Goodnotes and Notes draw it: enough to tell a page of notes from an empty one.
     struct Bar { QRectF rect; bool heading; };
     QVector<Bar> bars;
+    // On a handwritten page every block is a sticky note: a coloured square above the ink, its
+    // lines drawn dark on it. The sizes follow StickyNotes.qml closely enough for 160 px.
+    struct Note { QRectF rect; QColor colour; QVector<Bar> bars; };
+    QVector<Note> notes;
     {
-        Database::Query q(m_db, "SELECT x, y, w, markdown FROM text_block WHERE page_id=? ORDER BY y, id");
+        Database::Query q(m_db, "SELECT x, y, w, markdown, h, colour FROM text_block WHERE page_id=? ORDER BY y, id");
         q.bind(1, pageId);
         while (q.step()) {
-            const double x = q.f64(0), w = std::max(40.0, q.f64(2));
-            double y = q.f64(1);
+            const bool sticky = !typed;
+            const double pad = sticky ? 14 : 0;
+            const double x = q.f64(0) + pad, w = std::max(40.0, q.f64(2) - 2 * pad);
+            const double top = q.f64(1);
+            double y = top + (sticky ? 30 : 0);
             const double charW = 8.0, perRow = std::max(1.0, w / charW);
+            QVector<Bar> lines;
             for (QString line : q.text(3).split(QLatin1Char('\n'))) {
                 line = line.trimmed();
                 if (line.isEmpty()) { y += 12; continue; }
@@ -83,15 +95,19 @@ void Thumbnails::render(qint64 pageId)
                 const double len = line.size();
                 for (double done = 0; done < len && y < ph; done += perRow) {
                     const double chars = std::min(perRow, len - done);
-                    bars.append({QRectF(x, y + (heading ? 6 : 7), chars * (heading ? charW * 1.35 : charW), heading ? 13 : 7), heading});
+                    lines.append({QRectF(x, y + (heading ? 6 : 7), chars * (heading ? charW * 1.35 : charW), heading ? 13 : 7), heading});
                     y += heading ? 34 : 22;
                 }
             }
+            if (!sticky) { bars += lines; continue; }
+            const QColor colour(q.text(5).isEmpty() ? QStringLiteral("#FFE9A8") : q.text(5));
+            notes.append({QRectF(q.f64(0), top, q.f64(2), std::max({q.f64(4), y - top + pad, 120.0})),
+                          colour.isValid() ? colour : QColor(0xFF, 0xE9, 0xA8), lines});
         }
     }
     m_inFlight.insert(pageId);
     const QString out = QStringLiteral("%1/thumbs/%2.png").arg(paths::cacheDir()).arg(pageId);
-    QThreadPool::globalInstance()->start([this, pageId, strokes, pw, ph, pdf, typed, style, out, pics, shps, paper, bars, ink] {
+    QThreadPool::globalInstance()->start([this, pageId, strokes, pw, ph, pdf, typed, style, out, pics, shps, paper, bars, notes, ink] {
         const int W = 160, H = int(160 * ph / pw);
         QImage img(W, H, QImage::Format_ARGB32_Premultiplied);
         const QColor sheet = paper.isEmpty() ? (pdf ? QColor(0xF3, 0xF4, 0xF6) : QColor(Qt::white)) : QColor(paper);
@@ -141,10 +157,22 @@ void Thumbnails::render(qint64 pageId)
             else if (sh.kind == "line" || sh.kind == "arrow") p.drawLine(sh.rect.topLeft(), sh.rect.topLeft() + QPointF(sh.rect.width(), sh.rect.height()));
             else p.drawRect(r);
         }
+        p.setPen(Qt::NoPen);
+        for (const Note &n : notes) {             // sticky notes sit above everything, as on screen
+            p.setBrush(n.colour);
+            p.drawRoundedRect(n.rect, 8, 8);
+            for (const Bar &b : n.bars) {
+                p.setBrush(QColor(0x1E, 0x22, 0x27, b.heading ? 180 : 110));
+                p.drawRoundedRect(b.rect, 3, 3);
+            }
+        }
         p.end();
         img.save(out + ".part", "PNG");                    // explicit format: the suffix is not .png
         QFile::remove(out);
         QFile::rename(out + ".part", out);
-        QMetaObject::invokeMethod(this, [this, pageId] { m_inFlight.remove(pageId); m_version[pageId]++; emit changed(pageId); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, [this, pageId] {
+            m_inFlight.remove(pageId); m_version[pageId]++; emit changed(pageId);
+            if (m_again.remove(pageId)) render(pageId);
+        }, Qt::QueuedConnection);
     });
 }

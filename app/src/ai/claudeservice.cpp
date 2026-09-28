@@ -153,9 +153,10 @@ void ClaudeService::send(const QString &feature, const QString &prompt, const QV
              if (feature == "lecture-notes") {
                  const qint64 pageId = meta.value("pageId").toLongLong();
                  const QVariantMap page = m_lib.page(pageId);
-                 const qint64 newPage = m_lib.createPage(page.value("sectionId").toLongLong(), "plain", "a4");
+                 // Notes are text, so they get a typed page: its one block is the whole page.
+                 const qint64 newPage = m_lib.createPage(page.value("sectionId").toLongLong(), "plain", "typed");
                  m_lib.rename("page", newPage, "AI Notes — " + meta.value("title").toString());
-                 const qint64 block = m_blocks.create(newPage, 48, 48, 700, 0, 0);
+                 const qint64 block = m_blocks.create(newPage, 0, 0, 794, 0, 0);
                  m_blocks.setMarkdown(block, text, 0);
                  emit notesCreated(newPage);
              } else if (feature == "flashcards") {

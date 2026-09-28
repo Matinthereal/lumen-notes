@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Lumen
 
-// Lasso → LaTeX: recognised locally (pix2tex), previewed live, inserted as a text block next to
+// Lasso → LaTeX: recognised locally (pix2tex), previewed live, inserted as a sticky note next to
 // the ink, or improved by Claude (the image is sent only when you press that button).
 Popup {
     id: pop

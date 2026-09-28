@@ -462,11 +462,13 @@ Window {
                     objectMenu.openOver(shapeLayer.mapToItem(objectMenu.parent, where.x, where.y, where.width, where.height))
                 }
             }
-            TextLayer {
-                id: textLayer; anchors.fill: parent; canvas: canvas; pageId: root.currentPageId
+            StickyNotes {
+                id: stickies; anchors.fill: parent; canvas: canvas; pageId: root.currentPageId
                 visible: !root.pageTyped
                 recordingT: function() { return audio.recording ? audio.nowMs() : 0 }
                 onPageLinkActivated: (url) => root.followLink(url)
+                onToast: (m) => toastBar.show(m, null)
+                onToastAction: (m, label, fn) => toastBar.show(m, fn, label)
             }
             TypedPage {
                 id: typedPage
@@ -477,17 +479,17 @@ Window {
                 onPageLinkActivated: (url) => root.followLink(url)
                 infoHeight: pageInfo.height + 4
             }
-            Connections { target: canvas; function onTapped(page) { textLayer.addAt(page); canvas.tool = "pen" } }
+            Connections { target: canvas; function onTapped(page) { stickies.addAt(page); canvas.tool = "pen" } }
             // Touching the page itself puts down whatever object was selected.
             Connections {
                 target: canvas
                 // Any press the canvas itself owns — the page, the desk beside it, with any tool —
                 // puts the selection down. Presses on an object never reach here.
-                function onPagePressed() { shapeLayer.selectedId = 0; imageLayer.selectedId = 0 }
+                function onPagePressed() { shapeLayer.selectedId = 0; imageLayer.selectedId = 0; stickies.putDown() }
             }
             Binding { target: canvas; property: "recordingId"; value: audio.recording ? audio.recordingId : 0 }
             Binding { target: canvas; property: "recordingEpochMs"; value: audio.recordingEpochMs }
-            Binding { target: textLayer; property: "recordingId"; value: audio.recording ? audio.recordingId : 0 }
+            Binding { target: stickies; property: "recordingId"; value: audio.recording ? audio.recordingId : 0 }
 
             // Tablet mode: panels overlay the page; tapping the page dismisses them.
             TapHandler {
@@ -1279,7 +1281,7 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+T"; onActivated: canvas.tool = "textblock" }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+A"; onActivated: canvas.selectAll() }
     // Qt matches a shortcut before it delivers the key, and a text item only claims ShortcutOverride
-    // for keys below Escape — so while you are typing this used to swallow Escape and TextLayer's
+    // for keys below Escape — so while you are typing this used to swallow Escape and a text field's
     // Keys.onEscapePressed never ran.
     Shortcut { enabled: !keys.focusIsText; sequence: "Escape"; onActivated: {
         if (root.presenting) { root.stopPresenting(); return }

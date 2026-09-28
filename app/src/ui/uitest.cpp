@@ -13,6 +13,7 @@
 #include <QTest>
 #endif
 #include <QQuickItem>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QJSValue>
@@ -842,6 +843,141 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
     }
 }
 
+// Offscreen runs use Qt's software renderer, which cannot draw the canvas's own geometry, so a
+// screenshot shows no paper. This lays a sheet of the page's colour under the objects on it, for
+// looking at them in the pictures only; it is never part of the app.
+void paperBackdrop(QQuickWindow *win, QObject *root)
+{
+    auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+    QQmlEngine *engine = qmlEngine(root);
+    if (!canvas || !engine) return;
+    if (QQuickItem *old = canvas->findChild<QQuickItem *>(QStringLiteral("uitestPaper"))) old->deleteLater();
+    QQmlComponent c(engine);
+    c.setData("import QtQuick\nRectangle { objectName: \"uitestPaper\" }", QUrl());
+    auto *sheet = qobject_cast<QQuickItem *>(c.create());
+    if (!sheet) return;
+    sheet->setParentItem(canvas);
+    const QPointF tl = canvas->toScreen(QPointF(0, 0));
+    const QPointF br = canvas->toScreen(QPointF(canvas->pageSize().width(), canvas->pageSize().height()));
+    sheet->setPosition(tl);
+    sheet->setSize(QSizeF(br.x() - tl.x(), br.y() - tl.y()));
+    sheet->setProperty("color", QColor(root->property("paperColour").toString()));
+}
+
+// Sticky notes: the text on a handwritten page. Made with the tool, typed into, recoloured while
+// typing, put down, moved, resized, deleted and brought back.
+void stickyChecks(QQuickWindow *win, QObject *root, Report &r, qint64 pageId)
+{
+    QObject *textBlocks = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root))
+        textBlocks = engine->rootContext()->contextProperty(QStringLiteral("textBlocks")).value<QObject *>();
+    auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"));
+    if (!textBlocks || !canvas) { r.check("text blocks and the canvas are there", false); return; }
+    const auto notesOn = [&] {
+        QVariantList list;
+        QMetaObject::invokeMethod(textBlocks, "list", Q_RETURN_ARG(QVariantList, list), Q_ARG(qint64, pageId));
+        return list;
+    };
+    const auto first = [&] { const QVariantList l = notesOn(); return l.isEmpty() ? QVariantMap() : l.first().toMap(); };
+    QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId));
+    spin(300);
+    for (const QVariant &v : notesOn()) QMetaObject::invokeMethod(textBlocks, "remove", Q_ARG(qint64, v.toMap().value(QStringLiteral("id")).toLongLong()));
+    spin(150);
+    paperBackdrop(win, root);
+
+    QQuickItem *tool = findOne(win, QStringLiteral("stickyTool"));
+    r.check("the toolbar has a sticky note tool", tool && tool->isVisible());
+    if (tool) tap(win, tool);
+    spin(100);
+    r.check("and it picks the sticky note tool", canvas->property("tool").toString() == QLatin1String("textblock"));
+    const QPointF at = canvas->mapToScene(canvas->toScreen(QPointF(120, 160)));
+    tap(win, canvas, Qt::LeftButton, at);
+    spin(400);
+    QVariantMap made = first();
+    r.check("a tap on the page puts a sticky note there", !made.isEmpty() && qAbs(made.value(QStringLiteral("x")).toDouble() - 120) < 2,
+            QStringLiteral("%1 note(s)").arg(notesOn().size()));
+    r.check("it is sticky-note sized and yellow", made.value(QStringLiteral("h")).toDouble() >= 150
+            && made.value(QStringLiteral("colour")).toString().compare(QStringLiteral("#FFE9A8"), Qt::CaseInsensitive) == 0,
+            QStringLiteral("h=%1 colour=%2").arg(made.value(QStringLiteral("h")).toDouble()).arg(made.value(QStringLiteral("colour")).toString()));
+    QQuickItem *editor = findOne(win, QStringLiteral("stickyEditor"));
+    r.check("and it opens ready to type", editor && editor->isVisible() && editor->hasActiveFocus());
+    win->requestActivate();
+    waitFor([&] { return win->isActive(); }, 1500);
+    if (editor) editor->forceActiveFocus();
+    typeKeys(QStringLiteral("Buy milk"));
+    spin(400);
+    r.check("typing is saved as you go", first().value(QStringLiteral("markdown")).toString() == QLatin1String("Buy milk"),
+            first().value(QStringLiteral("markdown")).toString());
+    const QList<QQuickItem *> swatches = findAll(win, QStringLiteral("stickyColour"));
+    r.check("the open note offers six colours", swatches.size() == 6, QStringLiteral("%1").arg(swatches.size()));
+    r.check("each a fingertip wide", !swatches.isEmpty() && swatches.first()->width() >= 44);
+    shot(win, QStringLiteral("notes-sticky-editing"));
+    if (swatches.size() == 6) {
+        tap(win, swatches.at(2));
+        spin(300);
+        r.check("a colour changes the note", first().value(QStringLiteral("colour")).toString().compare(QStringLiteral("#C9EBC4"), Qt::CaseInsensitive) == 0,
+                first().value(QStringLiteral("colour")).toString());
+        editor = findOne(win, QStringLiteral("stickyEditor"));
+        r.check("without closing the note", editor && editor->isVisible());
+    }
+    tap(win, canvas, Qt::LeftButton, canvas->mapToScene(canvas->toScreen(QPointF(600, 900))));
+    spin(300);
+    editor = findOne(win, QStringLiteral("stickyEditor"));
+    QQuickItem *delBtn = findOne(win, QStringLiteral("stickyDelete"));
+    r.check("a tap on the page puts it down", (!editor || !editor->isVisible()) && (!delBtn || !delBtn->isVisible()));
+    r.check("and keeps what was typed", first().value(QStringLiteral("markdown")).toString() == QLatin1String("Buy milk"));
+    shot(win, QStringLiteral("notes-sticky-down"));
+
+    // Move it by its band, then pull its corner.
+    QQuickItem *grip = findOne(win, QStringLiteral("stickyResize"));
+    QQuickItem *note = grip ? grip->parentItem() : nullptr;
+    if (note) {
+        const double x0 = first().value(QStringLiteral("x")).toDouble();
+        const QPointF from = note->mapToScene(QPointF(note->width() / 2, 12));
+        sendMouse(win, QEvent::MouseButtonPress, from, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) { sendMouse(win, QEvent::MouseMove, from + QPointF(10 * i, 5 * i), Qt::LeftButton); spin(16); }
+        sendMouse(win, QEvent::MouseButtonRelease, from + QPointF(80, 40), Qt::LeftButton);
+        spin(300);
+        const double moved = first().value(QStringLiteral("x")).toDouble() - x0;
+        r.check("dragging the band moves the note", moved > 40, QStringLiteral("moved %1").arg(moved));
+        grip = findOne(win, QStringLiteral("stickyResize"));
+        const double w0 = first().value(QStringLiteral("w")).toDouble(), h0 = first().value(QStringLiteral("h")).toDouble();
+        const double x1 = first().value(QStringLiteral("x")).toDouble();
+        if (grip) {
+            const QPointF c = centre(grip);
+            sendMouse(win, QEvent::MouseButtonPress, c, Qt::LeftButton);
+            for (int i = 1; i <= 8; ++i) { sendMouse(win, QEvent::MouseMove, c + QPointF(8 * i, 8 * i), Qt::LeftButton); spin(16); }
+            sendMouse(win, QEvent::MouseButtonRelease, c + QPointF(64, 64), Qt::LeftButton);
+            spin(300);
+        }
+        r.check("the corner resizes it both ways", first().value(QStringLiteral("w")).toDouble() > w0 + 30 && first().value(QStringLiteral("h")).toDouble() > h0 + 30,
+                QStringLiteral("%1x%2 → %3x%4, x %5 → %6, grip %7x%8 at %9,%10")
+                    .arg(w0).arg(h0).arg(first().value(QStringLiteral("w")).toDouble()).arg(first().value(QStringLiteral("h")).toDouble())
+                    .arg(x1).arg(first().value(QStringLiteral("x")).toDouble())
+                    .arg(grip ? grip->width() : -1).arg(grip ? grip->height() : -1).arg(grip ? centre(grip).x() : -1).arg(grip ? centre(grip).y() : -1));
+    } else {
+        r.check("the note is on the page to drag", false);
+    }
+
+    // Open it again, delete it from the bar, and bring it back.
+    note = findOne(win, QStringLiteral("stickyResize")) ? findOne(win, QStringLiteral("stickyResize"))->parentItem() : nullptr;
+    if (note) tap(win, note, Qt::LeftButton, note->mapToScene(QPointF(note->width() / 2, note->height() / 2)));
+    spin(300);
+    delBtn = findOne(win, QStringLiteral("stickyDelete"));
+    r.check("an open note offers Delete", delBtn && delBtn->isVisible());
+    if (delBtn) tap(win, delBtn);
+    spin(300);
+    r.check("Delete takes the note off the page", notesOn().isEmpty());
+    QQuickItem *undo = itemWithText(win->contentItem(), QStringLiteral("Undo"));
+    if (undo) tap(win, undo);
+    spin(300);
+    r.check("and Undo puts it back, words and colour", first().value(QStringLiteral("markdown")).toString() == QLatin1String("Buy milk")
+            && first().value(QStringLiteral("colour")).toString().compare(QStringLiteral("#C9EBC4"), Qt::CaseInsensitive) == 0);
+    canvas->setTool(QStringLiteral("pen"));
+    if (QQuickItem *old = canvas->findChild<QQuickItem *>(QStringLiteral("uitestPaper"))) old->deleteLater();
+    spin(100);
+}
+
 // New pages, the note-taking mode, sticky notes and the sidebar holding still.
 // Also runnable on its own with LUMEN_UITEST_ONLY=notes.
 void notesChecks(QQuickWindow *win, QObject *root, Report &r)
@@ -974,6 +1110,8 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
         if (b->property("tip").toString().startsWith(QLatin1String("Handwriting"))) handwritingButton = b;
     r.check("typing only puts the handwriting panel's button away", !handwritingButton || !handwritingButton->isVisible());
     setMode(QStringLiteral("both"));
+    stickyChecks(win, root, r, ink);
+
     root->setProperty("settingsVisible", true);
     spin(300);
     const QList<QQuickItem *> modeButtons = findAll(win, QStringLiteral("modeButton"));

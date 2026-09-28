@@ -20,7 +20,7 @@ const char *kCols[][2] = {
     {"section", "id, notebook_id, name, sort, kind, created"},
     {"page", "id, section_id, title, sort, style, size_mode, width, height, created, modified, starred, paper"},
     {"stroke_blob", "page_id, schema, data, stroke_count"},
-    {"text_block", "id, page_id, x, y, w, markdown, created_t, recording_id, sort"},
+    {"text_block", "id, page_id, x, y, w, markdown, created_t, recording_id, sort, h, colour"},
     {"image", "id, page_id, attachment, x, y, w, h"},
     {"pdf_page", "page_id, attachment, page_index"},
     {"shape", "id, page_id, kind, x, y, w, h, stroke, fill, width, sort"},
@@ -48,7 +48,7 @@ bool makeTables(Database &db)
         "CREATE TABLE ex.page (id INTEGER PRIMARY KEY, section_id INTEGER, title TEXT, sort INTEGER, style TEXT, size_mode TEXT,"
         "  width REAL, height REAL, created INTEGER, modified INTEGER, starred INTEGER, paper TEXT)",
         "CREATE TABLE ex.stroke_blob (page_id INTEGER PRIMARY KEY, schema INTEGER, data BLOB, stroke_count INTEGER)",
-        "CREATE TABLE ex.text_block (id INTEGER PRIMARY KEY, page_id INTEGER, x REAL, y REAL, w REAL, markdown TEXT, created_t INTEGER, recording_id INTEGER, sort INTEGER)",
+        "CREATE TABLE ex.text_block (id INTEGER PRIMARY KEY, page_id INTEGER, x REAL, y REAL, w REAL, markdown TEXT, created_t INTEGER, recording_id INTEGER, sort INTEGER, h REAL, colour TEXT)",
         "CREATE TABLE ex.image (id INTEGER PRIMARY KEY, page_id INTEGER, attachment TEXT, x REAL, y REAL, w REAL, h REAL)",
         "CREATE TABLE ex.pdf_page (page_id INTEGER PRIMARY KEY, attachment TEXT, page_index INTEGER)",
         "CREATE TABLE ex.shape (id INTEGER PRIMARY KEY, page_id INTEGER, kind TEXT, x REAL, y REAL, w REAL, h REAL, stroke TEXT, fill TEXT, width REAL, sort INTEGER)",
@@ -231,13 +231,21 @@ Result importNotebook(Database &db, const QString &path)
         }
     }
     {
-        Database::Query q(db, "SELECT id, page_id, x, y, w, markdown, created_t, sort FROM im.text_block ORDER BY page_id, sort, id");
-        Database::Query ins(db, "INSERT INTO text_block(page_id, x, y, w, markdown, created_t, sort, edit_times) VALUES (?,?,?,?,?,?,?,'[]')");
+        // A file from before sticky notes has no h or colour: read them as 0 and "".
+        bool notes = false;
+        {
+            Database::Query c(db, "PRAGMA im.table_info(text_block)");
+            while (c.step()) if (c.text(1) == QLatin1String("colour")) notes = true;
+        }
+        Database::Query q(db, notes ? "SELECT id, page_id, x, y, w, markdown, created_t, sort, h, colour FROM im.text_block ORDER BY page_id, sort, id"
+                                    : "SELECT id, page_id, x, y, w, markdown, created_t, sort, 0, '' FROM im.text_block ORDER BY page_id, sort, id");
+        Database::Query ins(db, "INSERT INTO text_block(page_id, x, y, w, markdown, created_t, sort, edit_times, h, colour) VALUES (?,?,?,?,?,?,?,'[]',?,?)");
         while (q.step()) {
             const qint64 page = pageIds.value(q.i64(1));
             if (!page) continue;
             ins.reset();
-            ins.bind(1, page).bind(2, q.f64(2)).bind(3, q.f64(3)).bind(4, q.f64(4)).bind(5, q.text(5)).bind(6, q.i64(6)).bind(7, q.i64(7));
+            ins.bind(1, page).bind(2, q.f64(2)).bind(3, q.f64(3)).bind(4, q.f64(4)).bind(5, q.text(5)).bind(6, q.i64(6)).bind(7, q.i64(7))
+               .bind(8, q.f64(8)).bind(9, q.text(9));
             if (!ins.run()) return fail(out, db.lastError());
             blockIds.insert(q.i64(0), db.lastInsertId());
         }

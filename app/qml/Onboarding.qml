@@ -117,7 +117,7 @@ Rectangle {
                 Text { text: body; color: pal.text; font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true } }
             Tip { visible: page.notesMode !== "ink"; icon: "input-keyboard"; body: "Just start typing on a typed page. Ctrl+B, Ctrl+I and Ctrl+U format text, Ctrl+Alt+1–3 make headings." }
             Tip { visible: page.notesMode !== "typed"; icon: "draw-freehand"
-                  body: "On a handwritten page the toolbar at the top holds the pen, highlighter, eraser and lasso. Hold any button to see what it does." }
+                  body: "On a handwritten page the toolbar at the top holds the pen, highlighter, eraser and lasso, and sticky notes for typed words. Hold any button to see what it does." }
             Tip { icon: "edit-find"; body: "Ctrl+K searches everything you have typed and every PDF you have imported — and, with the AI add-on, your handwriting and lesson transcripts." }
             Tip { icon: "folder"; body: "Notebooks hold sections, sections hold pages. Everything is saved as you go and stays on this computer." }
             RowLayout {
