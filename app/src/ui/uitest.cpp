@@ -1263,6 +1263,23 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
     stickyChecks(win, root, r, ink);
     pictureAddChecks(win, root, r, ink);
 
+    // A hover tooltip left up on a button must not stop the pen writing on the page.
+    if (auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"))) {
+        QQuickItem *railBtn = nullptr;
+        for (QQuickItem *b : findAll(win, QStringLiteral("railButton"))) if (b->isVisible()) { railBtn = b; break; }
+        if (railBtn) { sendMouse(win, QEvent::MouseMove, centre(railBtn), Qt::NoButton); spin(1000); }
+        bool tipUp = false;
+        for (QQuickItem *layer : win->contentItem()->childItems())
+            if (layer->inherits("QQuickOverlay"))
+                for (QQuickItem *k : layer->childItems())
+                    if (k->isVisible() && k->parent() && k->parent()->inherits("QQuickToolTip")) tipUp = true;
+        r.check("hovering a rail button raises its tooltip", tipUp);
+        canvas->setTool(QStringLiteral("pen"));
+        const int before = canvas->strokeCount();
+        penDrag(win, canvas->mapToScene(canvas->toScreen(QPointF(120, 900))), canvas->mapToScene(canvas->toScreen(QPointF(320, 960))));
+        r.check("and the pen still writes on the page while it is up", canvas->strokeCount() == before + 1,
+                QStringLiteral("%1 → %2").arg(before).arg(canvas->strokeCount()));
+    }
 
     root->setProperty("settingsVisible", true);
     spin(300);

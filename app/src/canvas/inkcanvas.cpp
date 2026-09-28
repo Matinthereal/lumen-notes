@@ -969,8 +969,18 @@ static bool chromeUnder(const QQuickItem *item, const QPointF &scenePos, const Q
     // The popup overlay spans the whole window for the life of the app. It is chrome only while
     // something is up on it — a popup, a modal dimmer, the keyboard — never just for existing.
     if (item->inherits("QQuickOverlay")) {
-        for (const QQuickItem *kid : kids)
-            if (kid->isVisible() && kid->opacity() > 0.0) return true;
+        for (const QQuickItem *kid : kids) {
+            if (!kid->isVisible() || kid->opacity() <= 0.0) continue;
+            // A popup that does not block the window — a tooltip above all — is chrome only where
+            // it is, which the loop above has already asked. Counting it everywhere meant a hover
+            // tooltip left up on a button stopped the pen writing anywhere on the page.
+            if (kid->inherits("QQuickPopupItem")) {
+                const QObject *popup = kid->parent();
+                if (popup && popup->property("modal").toBool()) return true;
+                continue;
+            }
+            return true;                                   // a modal dimmer, the on-screen keyboard
+        }
         return false;
     }
     return item->objectName() == QLatin1String("chrome") || item->inherits("QQuickPopupItem");
