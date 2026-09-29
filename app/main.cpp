@@ -38,6 +38,10 @@
 #include "ui/splitbinder.h"
 #include "ui/holdtips.h"
 #include "ui/platform.h"
+#if defined(LUMEN_HAVE_HELPERS) && !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
+#define LUMEN_SINGLE_INSTANCE
+#include "ui/singleinstance.h"
+#endif
 #include "ui/theme.h"
 #include "storage/backup.h"
 #include "storage/database.h"
@@ -106,6 +110,17 @@ int main(int argc, char *argv[])
     const QStringList args = app.arguments();
 
     paths::ensureDirs();
+#ifdef LUMEN_SINGLE_INSTANCE
+    // One window per library. "Open with Lumen" on a PDF (Exec=lumen %U) while Lumen is open hands
+    // the file to that window and ends here; the nightly `lumen --backup` runs beside it as before.
+    const QList<QUrl> handedFiles = SingleInstance::filesIn(args);
+    SingleInstance instance(paths::dataDir());
+    if (!args.contains(QStringLiteral("--backup"))) {
+        const QString token = qEnvironmentVariable("XDG_ACTIVATION_TOKEN");
+        if (instance.handOver(handedFiles, token)) return 0;
+        if (!instance.listen() && instance.handOver(handedFiles, token)) return 0;   // two launches at once
+    }
+#endif
     Database db;
     if (!db.open(paths::databasePath()) || ensureSchema(db) == 0) {
         fprintf(stderr, "lumen: cannot open %s: %s\n", qPrintable(paths::databasePath()), qPrintable(db.lastError()));
@@ -272,6 +287,22 @@ int main(int argc, char *argv[])
         }
     }
     pdfWorker.start();          // idempotent: already running unless the canvas was not found
+#ifdef LUMEN_SINGLE_INSTANCE
+    // Files from our own command line, then any a later launch hands over, go where a file handed
+    // over by the system goes (Main.qml's openHandedFile): a PDF is imported, a .lumen notebook too.
+    QTimer::singleShot(0, &platform, [&platform, handedFiles] { for (const QUrl &f : handedFiles) platform.openFile(f); });
+    QObject::connect(&instance, &SingleInstance::handedOver, &platform, [&engine, &platform](const QList<QUrl> &files, const QString &token) {
+        if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().value(0))) {
+            if (win->windowStates() & Qt::WindowMinimized) win->setWindowStates(win->windowStates() & ~Qt::WindowMinimized);
+            // On Wayland the compositor only lets a window take focus with a token from the launch
+            // the person made; Qt's Wayland plugin uses this variable when it is set.
+            if (!token.isEmpty()) qputenv("XDG_ACTIVATION_TOKEN", token.toUtf8());
+            win->raise();
+            win->requestActivate();
+        }
+        for (const QUrl &f : files) platform.openFile(f);
+    });
+#endif
 #ifdef LUMEN_HAVE_HELPERS
     pingWorker.start();
     audioWorker.start();

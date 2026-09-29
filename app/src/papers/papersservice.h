@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <functional>
+#include "paperdetect.h"
 
 class Database;
 class Library;
@@ -35,6 +36,8 @@ public:
     Q_INVOKABLE void setRegion(qint64 questionId, int pageIndex, const QRectF &rect);
     Q_INVOKABLE void removeQuestion(qint64 questionId);
     Q_INVOKABLE void detectQuestions(qint64 paperId);                          // from the PDF text → questionsDetected()
+    Q_INVOKABLE int yearFromName(const QUrl &pdf) const;                       // 0 when the name has none
+    Q_INVOKABLE void readCover(const QUrl &pdf);                               // → coverRead() with the year printed on it
 
     Q_INVOKABLE qint64 startAttempt(qint64 paperId, bool timerMode);
     Q_INVOKABLE void recordAnswer(qint64 attemptId, qint64 questionId, int marksScored, int seconds, const QString &errorType);
@@ -53,6 +56,7 @@ public:
 signals:
     void imported(qint64 paperId, qint64 firstPageId);
     void questionsDetected(qint64 paperId, int count);
+    void coverRead(const QUrl &pdf, int year);
     void attemptChanged();
     void changed();
     void failed(const QString &message);
@@ -60,6 +64,7 @@ signals:
 private:
     using Callback = std::function<void(const QJsonObject &, const QJsonObject &)>;
     void call(const QString &method, const QJsonObject &params, Callback cb);
+    void saveDetected(qint64 paperId, const QList<paperdetect::Question> &found);
     Database &m_db;
     Library &m_lib;
     PdfService &m_pdf;

@@ -26,16 +26,28 @@ Rectangle {
         }
     }
     Component.onCompleted: reload()
-    Connections { target: papers; function onChanged() { panel.reload() } function onFailed(m) { panel.toast(m) } function onImported(pid, firstPage) { panel.toast("Paper imported — detecting questions…"); if (firstPage) panel.openPage(firstPage) } function onQuestionsDetected(pid, n) { panel.toast(n + " questions detected — check marks and topics in the paper bar") } }
+    Connections { target: papers; function onChanged() { panel.reload() } function onFailed(m) { panel.toast(m) } function onImported(pid, firstPage) { panel.toast("Paper imported — detecting questions…") } function onQuestionsDetected(pid, n) { panel.toast(n + " questions detected — check marks and topics in the paper bar") } }
 
     // Import: paper PDF → mark scheme PDF (optional) → details
     FileDialog { id: paperDlg; title: "Choose the question paper PDF"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: { importForm.paperUrl = selectedFile; schemeDlg.open() } }
-    FileDialog { id: schemeDlg; title: "Choose the mark scheme PDF (Cancel to skip)"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: { importForm.schemeUrl = selectedFile; importForm.open() } onRejected: { importForm.schemeUrl = ""; importForm.open() } }
+    FileDialog { id: schemeDlg; title: "Choose the mark scheme PDF (Cancel to skip)"; nameFilters: ["PDF files (*.pdf)"]; onAccepted: importForm.ask(importForm.paperUrl, selectedFile); onRejected: importForm.ask(importForm.paperUrl, "") }
     Popup {
         id: importForm
-        objectName: "chrome"
+        objectName: "paperImportForm"
         property var paperUrl: ""
         property var schemeUrl: ""
+        property bool yearTyped: false
+        // The year comes from the paper: its file name at once, then its cover, which wins. When
+        // neither says, the field stays empty and must be filled in; a guessed year files the
+        // paper under the wrong one.
+        function ask(paper, scheme) {
+            paperUrl = paper; schemeUrl = scheme; yearTyped = false
+            const named = papers.yearFromName(paper)
+            year.text = named ? String(named) : ""
+            papers.readCover(paper)
+            open()
+        }
+        Connections { target: papers; function onCoverRead(pdf, found) { if (found && !importForm.yearTyped && String(pdf) === String(importForm.paperUrl)) year.text = String(found) } }
         parent: Overlay.overlay
         x: (parent.width - width) / 2; y: 120; width: 420; padding: 16; modal: true; focus: true
         background: Card {}
@@ -44,8 +56,9 @@ Rectangle {
             Text { text: "New past paper"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
             LCombo { id: subj; Layout.fillWidth: true; model: library.notebooks().map(n => n.name); font.pixelSize: Ui.text }
             RowLayout {
-                LField { id: year; Layout.preferredWidth: 90; placeholderText: "Year"; text: String(new Date().getFullYear() - 1); font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 } }
-                LField { id: nameField; Layout.fillWidth: true; placeholderText: "Paper (e.g. Paper 2)"; font.pixelSize: Ui.text }
+                LField { id: year; objectName: "paperYear"; Layout.preferredWidth: 90; placeholderText: "Year"; font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 }
+                         onTextEdited: importForm.yearTyped = true }
+                LField { id: nameField; objectName: "paperName"; Layout.fillWidth: true; placeholderText: "Paper (e.g. Paper 2)"; font.pixelSize: Ui.text }
             }
             RowLayout {
                 LField { id: board; Layout.fillWidth: true; placeholderText: "board (Edexcel, AQA, OCR)"
@@ -54,11 +67,12 @@ Rectangle {
                         Connections { target: subj; function onCurrentTextChanged() { if (!board.activeFocus) board.suggest() } } }
                 LField { id: minutes; Layout.preferredWidth: 110; placeholderText: "Minutes"; text: "120"; font.pixelSize: Ui.text; validator: IntValidator { bottom: 10; top: 300 } }
             }
+            Text { visible: !year.acceptableInput; text: "The paper doesn't say which year it is from: type it in."; color: Ui.warning; font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Text { text: "Questions are detected from the PDF's own numbering; you can fix regions and marks afterwards."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
             RowLayout {
                 Item { Layout.fillWidth: true }
                 LButton { text: "Cancel"; onClicked: importForm.close() }
-                LButton { text: "Import"; enabled: subj.currentText.length > 0; onClicked: { papers.importPair(importForm.paperUrl, importForm.schemeUrl, subj.currentText, Number(year.text), nameField.text, board.text, Number(minutes.text)); importForm.close() } }
+                LButton { objectName: "paperImportButton"; text: "Import"; enabled: subj.currentText.length > 0 && year.acceptableInput; onClicked: { papers.importPair(importForm.paperUrl, importForm.schemeUrl, subj.currentText, Number(year.text), nameField.text, board.text, Number(minutes.text)); importForm.close() } }
             }
         }
     }

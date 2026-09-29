@@ -33,12 +33,14 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUrl>
 #include <QVariant>
 #include <functional>
 
 #include "canvas/inkcanvas.h"
 #include "input/tabletsample.h"
+#include "papers/papersservice.h"
 
 namespace {
 
@@ -1346,6 +1348,242 @@ void notesChecks(QQuickWindow *win, QObject *root, Report &r)
     spin(200);
 }
 
+// A past paper drawn here, so the checks need no exam files: a cover line, then (for a question
+// paper) labels at the left margin and marks at the right, the way the boards print them.
+void writePaper(const QString &path, const QString &cover, bool questions)
+{
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    QFont f = p.font(); f.setPointSize(12); p.setFont(f);
+    p.drawText(QPointF(900, 2000), cover);
+    if (!questions) return;
+    writer.newPage();
+    struct Line { int y; const char *number, *part, *text, *mark; };
+    for (const Line &l : {Line{1500, "1", "(a)", "Define momentum.", "[2]"}, Line{2600, "", "(b)", "State its unit.", "[1]"},
+                          Line{3700, "2", "", "Explain why the sky is blue.", "[3]"}}) {
+        if (*l.number) p.drawText(QPointF(700, l.y), QString::fromLatin1(l.number));
+        if (*l.part) p.drawText(QPointF(1150, l.y), QString::fromLatin1(l.part));
+        p.drawText(QPointF(1700, l.y), QString::fromLatin1(l.text));
+        p.drawText(QPointF(writer.width() - 1400, l.y + 400), QString::fromLatin1(l.mark));
+    }
+}
+
+qint64 firstPageOfSection(QObject *library, const QString &name)
+{
+    QVariantList notebooks;
+    QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, notebooks));
+    for (const QVariant &n : std::as_const(notebooks)) {
+        QVariantList sections;
+        QMetaObject::invokeMethod(library, "sections", Q_RETURN_ARG(QVariantList, sections), Q_ARG(qint64, n.toMap().value(QStringLiteral("id")).toLongLong()));
+        for (const QVariant &sec : std::as_const(sections)) {
+            if (sec.toMap().value(QStringLiteral("name")).toString() != name) continue;
+            QVariantList pages;
+            QMetaObject::invokeMethod(library, "pages", Q_RETURN_ARG(QVariantList, pages), Q_ARG(qint64, sec.toMap().value(QStringLiteral("id")).toLongLong()));
+            return pages.isEmpty() ? 0 : pages.first().toMap().value(QStringLiteral("id")).toLongLong();
+        }
+    }
+    return 0;
+}
+
+// Past papers: the import form fills the year from the paper and never guesses one, importing a
+// pair leaves the question paper open (not its mark scheme), the questions are read off the PDF,
+// and in tablet mode the on-screen keyboard is not left up once the form has gone.
+// Also runnable on its own with LUMEN_UITEST_ONLY=papers.
+void papersChecks(QQuickWindow *win, QObject *root, Report &r)
+{
+    QQmlEngine *engine = qmlEngine(root);
+    QQmlContext *ctx = engine ? engine->rootContext() : nullptr;
+    QObject *library = ctx ? ctx->contextProperty(QStringLiteral("library")).value<QObject *>() : nullptr;
+    auto *papers = ctx ? qobject_cast<PapersService *>(ctx->contextProperty(QStringLiteral("papers")).value<QObject *>()) : nullptr;
+    QObject *pdf = ctx ? ctx->contextProperty(QStringLiteral("pdf")).value<QObject *>() : nullptr;
+    QObject *tabletMode = ctx ? ctx->contextProperty(QStringLiteral("tabletMode")).value<QObject *>() : nullptr;
+    QObject *keys = ctx ? ctx->contextProperty(QStringLiteral("keys")).value<QObject *>() : nullptr;
+    const bool mobileUi = contextFlag(root, QStringLiteral("mobile"));
+    if (!library || !papers || !pdf) { r.check("the past-paper services are there", false); return; }
+    const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+
+    const QString dir = QDir(qEnvironmentVariable("LUMEN_DATA_DIR", QDir::tempPath())).absoluteFilePath(QStringLiteral("uitest-papers"));
+    QDir().mkpath(dir);
+    const QString paper = dir + QStringLiteral("/Physics_Paper2_June2016_QP.pdf"), scheme = dir + QStringLiteral("/Physics_Paper2_June2016_MS.pdf");
+    const QString coverOnly = dir + QStringLiteral("/uitest-paper.pdf"), undated = dir + QStringLiteral("/uitest-undated.pdf");
+    const QString handout = dir + QStringLiteral("/uitest-handout.pdf");
+    writePaper(paper, QStringLiteral("AS PHYSICS Paper 2 Thursday 9 June 2016"), true);
+    writePaper(scheme, QStringLiteral("Mark scheme"), false);
+    writePaper(coverOnly, QStringLiteral("Monday 12 June 2023 Afternoon"), false);
+    writePaper(undated, QStringLiteral("Paper 2 Time allowed: 1 hour"), false);
+    writePaper(handout, QStringLiteral("Lecture notes"), false);
+
+    // Tablet mode: the app's own keyboard is in play, as on the maker's machine.
+    if (tabletMode && !mobileUi) tabletMode->setProperty("tablet", true);
+    root->setProperty("keyboardMode", QStringLiteral("tablet"));
+    root->setProperty("leftPanel", QStringLiteral("papers"));
+    spin(400);
+    // Tablet mode rebuilt the panels; the old ones wait for a deferred delete this nested event loop
+    // never runs, so pick the form that is still alive.
+    QObject *form = nullptr;
+    for (QObject *f : root->findChildren<QObject *>(QStringLiteral("paperImportForm")))
+        if (QQmlContext *c = qmlContext(f); c && c->isValid()) form = f;
+    r.check("the past-paper import form is there", form != nullptr);
+    if (!form) return;
+    int covers = 0, imported = 0, detected = 0;
+    qint64 paperId = 0;
+    QList<QMetaObject::Connection> links{
+        QObject::connect(papers, &PapersService::coverRead, win, [&covers] { ++covers; }),
+        QObject::connect(papers, &PapersService::imported, win, [&](qint64 pid, qint64) { ++imported; paperId = pid; }),
+        QObject::connect(papers, &PapersService::questionsDetected, win, [&detected] { ++detected; })};
+    const auto field = [&](const char *name) { return findOne(win, QString::fromLatin1(name)); };
+    const auto yearText = [&] { QQuickItem *y = field("paperYear"); return y ? y->property("text").toString() : QStringLiteral("(no field)"); };
+    const auto importReady = [&] { QQuickItem *b = field("paperImportButton"); return b && b->property("enabled").toBool(); };
+    const auto ask = [&](const QString &p, const QString &s) {
+        covers = 0;
+        QMetaObject::invokeMethod(form, "ask", Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(p))), Q_ARG(QVariant, s.isEmpty() ? QVariant(QString()) : QVariant(QUrl::fromLocalFile(s))));
+        waitFor([&] { return covers > 0; }, 20000);          // the cover is read by the pdf helper
+        spin(150);
+    };
+
+    ask(undated, {});
+    r.check("a paper that names no year leaves the year empty", yearText().isEmpty(), yearText());
+    r.check("and Import waits until one is typed", !importReady());
+    shot(win, QStringLiteral("papers-no-year"));
+    QMetaObject::invokeMethod(form, "close");
+    ask(coverOnly, {});
+    r.check("the year is read off the cover", yearText() == QLatin1String("2023"), yearText());
+    QMetaObject::invokeMethod(form, "close");
+    ask(paper, scheme);
+    r.check("the year is read from the file name", yearText() == QLatin1String("2016"), yearText());
+    r.check("and Import is ready", importReady());
+
+    // Type the paper's name on the app's keyboard, then import: the keyboard must go with the form.
+    QQuickItem *board = nullptr;
+    for (QList<QQuickItem *> hunt{win->contentItem()}; !hunt.isEmpty() && !board;) {
+        QQuickItem *item = hunt.takeLast();
+        const auto kids = item->childItems();
+        for (QQuickItem *k : kids) hunt.append(k);
+        if (QString::fromLatin1(item->metaObject()->className()).contains(QLatin1String("Keyboard"))) board = item;
+    }
+    if (QQuickItem *name = field("paperName")) {
+        win->requestActivate();
+        waitFor([&] { return win->isActive(); }, 1500);
+        tap(win, name);
+        spin(200);
+        if (!name->hasActiveFocus()) name->forceActiveFocus();
+        typeKeys(QStringLiteral("Paper 2"));
+        if (board && !mobileUi) r.check("the keyboard comes up for the paper's name", board->property("wanted").toBool());
+    }
+    shot(win, QStringLiteral("papers-form"));
+    if (QQuickItem *go = field("paperImportButton")) tap(win, go);
+    QSet<qint64> seen;
+    const auto watch = [&] { seen.insert(currentPage()); };
+    waitFor([&] { watch(); return imported > 0 && detected > 0; }, 30000);
+    const QString schemeName = QStringLiteral("Paper 2 — mark scheme");
+    qint64 schemeFirst = 0;
+    waitFor([&] { watch(); schemeFirst = firstPageOfSection(library, schemeName); return schemeFirst > 0; }, 30000);
+    for (int i = 0; i < 60; ++i) { watch(); spin(25); }          // time for a wrong page to open, if one would
+    const qint64 paperFirst = firstPageOfSection(library, QStringLiteral("2016 Paper 2"));
+    r.check("importing a pair brings in both PDFs", paperFirst > 0 && schemeFirst > 0, QStringLiteral("paper %1, scheme %2").arg(paperFirst).arg(schemeFirst));
+    r.check("the question paper is what opens", paperFirst > 0 && currentPage() == paperFirst,
+            QStringLiteral("open %1, paper %2, scheme %3").arg(currentPage()).arg(paperFirst).arg(schemeFirst));
+    r.check("the mark scheme never opens on its own", schemeFirst > 0 && !seen.contains(schemeFirst));
+    QString last;
+    QMetaObject::invokeMethod(library, "setting", Q_RETURN_ARG(QString, last), Q_ARG(QString, QStringLiteral("lastPage")), Q_ARG(QString, QString()));
+    r.check("and the paper is what reopens next time", last == QString::number(paperFirst), last);
+    const QVariantMap saved = papers->paper(paperId);
+    r.check("the paper is filed under its own year", saved.value(QStringLiteral("year")).toInt() == 2016, saved.value(QStringLiteral("year")).toString());
+    QStringList labels;
+    for (const QVariant &q : papers->questions(paperId)) labels << QStringLiteral("%1=%2").arg(q.toMap().value(QStringLiteral("label")).toString()).arg(q.toMap().value(QStringLiteral("marks")).toInt());
+    r.check("its questions and marks are read off the PDF", labels == QStringList{QStringLiteral("1(a)=2"), QStringLiteral("1(b)=1"), QStringLiteral("2=3")}
+            && saved.value(QStringLiteral("totalMarks")).toInt() == 6, labels.join(u' '));
+    if (board && !mobileUi) {
+        waitFor([&] { return !board->property("wanted").toBool(); }, 1500);
+        QObject *focus = QGuiApplication::focusObject();
+        r.check("the keyboard is not left up after the import", !board->property("wanted").toBool() && !board->isVisible(),
+                QStringLiteral("focus on %1 \"%2\", focusIsText %3").arg(focus ? QString::fromLatin1(focus->metaObject()->className()) : QStringLiteral("nothing"),
+                                                                        focus ? focus->objectName() : QString(), keys && keys->property("focusIsText").toBool() ? QStringLiteral("yes") : QStringLiteral("no")));
+    }
+    shot(win, QStringLiteral("papers-imported"));
+
+    // A PDF on its own still opens at its first page.
+    const qint64 before = currentPage();
+    QVariantMap info;
+    QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, info), Q_ARG(qint64, before));
+    QMetaObject::invokeMethod(pdf, "importAsSection", Q_ARG(QUrl, QUrl::fromLocalFile(handout)),
+                              Q_ARG(qint64, info.value(QStringLiteral("notebookId")).toLongLong()), Q_ARG(QString, QString()), Q_ARG(QString, QString()));
+    qint64 handoutFirst = 0;
+    waitFor([&] { handoutFirst = firstPageOfSection(library, QStringLiteral("uitest-handout")); return handoutFirst > 0 && currentPage() == handoutFirst; }, 20000);
+    r.check("a PDF imported on its own opens at its first page", handoutFirst > 0 && currentPage() == handoutFirst,
+            QStringLiteral("open %1, handout %2").arg(currentPage()).arg(handoutFirst));
+
+    for (const auto &l : std::as_const(links)) QObject::disconnect(l);
+    if (paperId) papers->removePaper(paperId);          // the sweep below does not need a paper in the list
+    QDir(dir).removeRecursively();
+    if (tabletMode && !mobileUi) tabletMode->setProperty("tablet", false);
+    root->setProperty("leftPanel", QStringLiteral("notebooks"));
+    spin(300);
+}
+
+// The on-screen keyboard (tablet mode) is for a field you can see and reach: not the editor of a
+// typed page that was closed or replaced by an ink page, and not one under the onboarding screen,
+// whose Start button it covered. The import form's case is in papersChecks.
+void keyboardChecks(QQuickWindow *win, QObject *root, Report &r)
+{
+    if (contextFlag(root, QStringLiteral("mobile"))) { qInfo("UITEST SKIP keyboard: mobile uses the system keyboard"); return; }
+    QQmlEngine *engine = qmlEngine(root);
+    QObject *tabletMode = engine ? engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>() : nullptr;
+    if (tabletMode) tabletMode->setProperty("tablet", true);
+    root->setProperty("keyboardMode", QStringLiteral("tablet"));
+    spin(400);
+    QQuickItem *board = nullptr;
+    for (QList<QQuickItem *> hunt{win->contentItem()}; !hunt.isEmpty() && !board;) {
+        QQuickItem *item = hunt.takeLast();
+        const auto kids = item->childItems();
+        for (QQuickItem *k : kids) hunt.append(k);
+        if (QString::fromLatin1(item->metaObject()->className()).contains(QLatin1String("Keyboard"))) board = item;
+    }
+    r.check("the app has an on-screen keyboard", board != nullptr);
+    if (!board) return;
+    const auto wanted = [&] { spin(250); return board->property("wanted").toBool(); };
+    const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    const auto editor = [&]() -> QQuickItem * {
+        for (QQuickItem *t : findAll(win, QStringLiteral("typedPage")))
+            if (t->property("pageId").toLongLong() == currentPage() && t->isVisible()) return t->property("editor").value<QQuickItem *>();
+        return nullptr;
+    };
+    win->requestActivate();
+    waitFor([&] { return win->isActive(); }, 1500);
+
+    QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("typed")));
+    spin(400);
+    const qint64 typedId = currentPage();
+    QQuickItem *area = editor();
+    if (area) area->forceActiveFocus();
+    r.check("the keyboard comes up for a typed page in tablet mode", area && wanted());
+
+    root->setProperty("onboardingVisible", true);
+    r.check("it goes down while the onboarding screen covers the page", !wanted());
+    shot(win, QStringLiteral("keyboard-onboarding"));
+    root->setProperty("onboardingVisible", false);
+    spin(200);
+
+    if (area) area->forceActiveFocus();
+    QMetaObject::invokeMethod(root, "newPage", Q_ARG(QVariant, QStringLiteral("a4")));
+    const qint64 inkId = currentPage();
+    r.check("an ink page replacing a typed one takes it down, and the hidden editor lets go", inkId != typedId && !wanted() && area && !area->hasActiveFocus());
+
+    QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, typedId));
+    spin(300);
+    area = editor();
+    if (area) area->forceActiveFocus();
+    const bool upAgain = wanted();
+    QMetaObject::invokeMethod(root, "closePage");
+    r.check("closing a typed page takes it down", upAgain && !wanted() && area && !area->hasActiveFocus());
+
+    QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, inkId));
+    if (tabletMode) tabletMode->setProperty("tablet", false);
+    root->setProperty("leftPanel", QStringLiteral("notebooks"));
+    spin(300);
+}
+
 } // namespace
 
 int uitest::run(QQuickWindow *win, QObject *root)
@@ -1376,6 +1614,18 @@ int uitest::run(QQuickWindow *win, QObject *root)
         if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
         spin(300);
         notesChecks(win, root, r);
+        r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
+                g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
+        qInstallMessageHandler(g_previous);
+        qInfo("UITEST %s (%d failure%s)", r.failures ? "FAILED" : "OK", r.failures, r.failures == 1 ? "" : "s");
+        return r.failures;
+    }
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("papers")) {
+        waitFor([&] { return currentPage() > 0; }, 3000);
+        if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
+        spin(300);
+        papersChecks(win, root, r);
+        keyboardChecks(win, root, r);
         r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
                 g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
         qInstallMessageHandler(g_previous);
@@ -2789,6 +3039,8 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     pageFeatures(win, root, r);
     notesChecks(win, root, r);
+    papersChecks(win, root, r);
+    keyboardChecks(win, root, r);
 
     // ---- 12e. Tooltips by touch (above).
     holdTipChecks();

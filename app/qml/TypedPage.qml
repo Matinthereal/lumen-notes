@@ -112,7 +112,10 @@ Item {
         }
     }
     Component.onDestruction: save()
-    onVisibleChanged: if (!visible) save()
+    // A hidden item keeps its keyboard focus (Qt's rule for `visible`). Going from here to an ink or
+    // PDF page (an import opens one) left the editor holding it: keys went into a page nobody could
+    // see, and in tablet mode the on-screen keyboard stayed up with no field to fill.
+    onVisibleChanged: if (!visible) { save(); if (area.activeFocus) area.focus = false }
 
     Timer { id: saveTimer; interval: 700; onTriggered: typed.save() }
 

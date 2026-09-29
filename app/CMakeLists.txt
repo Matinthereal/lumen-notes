@@ -35,6 +35,7 @@ qt_add_library(lumen_core STATIC
     src/cards/fsrs.h               src/cards/fsrs.cpp
     src/ocr/linesegment.h          src/ocr/linesegment.cpp
     src/ocr/ocrservice.h           src/ocr/ocrservice.cpp
+    src/papers/paperdetect.h       src/papers/paperdetect.cpp
     src/papers/papersservice.h     src/papers/papersservice.cpp
     src/ui/tabletmode.h            src/ui/tabletmode.cpp
     src/ui/backuptool.h            src/ui/backuptool.cpp
@@ -49,6 +50,8 @@ target_include_directories(lumen_core PUBLIC src)
 #      and Qt ships no QtPdf for Android.
 if(LUMEN_HELPERS)
     target_compile_definitions(lumen_core PUBLIC LUMEN_HAVE_HELPERS)
+    # One window per library on a desktop (main.cpp); phones and tablets are handed files by the system.
+    target_sources(lumen_core PRIVATE src/ui/singleinstance.h src/ui/singleinstance.cpp)
 else()
     set(_pdfium_release https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8066)
     if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")

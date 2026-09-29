@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QRegularExpression>
+#include <QSet>
 
 PapersService::PapersService(Database &db, Library &lib, PdfService &pdf, WorkerSupervisor *pdfWorker, QObject *parent)
     : QObject(parent), m_db(db), m_lib(lib), m_pdf(pdf), m_worker(pdfWorker)
@@ -40,7 +41,9 @@ void PapersService::importPair(const QUrl &paperPdf, const QUrl &schemePdf, cons
         if (tok != token) return;                        // another import finishing first must not claim this paper
         QObject::disconnect(*conn);
         Database::Query u(m_db, "UPDATE paper SET section_id=? WHERE id=?"); u.bind(1, sectionId).bind(2, paperId); u.run();
-        if (schemePdf.isValid() && !schemePdf.isEmpty()) m_pdf.importAsSection(schemePdf, notebookId, title + " — mark scheme");
+        // Its own token: the window opens what an import brings in, but never the mark scheme of
+        // a paper you are about to sit (Main.qml).
+        if (schemePdf.isValid() && !schemePdf.isEmpty()) m_pdf.importAsSection(schemePdf, notebookId, title + " — mark scheme", QStringLiteral("scheme-%1").arg(paperId));
         emit changed();
         emit imported(paperId, firstPageId);
         detectQuestions(paperId);
@@ -118,68 +121,61 @@ void PapersService::setRegion(qint64 id, int pageIndex, const QRectF &r)
 }
 void PapersService::removeQuestion(qint64 id) { Database::Query q(m_db, "DELETE FROM paper_question WHERE id=?"); q.bind(1, id); q.run(); emit changed(); }
 
-// Question labels sit at the left margin: "1", "1.", "2(a)", "(b)", "(ii)". Marks appear as "[3]" or "(3 marks)".
+// The words of every page, then paperdetect reads the questions off them (paperdetect.h).
 void PapersService::detectQuestions(qint64 paperId)
 {
-    const QVariantMap p = paper(paperId);
     QString sha; { Database::Query q(m_db, "SELECT paper_attachment FROM paper WHERE id=?"); q.bind(1, paperId); if (q.step()) sha = q.text(0); }
     if (sha.isEmpty()) return;
     const QString path = attachments::pathFor(sha, "application/pdf");
     call("info", {{"path", path}}, [this, paperId, path](const QJsonObject &r, const QJsonObject &e) {
         if (!e.isEmpty()) { emit failed(e.value("message").toString()); return; }
-        const int pages = r.value("pages").toInt();
+        const int count = r.value("pages").toInt();
         const QJsonArray sizes = r.value("sizes").toArray();
-        auto remaining = std::make_shared<int>(pages);
-        auto found = std::make_shared<QVector<QVariantMap>>();
-        for (int i = 0; i < pages; ++i) {
-            const double pw = sizes.at(i).toArray().at(0).toDouble(794), ph = sizes.at(i).toArray().at(1).toDouble(1123);
-            call("words", {{"path", path}, {"index", i}}, [this, paperId, i, pw, ph, remaining, found](const QJsonObject &r, const QJsonObject &) {
-                static const QRegularExpression label(R"(^(\d{1,2}[.)]?|\d{1,2}\([a-z]\)|\([a-z]\)|\([ivx]{1,4}\))$)");
-                static const QRegularExpression bracketMarks(R"(^\[(\d{1,3})\]$)");          // [3]
-                static const QRegularExpression parenMarks(R"(^\((\d{1,3})$)");              // (3 marks)
-                QVector<QVariantMap> labels;
-                QVector<QPair<double, int>> markRows;   // y → marks
-                const QJsonArray words = r.value("words").toArray();
-                for (int wi = 0; wi < words.size(); ++wi) {
-                    const QJsonArray w = words.at(wi).toArray();
-                    const double x0 = w.at(0).toDouble(), y0 = w.at(1).toDouble(), x1 = w.at(2).toDouble(), y1 = w.at(3).toDouble();
-                    const QString text = w.at(4).toString();
-                    if (x0 < pw * 0.16 && label.match(text).hasMatch()) labels.append(QVariantMap{{"label", text}, {"y", y0}});
-                    const auto bm = bracketMarks.match(text);
-                    if (bm.hasMatch()) { markRows.append({y1, bm.captured(1).toInt()}); continue; }
-                    const auto pmk = parenMarks.match(text);
-                    if (pmk.hasMatch() && wi + 1 < words.size() && words.at(wi + 1).toArray().at(4).toString().startsWith("mark", Qt::CaseInsensitive))
-                        markRows.append({y1, pmk.captured(1).toInt()});
-                    Q_UNUSED(x1);
-                }
-                std::sort(labels.begin(), labels.end(), [](const QVariantMap &a, const QVariantMap &b) { return a.value("y").toDouble() < b.value("y").toDouble(); });
-                for (int k = 0; k < labels.size(); ++k) {
-                    const double y = labels[k].value("y").toDouble() - 4;
-                    const double yEnd = k + 1 < labels.size() ? labels[k + 1].value("y").toDouble() - 4 : ph - 30;
-                    int mk = 0;
-                    for (const auto &mr : markRows) if (mr.first > y && mr.first <= yEnd + 2) mk += mr.second;
-                    found->append(QVariantMap{{"label", labels[k].value("label")}, {"page", i}, {"rect", QRectF(pw * 0.05, y, pw * 0.9, std::max(20.0, yEnd - y))}, {"marks", mk}});
-                }
-                if (--*remaining == 0) {
-                    std::sort(found->begin(), found->end(), [](const QVariantMap &a, const QVariantMap &b) { return a.value("page").toInt() != b.value("page").toInt() ? a.value("page").toInt() < b.value("page").toInt() : a.value("rect").toRectF().y() < b.value("rect").toRectF().y(); });
-                    m_db.begin();
-                    Database::Query d(m_db, "DELETE FROM paper_question WHERE paper_id=? AND marks_available=0 AND topic_tags=''"); d.bind(1, paperId); d.run();
-                    int n = 0;
-                    QString parent;   // "3" carries into "(a)" → "3(a)"
-                    for (const QVariantMap &f : *found) {
-                        QString lbl = f.value("label").toString();
-                        if (lbl.endsWith('.')) lbl.chop(1);
-                        if (lbl.startsWith('(')) lbl = parent + lbl;               // "(a)" under "3" → "3(a)"
-                        else { parent = lbl.section('(', 0, 0); if (lbl.endsWith(')') && !lbl.contains('(')) lbl.chop(1); }
-                        if (addQuestion(paperId, lbl, f.value("page").toInt(), f.value("rect").toRectF(), f.value("marks").toInt())) ++n;
-                    }
-                    Database::Query t(m_db, "UPDATE paper SET total_marks=(SELECT COALESCE(SUM(marks_available),0) FROM paper_question WHERE paper_id=?) WHERE id=?"); t.bind(1, paperId).bind(2, paperId); t.run();
-                    m_db.commit();
-                    emit questionsDetected(paperId, n);
-                    emit changed();
-                }
+        if (count <= 0) { saveDetected(paperId, {}); return; }
+        auto pages = std::make_shared<QList<paperdetect::Page>>(count);
+        auto remaining = std::make_shared<int>(count);
+        for (int i = 0; i < count; ++i) {
+            const QSizeF size(sizes.at(i).toArray().at(0).toDouble(794), sizes.at(i).toArray().at(1).toDouble(1123));
+            call("words", {{"path", path}, {"index", i}}, [this, paperId, i, size, pages, remaining](const QJsonObject &r, const QJsonObject &) {
+                (*pages)[i] = paperdetect::fromWorker(r.value("words").toArray(), size);
+                if (--*remaining == 0) saveDetected(paperId, paperdetect::detect(*pages));
             });
         }
+    });
+}
+
+void PapersService::saveDetected(qint64 paperId, const QList<paperdetect::Question> &found)
+{
+    m_db.begin();
+    // Detecting again replaces what nobody has touched (no marks, no topics: all an earlier
+    // detector left behind) and never duplicates a question that is already there.
+    Database::Query d(m_db, "DELETE FROM paper_question WHERE paper_id=? AND marks_available=0 AND topic_tags=''"); d.bind(1, paperId); d.run();
+    QSet<QString> have;
+    { Database::Query q(m_db, "SELECT label FROM paper_question WHERE paper_id=?"); q.bind(1, paperId); while (q.step()) have.insert(q.text(0)); }
+    for (const paperdetect::Question &f : found)
+        if (!have.contains(f.label)) addQuestion(paperId, f.label, f.page, f.rect, f.marks);
+    // Kept and new questions in the order they are printed.
+    Database::Query o(m_db, "UPDATE paper_question SET sort=(SELECT COUNT(*) FROM paper_question x WHERE x.paper_id=paper_question.paper_id"
+                            " AND (x.page_index<paper_question.page_index OR (x.page_index=paper_question.page_index AND (x.y<paper_question.y OR (x.y=paper_question.y AND x.id<=paper_question.id)))))"
+                            " WHERE paper_id=?");
+    o.bind(1, paperId); o.run();
+    Database::Query t(m_db, "UPDATE paper SET total_marks=(SELECT COALESCE(SUM(marks_available),0) FROM paper_question WHERE paper_id=?) WHERE id=?"); t.bind(1, paperId).bind(2, paperId); t.run();
+    m_db.commit();
+    emit questionsDetected(paperId, int(found.size()));
+    emit changed();
+}
+
+int PapersService::yearFromName(const QUrl &pdf) const
+{
+    return paperdetect::yearFromName(pdf.isLocalFile() ? QFileInfo(pdf.toLocalFile()).fileName() : pdf.fileName());
+}
+
+void PapersService::readCover(const QUrl &pdf)
+{
+    // The helper runs in a directory of its own: hand it a path that does not depend on ours.
+    const QString path = pdf.isLocalFile() ? QFileInfo(pdf.toLocalFile()).absoluteFilePath() : paths::openable(pdf);
+    call("text", {{"path", path}, {"index", 0}}, [this, pdf](const QJsonObject &r, const QJsonObject &e) {
+        emit coverRead(pdf, e.isEmpty() ? paperdetect::yearFromCover(r.value("text").toString()) : 0);
     });
 }
 

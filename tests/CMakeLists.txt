@@ -51,6 +51,16 @@ target_link_libraries(tst_papers PRIVATE lumen_core Qt6::Test)
 add_test(NAME papers COMMAND tst_papers)
 set_tests_properties(papers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 
+# One window per library on a desktop: a second launch hands its files over (main.cpp).
+if(LUMEN_HELPERS)
+    qt_add_executable(tst_singleinstance tst_singleinstance.cpp)
+    target_link_libraries(tst_singleinstance PRIVATE lumen_core Qt6::Test)
+    target_compile_definitions(tst_singleinstance PRIVATE LUMEN_APP="$<TARGET_FILE:lumen>")
+    add_dependencies(tst_singleinstance lumen)
+    add_test(NAME single_instance COMMAND tst_singleinstance)
+    set_tests_properties(single_instance PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 180)
+endif()
+
 qt_add_executable(tst_canvas tst_canvas.cpp
     ../app/src/canvas/inkcanvas.cpp ../app/src/canvas/inkcanvas_render.cpp)
 target_include_directories(tst_canvas PRIVATE ../app/src ../app/src/canvas)

@@ -18,12 +18,14 @@ QUrl Platform::shareTarget(const QString &fileName) const
     return QUrl::fromLocalFile(dir + QLatin1Char('/') + name);
 }
 
+void Platform::openFile(const QUrl &file) { emit fileOpened(readableCopy(file)); }
+
 bool Platform::eventFilter(QObject *watched, QEvent *event)
 {
     if (event->type() == QEvent::FileOpen && watched == QCoreApplication::instance()) {
         const QUrl url = static_cast<QFileOpenEvent *>(event)->url();
         if (url.isValid()) {
-            emit fileOpened(readableCopy(url));
+            openFile(url);
             return true;
         }
     }

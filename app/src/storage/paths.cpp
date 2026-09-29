@@ -6,8 +6,10 @@ namespace paths {
 
 QString dataDir()
 {
+    // Absolute: the helpers run in their own working directory and are handed paths inside it
+    // (attachments, the render cache), so a relative LUMEN_DATA_DIR made every PDF fail to open.
     const QByteArray env = qgetenv("LUMEN_DATA_DIR");
-    if (!env.isEmpty()) return QString::fromLocal8Bit(env);
+    if (!env.isEmpty()) return QDir(QString::fromLocal8Bit(env)).absolutePath();
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/lumen");
 }
 QString journalDir() { return dataDir() + QStringLiteral("/journal"); }

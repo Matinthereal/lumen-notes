@@ -19,6 +19,9 @@ public:
     bool canShare() const;
     Q_INVOKABLE QUrl shareTarget(const QString &fileName) const;   // where to write a file before share()
     Q_INVOKABLE bool share(const QUrl &file, const QRectF &anchor);   // anchor: scene rect the sheet points at
+    // A file handed over from outside, the way the system hands one over: "Open with Lumen" on a
+    // desktop passes it on the command line, or to the Lumen already running (SingleInstance).
+    void openFile(const QUrl &file);
 
 signals:
     // switchEraser · switchPrevious · showColorPalette · showInkAttributes · showContextualPalette · ignore

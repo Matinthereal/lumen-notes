@@ -341,7 +341,9 @@ Window {
             if (next) pdf.prerender(next, scale); if (prev) pdf.prerender(prev, scale)
         }
         function onWords(pageId, words) { if (pageId === root.currentPageId) canvas.setWords(words) }
-        function onImported(sectionId, firstPageId, token) { if (firstPageId) root.openPage(firstPageId) }
+        // An import opens its first page, except a past paper's mark scheme ("scheme-<paper>",
+        // PapersService::importPair): the paper you are about to sit stays open instead.
+        function onImported(sectionId, firstPageId, token) { if (firstPageId && !token.startsWith("scheme-")) root.openPage(firstPageId) }
         function onExported(file, pages) {
             if (root.sharing) { root.sharing = false; platform.share(file, Qt.rect(0, 0, 0, 0)); return }
             toastBar.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null)
@@ -407,6 +409,7 @@ Window {
     }
 
     RowLayout {
+        id: workspace
         anchors.fill: safe
         visible: !root.probeMode
         spacing: 0
@@ -1335,7 +1338,9 @@ Window {
         anchors { left: parent.left; right: parent.right }
         // Parked off the bottom until a text field wants it. Ui.keyboardInset tells the rest of the
         // app how much of the bottom it has taken, so nothing it fills ends up underneath it.
-        property bool wanted: root.keyboardWanted && keys.focusIsText && !keyboard.dismissed
+        // Only for a field the person can see and reach: keys.focusIsText is false for a hidden one,
+        // and a field on the page under a full-screen overlay (onboarding, settings…) is covered.
+        property bool wanted: root.keyboardWanted && keys.focusIsText && !(root.overlayUp && keys.focusWithin(workspace)) && !keyboard.dismissed
         property bool dismissed: false
         y: wanted ? parent.height - height : parent.height
         visible: y < parent.height
