@@ -13,7 +13,14 @@ QString dataDir()
 QString journalDir() { return dataDir() + QStringLiteral("/journal"); }
 QString attachmentsDir() { return dataDir() + QStringLiteral("/attachments"); }
 QString claudeLogDir() { return dataDir() + QStringLiteral("/claude-log"); }
-QString modelsDir() { return dataDir() + QStringLiteral("/models"); }
+// Helper models are downloads of hundreds of MB that belong to no library, so test runs that each
+// get a fresh LUMEN_DATA_DIR share one folder of them through LUMEN_MODELS_DIR.
+QString modelsDir()
+{
+    const QByteArray env = qgetenv("LUMEN_MODELS_DIR");
+    if (!env.isEmpty()) return QString::fromLocal8Bit(env);
+    return dataDir() + QStringLiteral("/models");
+}
 // Thumbnails, rendered PDF pages and OCR results are keyed by one library's row ids, so a library
 // in a folder of its own (LUMEN_DATA_DIR: the tests, a portable copy) keeps its cache in there too;
 // sharing one would show another library's page 1 as this one's. The backup already skips it.

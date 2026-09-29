@@ -73,8 +73,10 @@ set_tests_properties(app_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen
 # split's ratio, what is in the trash), and a library kept from earlier runs failed them.
 add_test(NAME app_ui_reset COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_BINARY_DIR}/uitest-data)
 set_tests_properties(app_ui_reset PROPERTIES FIXTURES_SETUP app_ui_library)
+# The helper models live outside it and are kept: downloading them again every run left the
+# handwriting reader busy with the download when the maths check asked it for work.
 add_test(NAME app_ui COMMAND lumen --uitest)
-set_tests_properties(app_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1;LUMEN_DATA_DIR=${CMAKE_BINARY_DIR}/uitest-data" TIMEOUT 900
+set_tests_properties(app_ui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1;LUMEN_DATA_DIR=${CMAKE_BINARY_DIR}/uitest-data;LUMEN_MODELS_DIR=${CMAKE_BINARY_DIR}/helper-models" TIMEOUT 900
                      FIXTURES_REQUIRED app_ui_library)
 
 # The maths worker: it must get school arithmetic and algebra right, and say so when it cannot.

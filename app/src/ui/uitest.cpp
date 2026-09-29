@@ -1684,16 +1684,36 @@ int uitest::run(QQuickWindow *win, QObject *root)
                 QMetaObject::invokeMethod(chip, "cancelRequested");
                 r.check("Stop takes the chip away", !latexChip() && !ocr->property("latexBusy").toBool());
             }
-            // Without the AI add-on the same request must end in a plain explanation, not a stack trace.
-            QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
-            waitFor([&] { return !ocr->property("latexBusy").toBool(); }, 20000);
-            r.check("the chip goes when the work ends", !latexChip());
-            QQuickItem *toastText = findOne(win, QStringLiteral("toastText"));
-            const QString said = toastText ? toastText->property("text").toString() : QString();
-            if (said.contains(QLatin1String("AI add-on")))
-                r.check("a missing add-on is explained, with where to go", said.contains(QLatin1String("Background services")), said);
-            else
-                qInfo("UITEST note  the maths reader is installed here; the add-on message was not exercised (%s)", qPrintable(said.left(80)));
+            // The same worker loads the handwriting model (15 s after start, and for # Tag in 16) and
+            // takes one request at a time, so maths asked for mid-load waits behind it. On a library
+            // with no model yet that load is a download: in the full sweep the read was still queued
+            // behind it 80 s on, while alone it ended in 4 s. Let the load finish, then time the read.
+            QObject *reader = nullptr;
+            if (QQmlEngine *engine = qmlEngine(root))
+                for (const QVariant &v : engine->rootContext()->contextProperty(QStringLiteral("workers")).toList())
+                    if (QObject *w = v.value<QObject *>(); w && w->property("name").toString() == QLatin1String("ocr")) reader = w;
+            const auto loading = [&] { return reader && reader->property("status").toString() == QLatin1String("loading model"); };
+            QElapsedTimer took;
+            took.start();
+            if (!waitFor([&] { return !loading(); }, 120000)) {
+                qInfo("UITEST note  12f: the handwriting model was still loading after 2 min (%s); the end of the maths read was not checked",
+                      qPrintable(ocr->property("status").toString()));
+            } else {
+                const qint64 loaded = took.restart();
+                // Without the AI add-on the same request must end in a plain explanation, not a stack trace.
+                QMetaObject::invokeMethod(ocr, "latexFromImage", Q_ARG(QString, png));
+                const bool ended = waitFor([&] { return !ocr->property("latexBusy").toBool(); }, 20000);
+                qInfo("UITEST note  12f: waited %lld ms for the handwriting model, then the maths read took %lld ms", loaded, took.elapsed());
+                r.check("the chip goes when the work ends", ended && !latexChip(),
+                        ended ? QStringLiteral("the work ended and the chip stayed")
+                              : QStringLiteral("the maths read had not ended after 20 s; the reader was %1").arg(reader ? reader->property("status").toString() : QStringLiteral("not found")));
+                QQuickItem *toastText = findOne(win, QStringLiteral("toastText"));
+                const QString said = toastText ? toastText->property("text").toString() : QString();
+                if (said.contains(QLatin1String("AI add-on")))
+                    r.check("a missing add-on is explained, with where to go", said.contains(QLatin1String("Background services")), said);
+                else
+                    qInfo("UITEST note  the maths reader is installed here; the add-on message was not exercised (%s)", qPrintable(said.left(80)));
+            }
         } else {
             r.check("the OCR service is available to QML", false);
         }
