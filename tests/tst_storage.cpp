@@ -38,6 +38,9 @@ private slots:
     // Phones and tablets have no zip or tar program, so their backup is a tar written in-process;
     // the system tar is the judge of whether it is a real one.
     void tarBackupIsARealTarWithAConsistentDatabase() {
+#ifdef Q_OS_WIN
+        QSKIP("the in-process tar backs up phones and tablets; Windows backs up with zip or tar.exe");
+#endif
         QTemporaryDir dir;
         const QString data = dir.path() + "/data";
         QDir().mkpath(data + "/attachments/ab");
@@ -59,7 +62,7 @@ private slots:
         list.start("tar", {"-tf", tar});
         QVERIFY(list.waitForFinished(20000));
         QCOMPARE(list.exitCode(), 0);
-        const QStringList names = QString::fromUtf8(list.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+        const QStringList names = QString::fromUtf8(list.readAllStandardOutput()).remove(QLatin1Char('\r')).split('\n', Qt::SkipEmptyParts);
         QVERIFY2(names.contains("lumen.db"), qPrintable(names.join(", ")));
         QVERIFY(names.contains(deep));
         QVERIFY(!names.contains("cache/pdf/skip.png"));
