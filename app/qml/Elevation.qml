@@ -13,5 +13,10 @@ RectangularShadow {
     blur: level === 2 ? 48 : (level === 0 ? 30 : 26)
     spread: -4
     color: Qt.alpha(Ui.shadow, Ui.dark ? 0.5 : (level === 2 ? 0.2 : 0.13))
-    cached: true
+    // A cached shadow is an offscreen texture of its own size, drawn again whenever that size
+    // changes. The page's shadow has the size of the zoomed page, so every zoom step made a new
+    // texture of the whole page (about 15 million pixels at 400%, with the window's 4x MSAA) and
+    // zooming in got slower the further it went. Drawn directly, only what is on screen is shaded.
+    // A typed page's sheet grows as you type, so it is left uncached too.
+    cached: level !== 0
 }
