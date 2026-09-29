@@ -69,6 +69,23 @@ private slots:
         QCOMPARE(s.points.first().tMs, 0u);
         QVERIFY(s.points.last().tMs >= 60u);       // timestamps kept for audio sync
     }
+    void pencilIsAPropertyOfTheStroke() {
+        // A pencil stroke stays pencil through undo and redo; choosing ink again changes only what
+        // comes next, never what is already on the page.
+        std::unique_ptr<InkCanvas> c(make());
+        c->setBrush(QStringLiteral("pencil"));
+        stroke(*c, {100, 100}, {300, 120});
+        c->setBrush(QStringLiteral("ink"));
+        stroke(*c, {100, 200}, {300, 220}, 2000);
+        QCOMPARE(c->strokeCount(), 2);
+        c->undo(); c->undo(); c->redo(); c->redo();
+        const auto &st = c->document()->strokes();
+        QCOMPARE(int(st[0].brush), 1);
+        QCOMPARE(int(st[1].brush), 0);
+        c->setTool(QStringLiteral("highlighter")); c->setBrush(QStringLiteral("pencil"));
+        stroke(*c, {100, 300}, {300, 320}, 3000);
+        QCOMPARE(int(c->document()->strokes().last().brush), 0);   // a highlighter is never a pencil
+    }
     void coordinatesRoundTripThroughZoomAndPan() {
         std::unique_ptr<InkCanvas> c(make());
         c->setZoom(2.5); c->setPan(QPointF(40, -10));

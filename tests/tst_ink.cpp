@@ -187,6 +187,29 @@ private slots:
         const auto live = steadyStroke(raw.mid(0, 90), 1.f);
         QCOMPARE(live.last().x, raw[89].x); QCOMPARE(live.last().y, raw[89].y);
     }
+    void pencilShadesWhenLeantAndIsLighterThanInk() {
+        // Upright at writing angle (30°) then leant over for shading (60°), at the same pressure.
+        QVector<InkPoint> pts;
+        for (int i = 0; i < 60; ++i) { const float t = i < 30 ? 21.f : 42.f; pts.append({float(i) * 2.f, 50.f, 0.6f, t, t, quint32(i * 3)}); }
+        const RibbonShade shade = pencilShade(pts, 0.85f);
+        QCOMPARE(shade.alpha.size(), pts.size());
+        for (int i = 0; i < pts.size(); ++i) {
+            QVERIFY(shade.alpha[i] > 0.f && shade.alpha[i] < 1.f);               // graphite, never solid ink
+            QVERIFY(std::isfinite(shade.widthScale[i]));
+        }
+        QCOMPARE(shade.widthScale[10], 1.f);                                      // writing: no shading
+        QVERIFY(shade.widthScale[50] > 3.f);                                      // leant: the side of the lead
+        float upright = 0, leant = 0;
+        for (int i = 5; i < 25; ++i) upright += shade.alpha[i];
+        for (int i = 35; i < 55; ++i) leant += shade.alpha[i];
+        QVERIFY(leant < 0.7f * upright);                                          // and paler
+        // The same line always has the same grain: redrawing it cannot make it shimmer.
+        QCOMPARE(pencilShade(pts, 0.85f).alpha, shade.alpha);
+        QVector<InkVertex> v;
+        buildRibbon(pts, 1.5f, InkTool::Pen, pencilCurve(0.85f), v, 0.5f, false, &shade);
+        float maxA = 0; for (const InkVertex &q : v) { QVERIFY(std::isfinite(q.x) && std::isfinite(q.y)); maxA = std::max(maxA, q.a); }
+        QVERIFY(maxA < 1.f);
+    }
     void penStylesDiffer() {
         const PressureCurve f = PressureCurve::forStyle(PenStyle::Fountain), b = PressureCurve::forStyle(PenStyle::Ballpoint);
         QVERIFY(f.widthFor(1.5f, 0.1f) < b.widthFor(1.5f, 0.1f));   // a light fountain touch is thin

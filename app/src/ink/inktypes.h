@@ -20,6 +20,8 @@ struct Stroke {
     InkTool tool = InkTool::Pen;
     QRgb color = 0xff000000;
     float width = 1.5f;      // base width in page units (0.4 mm ≈ 1.5 px)
+    quint8 brush = 0;        // pen strokes: 0 ink, 1 pencil (ADR mynotes-003). Stored in the codec's
+                             // flags byte, which builds before it ignore: they show a pencil as ink.
     quint64 recordingId = 0; // 0 = not written during a recording
     quint32 startMs = 0;     // stroke start relative to the recording (Phase 5); points carry offsets
     QVector<InkPoint> points;

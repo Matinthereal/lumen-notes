@@ -165,14 +165,24 @@ QJsonObject PdfService::pagePayload(qint64 pageId) const
         if (strokecodec::decode(q.blob(0), strokes)) {
             const PressureCurve curve = PressureCurve::forStyle(PenStyle::Classic);
             for (const Stroke &s : strokes) {
+                // A pencil line exports with its widths (the shading when leant) at its average tone:
+                // a PDF line has one opacity, so the grain stays on screen.
+                const bool pencil = s.brush == 1 && s.tool == InkTool::Pen;
+                const QVector<InkPoint> sp = smoothStroke(s.points, 2.f);
+                const RibbonShade shade = pencil ? pencilShade(sp, curve.ceiling) : RibbonShade{};
+                const PressureCurve use = pencil ? pencilCurve(curve.ceiling) : curve;
                 QJsonArray pts;
-                for (const InkPoint &p : smoothStroke(s.points, 2.f)) {
-                    const float w = s.tool == InkTool::Highlighter ? s.width : curve.widthFor(s.width, p.pressure);
+                float tone = 0;
+                for (int k = 0; k < sp.size(); ++k) {
+                    const InkPoint &p = sp[k];
+                    float w = s.tool == InkTool::Highlighter ? s.width : use.widthFor(s.width, p.pressure);
+                    if (pencil) { w *= shade.widthScale[k]; tone += shade.alpha[k]; }
                     pts.append(QJsonArray{p.x, p.y, w});
                 }
                 const QColor c = QColor::fromRgba(s.color);
+                const double opacity = c.alphaF() * (pencil && !sp.isEmpty() ? tone / sp.size() : 1.0);
                 polys.append(QJsonObject{{"points", pts}, {"color", QJsonArray{c.redF(), c.greenF(), c.blueF()}},
-                                         {"opacity", c.alphaF()}, {"round", s.tool == InkTool::Pen}});
+                                         {"opacity", opacity}, {"round", s.tool == InkTool::Pen}});
             }
         }
     }

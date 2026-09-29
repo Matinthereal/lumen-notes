@@ -23,7 +23,7 @@ void encodeStroke(QByteArray &b, const Stroke &s)
     b.append(char(s.tool));
     putRaw<quint32>(b, quint32(s.color));
     putRaw<float>(b, s.width);
-    b.append(char(0)); // flags
+    b.append(char(s.brush & 0x0F)); // flags: the brush (pencil), which older builds skip
     putRaw<quint64>(b, s.recordingId);
     putRaw<quint32>(b, s.startMs);
     putVar(b, quint64(s.points.size()));
@@ -44,7 +44,8 @@ bool decodeStroke(const char *&p, const char *end, Stroke &s)
     if (!getRaw(p, end, s.id)) return false;
     if (p >= end) return false; tool = quint8(*p++);
     if (!getRaw(p, end, rgba) || !getRaw(p, end, s.width)) return false;
-    if (p >= end) return false; flags = quint8(*p++); (void)flags;
+    if (p >= end) return false; flags = quint8(*p++);
+    s.brush = flags & 0x0F;
     if (!getRaw(p, end, s.recordingId) || !getRaw(p, end, s.startMs)) return false;
     if (!getVar(p, end, n) || n > 10'000'000) return false;
     s.tool = tool == 1 ? InkTool::Highlighter : InkTool::Pen;

@@ -168,7 +168,7 @@ Rectangle {
                         const hl = canvas.tool === "highlighter"
                         library.setSetting(fav.key, JSON.stringify({ tool: hl ? "highlighter" : "pen",
                                                                     colour: (hl ? canvas.highlighterColor : canvas.penColor).toString(),
-                                                                    width: canvas.penWidth, style: canvas.penStyle }))
+                                                                    width: canvas.penWidth, style: canvas.penStyle, brush: canvas.brush }))
                         bar.presetsChanged()
                         bar.toast((hl ? "Highlighter" : "Pen") + " stored as favourite " + (fav.index + 1))
                     }
@@ -185,6 +185,7 @@ Rectangle {
                         if (p.tool === "highlighter") { canvas.highlighterColor = p.colour; canvas.tool = "highlighter"; return }
                         canvas.penColor = p.colour; canvas.penWidth = p.width
                         if (p.style) canvas.penStyle = p.style
+                        canvas.brush = p.brush || "ink"          // favourites from before the pencil were ink
                         canvas.tool = "pen"
                     }
                 }

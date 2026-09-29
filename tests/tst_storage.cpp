@@ -80,6 +80,7 @@ private slots:
     void codecRoundTripIsExactWhereItPromises() {
         QVector<Stroke> in; for (int i = 1; i <= 40; ++i) in.append(randomStroke(i, 5 + i));
         in.append(Stroke{}); in.last().id = 99; in.last().points.append({1.5f, -2.25f, 0.5f, 0, 0, 0}); in.last().updateBounds();
+        for (int i = 0; i < in.size(); i += 3) in[i].brush = 1;                   // pencil strokes among the ink
         const QByteArray blob = strokecodec::encode(in);
         QVERIFY(blob.startsWith("MYNK"));
         QVector<Stroke> out; QVERIFY(strokecodec::decode(blob, out));
@@ -87,6 +88,7 @@ private slots:
         for (int i = 0; i < in.size(); ++i) {
             QCOMPARE(out[i].id, in[i].id); QCOMPARE(int(out[i].tool), int(in[i].tool)); QCOMPARE(out[i].color, in[i].color);
             QCOMPARE(out[i].width, in[i].width); QCOMPARE(out[i].recordingId, in[i].recordingId); QCOMPARE(out[i].startMs, in[i].startMs);
+            QCOMPARE(out[i].brush, in[i].brush);
             QCOMPARE(out[i].points.size(), in[i].points.size());
             for (int k = 0; k < in[i].points.size(); ++k) {
                 QVERIFY(std::abs(out[i].points[k].x - in[i].points[k].x) <= 1.f / 128 + 1e-4f);

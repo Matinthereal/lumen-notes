@@ -61,6 +61,7 @@ class InkCanvas : public QQuickItem, public TabletSink {
     Q_PROPERTY(QString penStyle READ penStyle WRITE setPenStyle NOTIFY styleChanged)
     Q_PROPERTY(QString inkEdges READ inkEdges WRITE setInkEdges NOTIFY styleChanged)   // classic | true
     Q_PROPERTY(bool steadyInk READ steadyInk WRITE setSteadyInk NOTIFY styleChanged)
+    Q_PROPERTY(QString brush READ brush WRITE setBrush NOTIFY styleChanged)   // ink | pencil: for new pen strokes
     Q_PROPERTY(qreal smoothing MEMBER m_smoothing NOTIFY styleChanged)        // 0 = raw, 1 = calm
     Q_PROPERTY(bool shapeSnap MEMBER m_shapeSnap NOTIFY styleChanged)
     Q_PROPERTY(bool scratchOut MEMBER m_scratchOut NOTIFY styleChanged)   // scribble over ink to rub it out
@@ -106,6 +107,8 @@ public:
     void setInkEdges(const QString &edges);
     bool steadyInk() const { return m_steadyInk; }
     void setSteadyInk(bool on);
+    QString brush() const { return m_pencil ? QStringLiteral("pencil") : QStringLiteral("ink"); }
+    void setBrush(const QString &brush);
     QString lastShape() const { return m_lastShape; }
     QString stats() const { return m_stats; }
     int touchIgnored() const { return m_touchIgnored; }
@@ -257,6 +260,10 @@ private:
     // exactly as written. The highlighter is left alone.
     bool m_steadyInk = false;
     QVector<InkPoint> shapeStroke(const QVector<InkPoint> &pts, InkTool tool, float spacing) const;
+    // Pencil: a brush of the stroke, not of the canvas, so a page can hold both. New pen strokes
+    // take it from here; every stroke is drawn by its own.
+    bool m_pencil = false;
+    void ribbon(const QVector<InkPoint> &pts, float width, InkTool tool, quint8 brush, float spacing, QVector<InkVertex> &out) const;
     qreal m_smoothing = 0.0;   // 0 = raw samples (what the maker approved); >0 enables the 1€ filter
     bool m_shapeSnap = true;
     bool m_scratchOut = true;

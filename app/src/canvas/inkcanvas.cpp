@@ -115,6 +115,25 @@ QVector<InkPoint> InkCanvas::shapeStroke(const QVector<InkPoint> &pts, InkTool t
     return smoothStroke(pts, spacing);
 }
 
+void InkCanvas::setBrush(const QString &brush)
+{
+    const bool pencil = brush == QLatin1String("pencil");
+    if (pencil == m_pencil) return;
+    m_pencil = pencil;
+    emit styleChanged();              // only new strokes change: nothing to redraw
+}
+
+void InkCanvas::ribbon(const QVector<InkPoint> &pts, float width, InkTool tool, quint8 brush, float spacing, QVector<InkVertex> &out) const
+{
+    const QVector<InkPoint> shaped = shapeStroke(pts, tool, spacing);
+    if (brush == 1 && tool == InkTool::Pen) {
+        const RibbonShade shade = pencilShade(shaped, m_curve.ceiling);
+        buildRibbon(shaped, width, tool, pencilCurve(m_curve.ceiling), out, featherWidth(), m_trueEdges, &shade);
+    } else {
+        buildRibbon(shaped, width, tool, m_curve, out, featherWidth(), m_trueEdges);
+    }
+}
+
 float InkCanvas::featherWidth() const
 {
     if (!m_trueEdges) return float(0.8 / m_zoom);
@@ -590,6 +609,7 @@ void InkCanvas::beginStroke(QPointF page, float pressure, float tiltX, float til
     } else {
         m_active.color = m_penColor.rgba();
         m_active.width = float(m_penWidth);
+        m_active.brush = m_pencil ? 1 : 0;
     }
     m_strokeT0 = tMs;
     if (m_recordingId) {

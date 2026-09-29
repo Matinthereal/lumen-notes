@@ -42,7 +42,17 @@ InkPoint predictPoint(const QVector<InkPoint> &pts, float dtMs, float damping = 
 // centred (the "true edges" option, ADR mynotes-003): the rim straddles the stroke's edge instead
 // of lying outside it, so half-coverage falls exactly at the nominal width — classic ink reads
 // half a rim wider than it is — and a highlighter's square ends are feathered too.
+// Per-sample extras for a ribbon: a width factor and the core's opacity (1 = solid ink).
+struct RibbonShade { QVector<float> widthScale, alpha; };
+
 void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, const PressureCurve &curve,
-                 QVector<InkVertex> &out, float feather = 0.f, bool centred = false);
+                 QVector<InkVertex> &out, float feather = 0.f, bool centred = false, const RibbonShade *shade = nullptr);
+
+// The pencil (ADR mynotes-003): graphite is lighter with a light touch and grainy along the line,
+// and a pencil leant over past writing angle shades — a wider, paler mark, as with the side of
+// the lead. Tilt is degrees from upright (the maker's pen writes at 23–35°, p95; an Apple Pencil
+// laid down for shading reaches 60–75°). Pressure is normalised by the ceiling like the pen's.
+RibbonShade pencilShade(const QVector<InkPoint> &pts, float ceiling);
+PressureCurve pencilCurve(float ceiling);
 
 void appendStrip(QVector<InkVertex> &strip, const QVector<InkVertex> &piece);

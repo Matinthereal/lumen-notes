@@ -168,13 +168,13 @@ void appendStrip(QVector<InkVertex> &strip, const QVector<InkVertex> &piece)
 namespace {
 
 // Fan around (cx,cy) as a strip: c, p0, c, p1 … ; then a feathered rim if feather > 0.
-void appendArc(QVector<InkVertex> &out, float cx, float cy, float r, float a0, float a1, int segs, float feather)
+void appendArc(QVector<InkVertex> &out, float cx, float cy, float r, float a0, float a1, int segs, float feather, float core = 1.f)
 {
     QVector<InkVertex> fan;
     for (int i = 0; i <= segs; ++i) {
         const float a = a0 + (a1 - a0) * float(i) / segs;
-        fan.append({cx, cy, 1.f});
-        fan.append({cx + r * std::cos(a), cy + r * std::sin(a), 1.f});
+        fan.append({cx, cy, core});
+        fan.append({cx + r * std::cos(a), cy + r * std::sin(a), core});
     }
     appendStrip(out, fan);
     if (feather > 0) {
@@ -182,7 +182,7 @@ void appendArc(QVector<InkVertex> &out, float cx, float cy, float r, float a0, f
         for (int i = 0; i <= segs; ++i) {
             const float a = a0 + (a1 - a0) * float(i) / segs;
             const float c = std::cos(a), s = std::sin(a);
-            rim.append({cx + r * c, cy + r * s, 1.f});
+            rim.append({cx + r * c, cy + r * s, core});
             rim.append({cx + (r + feather) * c, cy + (r + feather) * s, 0.f});
         }
         appendStrip(out, rim);
@@ -217,7 +217,7 @@ void flushRun(QVector<InkVertex> &out, const Side &run, float feather, const QVe
 } // namespace
 
 void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, const PressureCurve &curve,
-                 QVector<InkVertex> &out, float feather, bool centred)
+                 QVector<InkVertex> &out, float feather, bool centred, const RibbonShade *shade)
 {
     out.clear();
     const int n = pts.size();
@@ -238,21 +238,23 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
             const float dt = std::max(8.f, float(pts[i].tMs) - float(pts[j].tMs));
             w *= std::clamp(1.f - curve.speedThinning * (dist / dt), curve.speedFloor, 1.f);
         }
+        if (shade && i < shade->widthScale.size()) w *= shade->widthScale[i];
         hw[i] = std::max(w, 0.3f) * 0.5f;
     }
+    const auto coreA = [&](int i) { return shade && i < shade->alpha.size() ? shade->alpha[i] : 1.f; };
     // True edges: pull the solid core in by half the rim, so the rim's midpoint is the edge. A line
     // thinner than the rim keeps a sliver of core and fades, as it would under a real rasteriser.
     if (centred && feather > 0)
         for (float &h : hw) h = std::max(h - feather * 0.5f, 0.05f);
 
     if (n == 1) {
-        appendArc(out, pts[0].x, pts[0].y, hw[0], 0.f, 2.f * std::numbers::pi_v<float>, 14, feather);
+        appendArc(out, pts[0].x, pts[0].y, hw[0], 0.f, 2.f * std::numbers::pi_v<float>, 14, feather, coreA(0));
         return;
     }
 
     if (pen) {
         const float ang = std::atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
-        appendArc(out, pts[0].x, pts[0].y, hw[0], ang + std::numbers::pi_v<float> / 2, ang + 3 * std::numbers::pi_v<float> / 2, 7, feather);
+        appendArc(out, pts[0].x, pts[0].y, hw[0], ang + std::numbers::pi_v<float> / 2, ang + 3 * std::numbers::pi_v<float> / 2, 7, feather, coreA(0));
     }
 
     Side run; QVector<float> nxs, nys;
@@ -277,27 +279,27 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
                 const float turn = 1.f - (sx * ex + sy * ey) / (sl * el); // 0 straight … 2 reversal
                 if (turn > 0.15f) {
                     // Sharp corner: end the run here, drop a round joint, start a new run.
-                    run.l.append({p.x + nx * hw[i], p.y + ny * hw[i], 1.f});
-                    run.r.append({p.x - nx * hw[i], p.y - ny * hw[i], 1.f});
+                    run.l.append({p.x + nx * hw[i], p.y + ny * hw[i], coreA(i)});
+                    run.r.append({p.x - nx * hw[i], p.y - ny * hw[i], coreA(i)});
                     nxs.append(nx); nys.append(ny);
                     flushRun(out, run, feather, nxs, nys);
                     run = Side{}; nxs.clear(); nys.clear();
-                    appendArc(out, p.x, p.y, hw[i], 0.f, 2.f * std::numbers::pi_v<float>, 10, feather);
+                    appendArc(out, p.x, p.y, hw[i], 0.f, 2.f * std::numbers::pi_v<float>, 10, feather, coreA(i));
                     continue;
                 }
                 const float cosHalf = std::abs((-sy / sl) * nx + (sx / sl) * ny);
                 scale = hw[i] / std::max(cosHalf, 0.6f);
             }
         }
-        run.l.append({p.x + nx * scale, p.y + ny * scale, 1.f});
-        run.r.append({p.x - nx * scale, p.y - ny * scale, 1.f});
+        run.l.append({p.x + nx * scale, p.y + ny * scale, coreA(i)});
+        run.r.append({p.x - nx * scale, p.y - ny * scale, coreA(i)});
         nxs.append(nx); nys.append(ny);
     }
     flushRun(out, run, feather, nxs, nys);
 
     if (pen) {
         const float ang = std::atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x);
-        appendArc(out, pts[n - 1].x, pts[n - 1].y, hw[n - 1], ang - std::numbers::pi_v<float> / 2, ang + std::numbers::pi_v<float> / 2, 7, feather);
+        appendArc(out, pts[n - 1].x, pts[n - 1].y, hw[n - 1], ang - std::numbers::pi_v<float> / 2, ang + std::numbers::pi_v<float> / 2, 7, feather, coreA(n - 1));
     } else if (centred && feather > 0) {
         // Highlighter: its square ends get a rim as well, with a corner piece joining it to the
         // sides' rims, or the ends stay stair-stepped while the sides are smooth.
@@ -317,4 +319,40 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
         endRim(0, sx, sy);
         endRim(n - 1, ex, ey);
     }
+}
+
+namespace {
+float smoothstep(float e0, float e1, float x) { const float t = std::clamp((x - e0) / (e1 - e0), 0.f, 1.f); return t * t * (3 - 2 * t); }
+// Value noise along the line: the same arc length always gives the same grain, so a stroke does
+// not shimmer as it grows or when it is redrawn.
+float grain(float s)
+{
+    const auto hash = [](int i) { quint32 h = quint32(i) * 2654435761u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; return float(h & 0xffff) / 65535.f; };
+    const int i = int(std::floor(s)); const float f = s - float(i), u = f * f * (3 - 2 * f);
+    return hash(i) + (hash(i + 1) - hash(i)) * u;
+}
+} // namespace
+
+PressureCurve pencilCurve(float ceiling)
+{
+    // A pencil's line barely widens with pressure; it darkens (pencilShade does that).
+    PressureCurve c; c.ceiling = ceiling; c.minScale = 0.8f; c.maxScale = 1.15f; c.gamma = 1.f;
+    return c;
+}
+
+RibbonShade pencilShade(const QVector<InkPoint> &pts, float ceiling)
+{
+    RibbonShade shade;
+    const int n = pts.size();
+    shade.widthScale.resize(n); shade.alpha.resize(n);
+    float s = 0;
+    for (int i = 0; i < n; ++i) {
+        if (i > 0) s += std::hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        const float p = ceiling > 0 ? std::clamp(pts[i].pressure / ceiling, 0.f, 1.f) : 1.f;
+        const float lean = smoothstep(38.f, 58.f, std::hypot(pts[i].tiltX, pts[i].tiltY));   // 0 writing … 1 shading
+        shade.widthScale[i] = 1.f + 2.6f * lean;
+        const float tone = (0.38f + 0.57f * p) * (1.f - 0.5f * lean);
+        shade.alpha[i] = std::clamp(tone * (0.8f + 0.2f * grain(s / 1.6f)), 0.05f, 1.f);
+    }
+    return shade;
 }

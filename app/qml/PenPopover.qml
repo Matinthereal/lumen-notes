@@ -94,8 +94,31 @@ Popup {
                 }
             }
         }
+        // Ink or pencil: a pencil stroke stays a pencil stroke, and a page can hold both. The ink
+        // styles below are the ink's; a pencil darkens with pressure and shades when leant over.
         RowLayout {
             visible: pop.canvas.tool !== "highlighter"
+            spacing: 6
+            Repeater {
+                model: [["Ink", "ink"], ["Pencil", "pencil"]]
+                delegate: LButton {
+                    required property var modelData
+                    objectName: "brushButton"
+                    text: modelData[0]
+                    highlighted: pop.canvas.brush === modelData[1]
+                    Accessible.name: text + (highlighted ? ", chosen" : "")
+                    onClicked: { pop.canvas.brush = modelData[1]; library.setSetting("pen.brush", modelData[1]) }
+                }
+            }
+        }
+        Text {
+            visible: pop.canvas.tool !== "highlighter" && pop.canvas.brush === "pencil"
+            text: "Press lightly for a pale line; lean the pen right over to shade."
+            color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small
+            Layout.maximumWidth: 280; wrapMode: Text.Wrap
+        }
+        RowLayout {
+            visible: pop.canvas.tool !== "highlighter" && pop.canvas.brush !== "pencil"
             spacing: 6
             Repeater {
                 model: [["Classic", "classic"], ["Fountain", "fountain"], ["Ballpoint", "ballpoint"], ["Brush", "brush"]]

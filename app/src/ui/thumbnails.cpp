@@ -159,6 +159,7 @@ void Thumbnails::render(qint64 pageId)
         for (const Stroke &st : strokes) {
             QColor c = QColor::fromRgba(st.color);
             if (st.tool == InkTool::Highlighter) c.setAlphaF(0.35);
+            else if (st.brush == 1) c.setAlphaF(0.65);            // pencil: graphite, not ink
             const QVector<InkPoint> pts = smoothStroke(st.points, 4.f);
             const float w = std::max(1.2f / float(s), st.tool == InkTool::Highlighter ? st.width : curve.widthFor(st.width, 0.5f));
             p.setPen(QPen(c, w, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
