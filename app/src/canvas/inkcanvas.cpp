@@ -32,7 +32,6 @@ InkCanvas::InkCanvas(QQuickItem *parent) : QQuickItem(parent), m_undo(&m_doc)
     setAcceptTouchEvents(true);
     setAcceptedMouseButtons(Qt::LeftButton);
     setAcceptHoverEvents(true);
-    setCursor(Qt::BlankCursor);     // the page draws its own tip (dot / eraser ring); no arrow over the paper
     m_spacingSettle.setSingleShot(true);
     m_spacingSettle.setInterval(350);
     connect(&m_spacingSettle, &QTimer::timeout, this, [this] {
@@ -300,6 +299,22 @@ void InkCanvas::setInking(bool v)
     emit inkingChanged();
 }
 
+// The page draws its own tip (dot / eraser ring) for the pen, and a finger needs no pointer, so the
+// system cursor is hidden only while one of those is in use: a mouse or touchpad brings it back.
+void InkCanvas::showSystemCursor(bool show)
+{
+    if (show == m_systemCursor) return;
+    m_systemCursor = show;
+    if (show) unsetCursor();
+    else setCursor(Qt::BlankCursor);
+}
+
+// Qt also sends mouse events made up from the pen and from fingers; those carry their own device.
+static bool fromMouse(const QInputDevice *device)
+{
+    return device && (device->type() == QInputDevice::DeviceType::Mouse || device->type() == QInputDevice::DeviceType::TouchPad);
+}
+
 // ---------------------------------------------------------------- tablet input
 
 void InkCanvas::tabletProximity(bool entering, const TabletSample &)
@@ -348,6 +363,7 @@ bool InkCanvas::tabletSample(const TabletSample &s)
     bool inside = contains(local);
     if (inside && m_gesture == Gesture::None && pointerBelongsToChrome(s.windowPos)) {
         m_hoverValid = false;
+        showSystemCursor(true);         // no tip is drawn over chrome, so the pen needs the pointer
         update();
         return false;
     }
@@ -356,9 +372,11 @@ bool InkCanvas::tabletSample(const TabletSample &s)
     // touch reaches QML through a different path, the pen only reaches it if we decline.
     if (effectiveTool() == Tool::Shape && m_gesture == Gesture::None) {
         m_hoverValid = false;
+        showSystemCursor(true);
         update();
         return false;
     }
+    showSystemCursor(false);
 
     const bool tipDown = s.buttons & Qt::LeftButton;
     switch (s.kind) {
@@ -876,6 +894,7 @@ void InkCanvas::addBenchmarkStrokes(int count)
 
 void InkCanvas::touchEvent(QTouchEvent *event)
 {
+    showSystemCursor(false);
     const qint64 now = m_clock.elapsed();
     const bool palm = m_penNear || (m_penLeftAt >= 0 && now - m_penLeftAt < m_palmRejectMs) || m_gesture != Gesture::None;
     if (palm) {
@@ -1013,6 +1032,7 @@ void InkCanvas::mouseUngrabEvent() { abandonGesture(); }
 
 void InkCanvas::mousePressEvent(QMouseEvent *event)
 {
+    if (fromMouse(event->device())) showSystemCursor(true);
     if (m_penNear) { event->ignore(); return; }
     if (pointerBelongsToChrome(mapToScene(event->position()))) { event->ignore(); return; }
     m_mouseDown = true;
@@ -1032,6 +1052,7 @@ void InkCanvas::mouseReleaseEvent(QMouseEvent *event)
 }
 void InkCanvas::hoverMoveEvent(QHoverEvent *event)
 {
+    if (fromMouse(event->device())) showSystemCursor(true);
     if (m_penNear) return;
     m_hoverLocal = event->position();
     m_hoverValid = true;

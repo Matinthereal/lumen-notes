@@ -291,6 +291,7 @@ private:
     Stroke m_active;
     quint64 m_strokeT0 = 0;
     bool m_inking = false;
+    void showSystemCursor(bool show);
     bool m_penNear = false;
     qint64 m_penLeftAt = -1;
     bool m_buttonHeld = false;
@@ -310,6 +311,7 @@ private:
     int m_activeHandle = -1;
     QVector<Stroke> m_clipboard;
     bool m_mouseDown = false;
+    bool m_systemCursor = true;
     QPointF m_hoverLocal;
     bool m_hoverValid = false;
 

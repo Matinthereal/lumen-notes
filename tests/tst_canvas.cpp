@@ -1,4 +1,5 @@
 #include <QPointingDevice>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTouchEvent>
 #include <QtTest>
@@ -25,6 +26,37 @@ class TstCanvas : public QObject {
         return c;
     }
 private slots:
+    // The page draws its own tip for the pen and a finger needs no pointer, so only those hide the
+    // cursor; a mouse or touchpad must always have one. Through a real window, whose cursor is the
+    // one a person sees.
+    void cursorHidesOnlyForPenAndTouch() {
+        QQuickWindow win;
+        win.resize(800, 600);
+        InkCanvas *c = make();
+        c->setParentItem(win.contentItem());
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        const QPoint mid(400, 300);
+        QCOMPARE(win.cursor().shape(), Qt::ArrowCursor);          // nothing used yet: visible
+        QTest::mouseMove(&win, mid);
+        QCOMPARE(win.cursor().shape(), Qt::ArrowCursor);
+        QPointingDevice *finger = QTest::createTouchDevice();
+        QTest::touchEvent(&win, finger).press(0, mid);
+        QTest::touchEvent(&win, finger).release(0, mid);
+        QCOMPARE(win.cursor().shape(), Qt::BlankCursor);
+        QTest::mouseMove(&win, mid + QPoint(12, 4));
+        QCOMPARE(win.cursor().shape(), Qt::ArrowCursor);
+        c->tabletSample(sample(TabletSample::Kind::Move, mid, 5000, Qt::NoButton));   // the pen hovering over the page
+        QCOMPARE(win.cursor().shape(), Qt::BlankCursor);
+        stroke(*c, {300, 300}, {420, 330}, 6000);
+        QCOMPARE(win.cursor().shape(), Qt::BlankCursor);
+        c->tabletProximity(false, sample(TabletSample::Kind::Move, mid, 6200, Qt::NoButton));
+        QTest::mouseMove(&win, mid + QPoint(-30, 10));             // back on the touchpad
+        QCOMPARE(win.cursor().shape(), Qt::ArrowCursor);
+        c->setTool("shape");                                         // the shape layer draws no tip:
+        c->tabletSample(sample(TabletSample::Kind::Move, mid, 7000, Qt::NoButton));
+        QCOMPARE(win.cursor().shape(), Qt::ArrowCursor);            // the pen keeps the pointer
+    }
     void penStrokeUndoRedo() {
         std::unique_ptr<InkCanvas> c(make());
         stroke(*c, {100, 100}, {300, 120});
