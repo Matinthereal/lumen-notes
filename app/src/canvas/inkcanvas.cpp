@@ -32,6 +32,12 @@ InkCanvas::InkCanvas(QQuickItem *parent) : QQuickItem(parent), m_undo(&m_doc)
     setAcceptTouchEvents(true);
     setAcceptedMouseButtons(Qt::LeftButton);
     setAcceptHoverEvents(true);
+    // iOS never says when the pen moves away (Qt's iOS plugin sends no proximity events) and
+    // Android need not: there the pen counts as gone a moment after a sample with its tip up.
+    // Without this, one stroke left every later finger rejected as a palm for good.
+    m_penIdle.setSingleShot(true);
+    m_penIdle.setInterval(250);
+    connect(&m_penIdle, &QTimer::timeout, this, [this] { if (m_penNear && m_gesture == Gesture::None) penLeft(); });
     m_spacingSettle.setSingleShot(true);
     m_spacingSettle.setInterval(350);
     connect(&m_spacingSettle, &QTimer::timeout, this, [this] {
@@ -319,15 +325,21 @@ static bool fromMouse(const QInputDevice *device)
 
 void InkCanvas::tabletProximity(bool entering, const TabletSample &)
 {
-    if (entering) {
-        m_penNear = true;
-        m_touchPts.clear(); // any touch in flight is a palm from now on
-    } else {
-        m_penNear = false;
-        m_penLeftAt = m_clock.elapsed();
-        if (m_gesture != Gesture::None) pointerRelease(m_hoverLocal, 0);
-        m_buttonHeld = false;
-    }
+    m_proximityReported = true;
+    m_penIdle.stop();
+    if (!entering) { penLeft(); return; }
+    m_penNear = true;
+    m_touchPts.clear(); // any touch in flight is a palm from now on
+    emit inkingChanged();
+    update();
+}
+
+void InkCanvas::penLeft()
+{
+    m_penNear = false;
+    m_penLeftAt = m_clock.elapsed();
+    if (m_gesture != Gesture::None) pointerRelease(m_hoverLocal, 0);
+    m_buttonHeld = false;
     emit inkingChanged();
     update();
 }
@@ -341,6 +353,10 @@ bool InkCanvas::tabletSample(const TabletSample &s)
     m_lastSampleArrivalUs = m_clock.nsecsElapsed() / 1000;
     ++m_samplesThisSecond;
     m_penNear = true;
+    if (!m_proximityReported) {
+        if (s.buttons & Qt::LeftButton) m_penIdle.stop();
+        else m_penIdle.start();
+    }
 
     m_straightEdge = s.modifiers.testFlag(Qt::ShiftModifier);
     const bool side = s.buttons & (Qt::MiddleButton | Qt::RightButton);

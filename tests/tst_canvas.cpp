@@ -143,6 +143,28 @@ private slots:
         c->tabletSample(sample(TabletSample::Kind::Move, {200, 150}, 4150, Qt::NoButton));
         QCOMPARE(c->strokeCount(), 2);
     }
+    // Qt's iOS plugin sends no proximity events at all (and Android need not), so the pen is taken
+    // to have gone a moment after its tip lifts; otherwise one stroke made every later finger a palm.
+    void fingersPanAgainAfterAPenThatNeverSaysItLeft() {
+        std::unique_ptr<InkCanvas> c(make());
+        QPointingDevice dev("finger", 2, QInputDevice::DeviceType::TouchScreen, QPointingDevice::PointerType::Finger, QInputDevice::Capability::Position, 10, 0);
+        auto touch = [&](QEvent::Type type, QEventPoint::State st, QPointF p) {
+            QEventPoint pt(1, st, p, p);
+            QTouchEvent ev(type, &dev, Qt::NoModifier, {pt});
+            QCoreApplication::sendEvent(c.get(), &ev);
+        };
+        c->setProperty("palmRejectMs", 0);
+        stroke(*c, {100, 100}, {300, 120});
+        QVERIFY(c->penNear());
+        touch(QEvent::TouchBegin, QEventPoint::Pressed, {300, 300});     // the palm resting as it lifts
+        touch(QEvent::TouchEnd, QEventPoint::Released, {300, 300});
+        QCOMPARE(c->pan(), QPointF(0, 0));
+        QTRY_VERIFY_WITH_TIMEOUT(!c->penNear(), 1000);
+        touch(QEvent::TouchBegin, QEventPoint::Pressed, {300, 300});
+        touch(QEvent::TouchUpdate, QEventPoint::Updated, {340, 310});
+        touch(QEvent::TouchEnd, QEventPoint::Released, {340, 310});
+        QCOMPARE(c->pan(), QPointF(40, 10));
+    }
     void touchIsIgnoredWhilePenNearAndPansOtherwise() {
         std::unique_ptr<InkCanvas> c(make());
         QPointingDevice dev("finger", 1, QInputDevice::DeviceType::TouchScreen, QPointingDevice::PointerType::Finger, QInputDevice::Capability::Position, 10, 0);

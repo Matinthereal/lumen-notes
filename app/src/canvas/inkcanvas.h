@@ -292,7 +292,10 @@ private:
     quint64 m_strokeT0 = 0;
     bool m_inking = false;
     void showSystemCursor(bool show);
+    void penLeft();
     bool m_penNear = false;
+    bool m_proximityReported = false;   // the platform says when the pen comes and goes
+    QTimer m_penIdle;                   // …and where it doesn't, this does
     qint64 m_penLeftAt = -1;
     bool m_buttonHeld = false;
     qint64 m_lastButtonPressMs = -1;
