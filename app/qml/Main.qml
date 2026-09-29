@@ -307,8 +307,11 @@ Window {
         }
         function onWords(pageId, words) { if (pageId === root.currentPageId) canvas.setWords(words) }
         function onImported(sectionId, firstPageId, token) { if (firstPageId) root.openPage(firstPageId) }
-        function onExported(file, pages) { toastBar.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null) }
-        function onFailed(message) { toastBar.show(message, null) }
+        function onExported(file, pages) {
+            if (root.sharing) { root.sharing = false; platform.share(file, Qt.rect(0, 0, 0, 0)); return }
+            toastBar.show("Exported " + pages + " page" + (pages === 1 ? "" : "s") + " to " + file, null)
+        }
+        function onFailed(message) { root.sharing = false; toastBar.show(message, null) }
     }
     Timer { id: rerender; interval: 250; onTriggered: { if (!pdf.pageHasPdf(root.currentPageId)) return; const want = Math.min(Math.max(canvas.zoom, 0.5), 4.0); if (Math.abs(want - root.renderedScale) / Math.max(root.renderedScale, 0.01) > 0.2) pdf.requestRender(root.currentPageId, want) } }
     FileDialog {
@@ -561,7 +564,9 @@ Window {
                 id: leftOverlay
                 visible: root.tablet && root.leftPanel.length > 0; active: visible
                 anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
-                          top: parent.top; bottom: parent.bottom; margins: 8; bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
+                          top: parent.top; bottom: parent.bottom; margins: 8
+                          topMargin: toolbar.visible ? toolbar.height + 22 : 8     // on a narrow screen the toolbar spans it
+                          bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.panel
                 sourceComponent: leftPanelComponent
                 z: 5
@@ -629,9 +634,9 @@ Window {
                 opacity: canvas.inking ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 enabled: visible && opacity > 0.5
-                onExportRequested: exportDialog.open()
+                onExportRequested: root.exportPdf("section")
                 onPresentRequested: root.startPresenting()
-                onExportPageRequested: exportPageDialog.open()
+                onExportPageRequested: root.exportPdf("page")
                 onPictureRequested: pictureDialog.open()
                 onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
@@ -1159,7 +1164,7 @@ Window {
                 visible: root.leftPanel === "notebooks"
                 onOpenPage: (pageId) => { root.openPage(pageId); if (root.tablet) root.leftPanel = "" }
                 onImportPdf: (notebookId) => { importDialog.notebookId = notebookId; importDialog.open() }
-                onExportNotebook: (notebookId) => { notebookExportDialog.notebookId = notebookId; notebookExportDialog.open() }
+                onExportNotebook: (notebookId) => root.exportNotebook(notebookId)
                 onImportNotebook: notebookImportDialog.open()
                 onClosePage: root.closePage()
                 onOpenBeside: (pageId) => root.openSplit(pageId)
@@ -1323,6 +1328,57 @@ Window {
     // Qt matches a shortcut before it delivers the key, and a text item only claims ShortcutOverride
     // for keys below Escape — so while you are typing this used to swallow Escape and a text field's
     // Keys.onEscapePressed never ran.
+    // ---- Exports. Where the system has a share sheet (iPad: Qt's iOS save dialog does not exist),
+    // the file is written to the cache and handed to it; elsewhere the save dialog asks where.
+    property bool sharing: false
+    function exportPdf(kind) {
+        const info = library.page(root.currentPageId)
+        if (!info.id) return
+        if (!platform.canShare) { (kind === "page" ? exportPageDialog : exportDialog).open(); return }
+        root.sharing = true
+        const name = (kind === "page" ? library.displayTitle(info.id) : info.sectionName) || "Lumen"
+        pdf.exportPages(kind, kind === "page" ? info.id : info.sectionId, platform.shareTarget(name + ".pdf"))
+    }
+    function exportNotebook(notebookId) {
+        if (!platform.canShare) { notebookExportDialog.notebookId = notebookId; notebookExportDialog.open(); return }
+        const target = platform.shareTarget(notebooks.suggestedName(notebookId))
+        const r = notebooks.exportNotebook(notebookId, target)
+        if (r.ok) platform.share(target, Qt.rect(0, 0, 0, 0))
+        else toastBar.show("Could not export: " + r.error, null)
+    }
+
+    // ---- Apple Pencil: double-tap and squeeze do what the iPad's Pencil settings ask for.
+    property string toolNow: "pen"
+    property string toolBefore: "pen"
+    Connections {
+        target: canvas
+        function onToolChanged() { if (canvas.tool !== root.toolNow) { root.toolBefore = root.toolNow; root.toolNow = canvas.tool } }
+    }
+    function pencilAction(action) {
+        if (root.currentPageId <= 0 || root.pageTyped || root.overlayUp) return
+        if (action === "switchEraser") canvas.tool = canvas.tool === "eraser" ? (root.toolBefore === "eraser" ? "pen" : root.toolBefore) : "eraser"
+        else if (action === "switchPrevious") canvas.tool = root.toolBefore
+        else if (action === "showColorPalette" || action === "showInkAttributes" || action === "showContextualPalette") toolbar.showPalette()
+    }
+    // A notebook or a PDF handed over by another app (on iPad: Files, "Open in Lumen").
+    function openHandedFile(url) {
+        const name = url.toString().toLowerCase()
+        if (name.endsWith(".lumen")) {
+            const r = notebooks.importNotebook(url)
+            toastBar.show(r.ok ? "Imported “" + r.name + "”" : "Could not import: " + r.error, null)
+        } else if (name.endsWith(".pdf")) {
+            const notebooksNow = library.notebooks()
+            const nb = library.page(root.currentPageId).notebookId || (notebooksNow.length ? notebooksNow[0].id : 0)
+            if (nb) pdf.importAsSection(url, nb, "")
+        }
+    }
+    Connections {
+        target: platform
+        function onPencilTapped(action) { root.pencilAction(action) }
+        function onPencilSqueezed(action) { root.pencilAction(action) }
+        function onFileOpened(url) { root.openHandedFile(url) }
+    }
+
     function closeTopmost() {
         if (root.presenting) { root.stopPresenting(); return }
         if (objectMenu.opened) { objectMenu.close(); return }
@@ -1379,7 +1435,7 @@ Window {
     Shortcut { sequence: "Ctrl+,"; onActivated: root.settingsVisible = !root.settingsVisible }
     Shortcut { enabled: !root.overlayUp && root.currentPageId > 0 && helpers; sequence: "Ctrl+R"; onActivated: { if (audio.recording) audio.stopRecording(); else audioBar.startRecording() } }
     Shortcut { enabled: root.inkKeys && helpers; sequence: "Ctrl+M"; onActivated: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng()) }
-    Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+E"; onActivated: exportDialog.open() }
+    Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+E"; onActivated: root.exportPdf("section") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+O"; onActivated: { const info = library.page(root.currentPageId); if (info.id) { importDialog.notebookId = info.notebookId; importDialog.open() } } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+B"; onActivated: canvas.addBenchmarkStrokes(10000) }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+I"; onActivated: canvas.infinite = !canvas.infinite }

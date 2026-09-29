@@ -233,6 +233,7 @@ Rectangle {
         if (canvas.tool === "highlighter") canvas.highlighterColor = c
         else { canvas.penColor = c; if (canvas.tool !== "pen") canvas.tool = "pen" }
     }
+    function showPalette() { colourPicker.openFrom(moreColours) }
     ColourPicker {
         id: colourPicker
         parent: Overlay.overlay

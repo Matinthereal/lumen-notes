@@ -43,6 +43,58 @@
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
+    <!-- Lumen notebooks are Lumen's own; PDFs it can open as a section of slides. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Lumen notebook</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>io.github.matinthereal.lumen.notebook</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>PDF document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.adobe.pdf</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>io.github.matinthereal.lumen.notebook</string>
+            <key>UTTypeDescription</key>
+            <string>Lumen notebook</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>lumen</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>application/x-lumen-notebook</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Lumen puts pictures from your photo library on your pages.</string>
 </dict>

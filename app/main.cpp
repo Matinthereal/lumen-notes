@@ -36,6 +36,7 @@
 #include "ui/uitest.h"
 #include "ui/splitbinder.h"
 #include "ui/holdtips.h"
+#include "ui/platform.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -161,6 +162,7 @@ int main(int argc, char *argv[])
     KeyInjector keys;
     SplitBinder splitBinder(tabletFilter, splitStore);
     HoldTips holdTips;
+    Platform platform;
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("theme"), new ThemeIconProvider);
@@ -187,6 +189,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("maths"), &maths);
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
     engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
+    engine.rootContext()->setContextProperty(QStringLiteral("platform"), &platform);
     // Phones and tablets have no Python helpers, so their features are hidden rather than failing;
     // LUMEN_MOBILE_UI=1 shows that interface on a desktop, for testing it here.
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
@@ -234,6 +237,7 @@ int main(int argc, char *argv[])
         else if (args.contains(QStringLiteral("--maximized"))) win->showMaximized();
         tabletFilter.attachWindow(win);
         holdTips.attachWindow(win);
+        platform.attach(win);
         if (probeMode) {
             if (auto *probe = win->findChild<PenProbeItem *>(QStringLiteral("penProbe")))
                 tabletFilter.setSink(probe);

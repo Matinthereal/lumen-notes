@@ -214,6 +214,7 @@ qt_add_qml_module(lumen
         src/canvas/inkcanvas.h src/canvas/inkcanvas.cpp src/canvas/inkcanvas_render.cpp
         src/ui/uitest.h src/ui/uitest.cpp
         src/ui/splitbinder.h src/ui/splitbinder.cpp
+        src/ui/platform.h src/ui/platform.cpp
         src/text/documentformatter.h src/text/documentformatter.cpp
 )
 target_include_directories(lumen PRIVATE src src/input src/canvas src/text)
@@ -237,6 +238,9 @@ if(ANDROID)
     qt_add_resources(lumen "fonts" PREFIX "/fonts" BASE "${CMAKE_SOURCE_DIR}/packaging/fonts"
                      FILES "${CMAKE_SOURCE_DIR}/packaging/fonts/symbols.ttf")
 elseif(IOS)
+    target_sources(lumen PRIVATE src/ui/platform_ios.mm)
+    set_source_files_properties(src/ui/platform_ios.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(lumen PRIVATE "-framework UIKit")
     set(asset_catalog ${CMAKE_SOURCE_DIR}/packaging/ios/Assets.xcassets)
     target_sources(lumen PRIVATE ${asset_catalog})
     set_source_files_properties(${asset_catalog} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)

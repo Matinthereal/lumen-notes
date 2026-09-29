@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(IOS)
+    enable_language(OBJCXX)     # app/src/ui/platform_ios.mm: Apple Pencil, the share sheet, Files
+endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml Network Test)
 qt_standard_project_setup(REQUIRES 6.5)
 
