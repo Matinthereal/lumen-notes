@@ -1,4 +1,5 @@
 #include "tableteventfilter.h"
+#include "stylustilt.h"
 #include <QCoreApplication>
 #include <QEvent>
 #include <QPointingDevice>
@@ -50,6 +51,13 @@ TabletSample TabletEventFilter::fromEvent(const QTabletEvent *e)
     s.pressure = e->pressure();
     s.xTilt = e->xTilt();
     s.yTilt = e->yTilt();
+#ifdef Q_OS_ANDROID
+    // Qt's Android plugin passes no tilt; StylusTilt.java recorded it under this event's time.
+    if (s.xTilt == 0 && s.yTilt == 0) {
+        QPointF lean;
+        if (stylustilt::recent().find(e->timestamp(), &lean)) { s.xTilt = lean.x(); s.yTilt = lean.y(); }
+    }
+#endif
     s.z = e->z();
     s.rotation = e->rotation();
     s.modifiers = e->modifiers();

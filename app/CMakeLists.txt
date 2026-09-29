@@ -5,6 +5,7 @@ qt_add_library(lumen_core STATIC
     src/workers/pingmeter.h        src/workers/pingmeter.cpp
     src/input/tabletsample.h
     src/input/tableteventfilter.h  src/input/tableteventfilter.cpp
+    src/input/stylustilt.h         src/input/stylustilt.cpp
     src/ink/inktypes.h             src/ink/geometry.h
     src/ink/tessellate.h           src/ink/tessellate.cpp
     src/ink/inkdocument.h          src/ink/inkdocument.cpp

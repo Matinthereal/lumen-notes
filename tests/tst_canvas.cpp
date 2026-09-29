@@ -5,6 +5,7 @@
 #include <QtTest>
 #include <QWindow>
 #include "canvas/inkcanvas.h"
+#include "input/stylustilt.h"
 #include "input/tableteventfilter.h"
 
 // Drives InkCanvas through its TabletSink with synthesized samples (no window needed: an item
@@ -286,6 +287,61 @@ private slots:
         right->setVisible(false);                   // split closed: the right canvas declines
         drag({1000, 300}, {1100, 300});
         QCOMPARE(right->strokeCount(), 1);
+    }
+    // Android reports the pen's lean as a tilt and an orientation, which it makes from the
+    // digitiser's x and y tilt (AOSP TouchInputMapper). Whatever x/y lean a desktop tablet reports,
+    // the same pen on Android must reach the pencil as the same xTilt/yTilt.
+    void androidTiltReadsAsOnTheDesktop() {
+        const auto android = [](double xDeg, double yDeg) {
+            const double x = qDegreesToRadians(xDeg), y = qDegreesToRadians(yDeg);
+            return std::pair{float(std::acos(std::cos(x) * std::cos(y))), float(std::atan2(-std::sin(x), std::sin(y)))};
+        };
+        for (int x = -60; x <= 60; x += 5)
+            for (int y = -60; y <= 60; y += 5) {
+                const auto [tilt, orientation] = android(x, y);
+                const QPointF back = stylustilt::fromAndroid(tilt, orientation);
+                QVERIFY2(std::abs(back.x() - x) < 0.01 && std::abs(back.y() - y) < 0.01,
+                         qPrintable(QStringLiteral("(%1, %2) came back as (%3, %4)").arg(x).arg(y).arg(back.x()).arg(back.y())));
+            }
+        // The same in words: which way the tip points, and so which way the top leans.
+        const auto lean = [](double tiltDeg, double orientationDeg) {
+            return stylustilt::fromAndroid(float(qDegreesToRadians(tiltDeg)), float(qDegreesToRadians(orientationDeg)));
+        };
+        const auto near = [](QPointF a, QPointF b) { return std::abs(a.x() - b.x()) < 0.01 && std::abs(a.y() - b.y()) < 0.01; };
+        QVERIFY(near(lean(0, 70), {0, 0}));            // upright: the orientation means nothing
+        QVERIFY(near(lean(45, -90), {45, 0}));         // tip points left, top leans right
+        QVERIFY(near(lean(45, 90), {-45, 0}));         // tip points right, top leans left
+        QVERIFY(near(lean(45, 0), {0, 45}));           // tip points up, top leans towards the bottom
+        QVERIFY(near(lean(45, 180), {0, -45}));        // tip points down, top leans away
+        // A pen laid flat along a diagonal is the extreme: still numbers, still within a quarter turn.
+        const QPointF flat = lean(90, -45);
+        QVERIFY(std::isfinite(flat.x()) && std::isfinite(flat.y()) && std::abs(flat.x()) < 90.001 && std::abs(flat.y()) < 90.001);
+        // The pencil shades past 38° off upright (hypot of the two): a writing grip stays ink and a
+        // leant-over pen shades, whichever way it leans.
+        for (int o = -180; o < 180; o += 15) {
+            QVERIFY(std::hypot(lean(30, o).x(), lean(30, o).y()) < 38);
+            QVERIFY(std::hypot(lean(55, o).x(), lean(55, o).y()) > 38);
+        }
+    }
+    // The Java side records each stylus event's tilt as it comes in; the tablet filter looks it up
+    // by the timestamp Qt gives the same event, a few milliseconds later on another thread.
+    void androidTiltIsFoundByEventTime() {
+        stylustilt::Recent recent;
+        QPointF got;
+        QVERIFY(!recent.find(1000, &got));
+        recent.record(1000, 0, 0);
+        recent.record(1008, float(qDegreesToRadians(45.0)), float(qDegreesToRadians(-90.0)));
+        QVERIFY(recent.find(1008, &got));
+        QVERIFY(std::abs(got.x() - 45) < 0.01 && std::abs(got.y()) < 0.01);
+        QVERIFY(recent.find(1000, &got));
+        QCOMPARE(got, QPointF(0, 0));
+        QVERIFY(!recent.find(1004, &got));                          // no sample then: Qt's zeros stand
+        recent.record(1008, float(qDegreesToRadians(30.0)), 0);      // same millisecond: the newer one
+        QVERIFY(recent.find(1008, &got));
+        QVERIFY(std::abs(got.y() - 30) < 0.01);
+        for (quint64 t = 2000; t < 2400; t += 4) recent.record(t, 0, 0);    // 100 samples, more than it keeps
+        QVERIFY(!recent.find(1000, &got));                          // long gone: it keeps only the last few
+        QVERIFY(recent.find(2396, &got));
     }
 };
 QTEST_MAIN(TstCanvas)

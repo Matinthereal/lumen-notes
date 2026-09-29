@@ -17,6 +17,7 @@
 #include "input/keyinjector.h"
 #include "input/penprobeitem.h"
 #include "input/tableteventfilter.h"
+#include "input/stylustilt.h"
 #include "pdf/pdfservice.h"
 #include "ui/themeiconprovider.h"
 #include "ui/lateximageprovider.h"
@@ -172,6 +173,9 @@ int main(int argc, char *argv[])
     QObject::connect(&textBlocks, &TextBlocks::changed, &thumbnails, &Thumbnails::refresh);
     QObject::connect(&textBlocks, &TextBlocks::edited, &thumbnails, &Thumbnails::refresh);    // typed pages and sticky notes save through here
     TabletEventFilter tabletFilter;
+#ifdef Q_OS_ANDROID
+    stylustilt::installAndroidHook();   // Qt's Android plugin drops the pen's tilt: read it ourselves
+#endif
     KeyInjector keys;
     SplitBinder splitBinder(tabletFilter, splitStore);
     HoldTips holdTips;
