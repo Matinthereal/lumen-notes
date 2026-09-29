@@ -261,10 +261,13 @@ int main(int argc, char *argv[])
             tabletFilter.setSink(canvas);
             pageStore.attach(canvas->document());
 
+            // The PDF worker first: the last page may be a PDF, and its first requests were
+            // turned away with "worker not ready" when the page opened before the worker started.
+            pdfWorker.start();
             QMetaObject::invokeMethod(win, "openLastPage");
         }
     }
-    pdfWorker.start();
+    pdfWorker.start();          // idempotent: already running unless the canvas was not found
 #ifdef LUMEN_HAVE_HELPERS
     pingWorker.start();
     audioWorker.start();

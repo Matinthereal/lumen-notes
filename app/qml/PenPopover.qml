@@ -15,6 +15,8 @@ Popup {
     signal moreColours()
     SystemPalette { id: pal }
     padding: 16
+    // Focus, so Escape and Android's Back close it: without it Back went past it and left the app.
+    focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Card {}
     enter: PopIn {}
