@@ -90,6 +90,24 @@ Rectangle {
                 RowL { Lbl { text: "Prediction (ms ahead)" } LSlider { from: 0; to: 33; stepSize: 1; value: Number(library.setting("pen.predictionMs", "16.7")); Layout.preferredWidth: 220; onMoved: { canvas.predictionMs = value; canvas.predictionEnabled = value > 0; page.save("pen.predictionMs", value) } } }
                 RowL { Lbl { text: "Shape snap when the pen rests" } LSwitch { id: snapSwitch; checked: canvas.shapeSnap; onToggled: { canvas.shapeSnap = checked; page.save("pen.shapeSnap", checked ? 1 : 0) }
                                                                 Connections { target: canvas; function onStyleChanged() { snapSwitch.checked = canvas.shapeSnap } } } }
+                // A pen change ships beside the feel it would replace (ADR mynotes-003): classic
+                // stays the default until it has been tried on the tablet and chosen.
+                RowL { Lbl { text: "Ink edges" }
+                       Repeater { model: [["Classic", "classic"], ["True to width", "true"]]
+                                  delegate: LButton { required property var modelData; objectName: "edgesButton"; text: modelData[0]; font.pixelSize: Ui.px(12)
+                                                     implicitHeight: Ui.target; highlighted: canvas.inkEdges === modelData[1]
+                                                     Accessible.name: "Ink edges " + text + (highlighted ? ", chosen" : "")
+                                                     onClicked: { canvas.inkEdges = modelData[1]; page.save("pen.edges", modelData[1]) } } }
+                       Text { text: "True to width: a one-pixel edge on the line itself, so it is crisper and exactly as wide as chosen. Highlighter ends are smoothed too."
+                              color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true } }
+                RowL { Lbl { text: "Line" }
+                       Repeater { model: [["Raw", "0"], ["Steady", "1"]]
+                                  delegate: LButton { required property var modelData; objectName: "steadyButton"; text: modelData[0]; font.pixelSize: Ui.px(12)
+                                                     implicitHeight: Ui.target; highlighted: canvas.steadyInk === (modelData[1] === "1")
+                                                     Accessible.name: "Line " + text + (highlighted ? ", chosen" : "")
+                                                     onClicked: { canvas.steadyInk = modelData[1] === "1"; page.save("pen.steady", modelData[1]) } } }
+                       Text { text: "Steady evens out the digitiser's tremble along the line, with no lag: the tip is always exactly where the pen is. Raw is every sample as it came."
+                              color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true } }
                 RowL { Lbl { text: "Highlighter opacity" } LSlider { from: 0.15; to: 0.6; stepSize: 0.05; value: Number(library.setting("pen.highlighterOpacity", "0.35")); Layout.preferredWidth: 220; onMoved: { canvas.highlighterOpacity = value; page.save("pen.highlighterOpacity", value) } } }
                 }
 

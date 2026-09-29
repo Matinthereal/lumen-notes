@@ -69,6 +69,8 @@ Window {
         canvas.palmRejectMs = Number(library.setting("touch.palmMs", "500"))
         canvas.eraserRadius = Number(library.setting("pen.eraserRadius", "12"))
         canvas.penStyle = library.setting("pen.style", "classic")
+        canvas.inkEdges = library.setting("pen.edges", "classic")
+        canvas.steadyInk = library.setting("pen.steady", "0") === "1"
         if (mobile || library.setting("tablet.forced", "") === "1") tabletMode.tablet = true
     }
     Component.onCompleted: applySavedSettings()

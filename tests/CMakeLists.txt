@@ -79,3 +79,7 @@ if(LUMEN_HELPERS)
     add_test(NAME maths COMMAND tst_maths)
     set_tests_properties(maths PROPERTIES TIMEOUT 300)
 endif()
+
+# Not a test: replays real strokes from a copy of a library to measure pen changes (ADR mynotes-003).
+qt_add_executable(pen_replay pen_replay.cpp)
+target_link_libraries(pen_replay PRIVATE lumen_core)

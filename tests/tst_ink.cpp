@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <numbers>
 #include <cmath>
 #include "ink/inkdocument.h"
 #include "ink/onefilter.h"
@@ -91,6 +92,100 @@ private slots:
         int rim = 0; for (const InkVertex &v : feathered) if (v.a == 0.f) ++rim;
         QVERIFY(rim > plain.size() / 2);
         for (const InkVertex &v : plain) QCOMPARE(v.a, 1.f);
+    }
+    void trueEdgesKeepTheNominalWidthAndTheLine() {
+        // Classic's rim lies outside the stroke; true edges' straddles it, so half-coverage is at
+        // the nominal edge. The centreline (where the ink is) must not move at all: no new wobble.
+        QVector<InkPoint> pts; for (int i = 0; i < 40; ++i) pts.append({10.f + i * 2.f, 100.f, 0.6f, 0, 0, quint32(i * 4)});
+        const float f = 0.5f;
+        const PressureCurve curve;
+        const float half = std::max(curve.widthFor(1.5f, 0.6f), 0.3f) * 0.5f;
+        const auto edges = [&](bool centred, float &core, float &rim, float &mid) {
+            QVector<InkVertex> v;
+            buildRibbon(smoothStroke(pts, 2.f), 1.5f, InkTool::Pen, curve, v, f, centred);
+            core = 0; rim = 0; float lo = 1e9f, hi = -1e9f;
+            for (const InkVertex &q : v) {
+                if (q.x < 20 || q.x > 80) continue;
+                const float d = std::abs(q.y - 100.f);
+                if (q.a == 1.f) { core = std::max(core, d); lo = std::min(lo, q.y); hi = std::max(hi, q.y); }
+                else rim = std::max(rim, d);
+            }
+            mid = (lo + hi) / 2;
+        };
+        float c0, r0, m0, c1, r1, m1;
+        edges(false, c0, r0, m0);
+        edges(true, c1, r1, m1);
+        QVERIFY2(std::abs(c0 - half) < 1e-3f && std::abs(r0 - (half + f)) < 1e-3f, "classic changed");
+        QVERIFY2(std::abs((c1 + r1) / 2 - half) < 1e-3f, "half-coverage is not at the nominal edge");
+        QVERIFY2(std::abs(r1 - c1 - f) < 1e-3f, "the rim is not one feather wide");
+        QCOMPARE(m0, m1);
+    }
+    void trueEdgesFeatherHighlighterEnds() {
+        const auto pts = line(10, 50, 90, 50, 20);
+        const float f = 0.5f;
+        QVector<InkVertex> classic, centred;
+        buildRibbon(pts, 6.f, InkTool::Highlighter, PressureCurve{}, classic, f, false);
+        buildRibbon(pts, 6.f, InkTool::Highlighter, PressureCurve{}, centred, f, true);
+        float cMin = 1e9f, cMax = -1e9f, tMin = 1e9f, tMax = -1e9f;
+        for (const InkVertex &v : classic) { cMin = std::min(cMin, v.x); cMax = std::max(cMax, v.x); }
+        for (const InkVertex &v : centred) {
+            QVERIFY(std::isfinite(v.x) && std::isfinite(v.y));
+            if (v.a == 0.f) { tMin = std::min(tMin, v.x); tMax = std::max(tMax, v.x); }
+        }
+        QVERIFY2(cMin > 10.f - 0.01f && cMax < 90.f + 0.01f, "classic highlighter ends changed");
+        QVERIFY2(tMin < 10.f - 0.9f * f && tMax > 90.f + 0.9f * f, "square ends have no rim");
+    }
+    void centripetalPassesThroughEverySampleWithoutLooping() {
+        // Bunched then spread samples, as a pen slowing into a turn and leaving it fast: uniform
+        // knots can overshoot here; centripetal ones must not, and must still hit every sample.
+        QVector<InkPoint> raw;
+        const float xs[] = {0, 12, 24, 24.6f, 25.1f, 25.4f, 40, 60, 80};
+        for (int i = 0; i < 9; ++i) raw.append({xs[i], i < 5 ? 0.f : float(i - 4) * 0.6f, 0.5f, 0, 0, quint32(i * 3)});
+        const auto out = smoothStroke(raw, 0.5f, true);
+        for (const InkPoint &p : raw) {
+            bool hit = false;
+            for (const InkPoint &q : out) hit = hit || (std::abs(q.x - p.x) < 1e-3f && std::abs(q.y - p.y) < 1e-3f);
+            QVERIFY2(hit, "a sample is not on the curve");
+        }
+        for (int i = 1; i < out.size(); ++i) {
+            QVERIFY(std::isfinite(out[i].x) && std::isfinite(out[i].y));
+            QVERIFY2(out[i].x >= out[i - 1].x - 1e-3f, "the curve doubles back: a loop");
+        }
+    }
+    void oneEuro2DKeepsTheShapeWherePerAxisBendsIt() {
+        // A circle at handwriting speed. One cutoff for both axes shrinks it evenly (lag along the
+        // path); a cutoff per axis changes with each axis's speed, so the radius wobbles.
+        const double r0 = 40, hz = 330, rev = 0.6;          // 0.6 s a turn ≈ 420 px/s
+        OneEuroFilter fx(3.0, 0.03), fy(3.0, 0.03);
+        OneEuroFilter2D f2(3.0, 0.03);
+        double lo1 = 1e9, hi1 = 0, lo2 = 1e9, hi2 = 0;
+        for (int i = 0; i < int(hz * rev * 3); ++i) {
+            const double t = i / hz, a = 2 * std::numbers::pi * t / rev;
+            const double x = 100 + r0 * std::cos(a), y = 100 + r0 * std::sin(a);
+            const double ax = fx.filter(x, t), ay = fy.filter(y, t);
+            double bx, by; f2.filter(x, y, t, bx, by);
+            if (t < rev) continue;                          // settled after one turn
+            const double r1 = std::hypot(ax - 100, ay - 100), r2 = std::hypot(bx - 100, by - 100);
+            lo1 = std::min(lo1, r1); hi1 = std::max(hi1, r1); lo2 = std::min(lo2, r2); hi2 = std::max(hi2, r2);
+        }
+        QVERIFY2(hi2 - lo2 < 0.05, qPrintable(QStringLiteral("2D radius varies by %1").arg(hi2 - lo2)));
+        QVERIFY2(hi1 - lo1 > 4 * (hi2 - lo2), qPrintable(QStringLiteral("per-axis %1 vs 2D %2").arg(hi1 - lo1).arg(hi2 - lo2)));
+    }
+    void steadyStrokeHasNoLagAndStaysOnTheLine() {
+        // A straight line with ±0.3 px of digitiser noise across it.
+        QVector<InkPoint> raw;
+        for (int i = 0; i < 200; ++i) raw.append({float(i) * 0.7f, 50.f + ((i * 7919) % 13 - 6) * 0.05f, 0.4f + 0.1f * float(i % 3), 0, 0, quint32(i * 3)});
+        const auto out = steadyStroke(raw, 1.f);
+        QCOMPARE(out.size(), raw.size());
+        QCOMPARE(out.first().x, raw.first().x); QCOMPARE(out.first().y, raw.first().y);
+        QCOMPARE(out.last().x, raw.last().x); QCOMPARE(out.last().y, raw.last().y);   // the tip is the pen: no lag
+        float rawDev = 0, outDev = 0;
+        for (int i = 20; i < 180; ++i) { rawDev += std::abs(raw[i].y - 50.f); outDev += std::abs(out[i].y - 50.f); }
+        QVERIFY2(outDev < 0.5f * rawDev, "the noise is not steadied");
+        for (const InkPoint &p : out) QVERIFY(std::abs(p.y - 50.f) <= 0.31f);      // never further off than the noise
+        // As a prefix, the last sample is still exactly the pen: what is on screen never trails.
+        const auto live = steadyStroke(raw.mid(0, 90), 1.f);
+        QCOMPARE(live.last().x, raw[89].x); QCOMPARE(live.last().y, raw[89].y);
     }
     void penStylesDiffer() {
         const PressureCurve f = PressureCurve::forStyle(PenStyle::Fountain), b = PressureCurve::forStyle(PenStyle::Ballpoint);

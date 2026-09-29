@@ -131,11 +131,11 @@ void InkCanvas::rebuildChunk(Chunk &c)
     QVector<QSGGeometry::ColoredPoint2D> verts;
     QVector<InkVertex> piece;
     const float spacing = m_builtSpacing;
-    const float feather = float(0.8 / m_zoom);
+    const float feather = featherWidth();
     for (quint64 id : c.ids) {
         const Stroke *s = m_doc.stroke(id);
         if (!s || isHidden(id)) continue;
-        buildRibbon(smoothStroke(s->points, spacing), s->width, s->tool, m_curve, piece, feather);
+        buildRibbon(shapeStroke(s->points, s->tool, spacing), s->width, s->tool, m_curve, piece, feather, m_trueEdges);
         appendColored(verts, piece, premul(s->color));
     }
     uploadColored(c.node, verts);
@@ -456,7 +456,7 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         QVector<InkVertex> piece;
         for (const auto &pieces : std::as_const(m_pixelWork))
             for (const Stroke &p : pieces) {
-                buildRibbon(smoothStroke(p.points, m_builtSpacing), p.width, p.tool, m_curve, piece, float(0.8 / m_zoom));
+                buildRibbon(shapeStroke(p.points, p.tool, m_builtSpacing), p.width, p.tool, m_curve, piece, featherWidth(), m_trueEdges);
                 appendColored(verts, piece, premul(p.color));
             }
         // Replay: the stroke being "written" at replayMs is drawn up to that moment.
@@ -468,7 +468,7 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
                 QVector<InkPoint> part;
                 for (const InkPoint &p : s.points) { if (p.tMs > rel) break; part.append(p); }
                 if (part.isEmpty()) continue;
-                buildRibbon(smoothStroke(part, m_builtSpacing), s.width, s.tool, m_curve, piece, float(0.8 / m_zoom));
+                buildRibbon(shapeStroke(part, s.tool, m_builtSpacing), s.width, s.tool, m_curve, piece, featherWidth(), m_trueEdges);
                 appendColored(verts, piece, premul(s.color));
             }
         }
@@ -483,7 +483,7 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         for (quint64 id : std::as_const(m_selection)) {
             const Stroke *s = m_doc.stroke(id);
             if (!s) continue;
-            buildRibbon(smoothStroke(s->points, m_builtSpacing), s->width, s->tool, m_curve, piece, float(0.8 / m_zoom));
+            buildRibbon(shapeStroke(s->points, s->tool, m_builtSpacing), s->width, s->tool, m_curve, piece, featherWidth(), m_trueEdges);
             appendColored(verts, piece, premul(s->color));
         }
         uploadColored(m_selectionInk, verts);
@@ -516,7 +516,7 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
         if (m_gesture == Gesture::Ink && !m_active.points.isEmpty()) {
             QVector<InkPoint> pts = m_active.points;
             if (m_predictionEnabled && pts.size() >= 3) pts.append(predictPoint(pts, float(m_predictionMs)));
-            buildRibbon(smoothStroke(pts, m_builtSpacing), m_active.width, m_active.tool, m_curve, strip, float(0.8 / m_zoom));
+            buildRibbon(shapeStroke(pts, m_active.tool, m_builtSpacing), m_active.width, m_active.tool, m_curve, strip, featherWidth(), m_trueEdges);
         }
         QSGNode *wantParent = (m_gesture == Gesture::Ink && m_active.tool == InkTool::Highlighter)
                             ? static_cast<QSGNode *>(m_highlighterLayer) : static_cast<QSGNode *>(m_viewNode);

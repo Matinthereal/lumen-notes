@@ -24,12 +24,25 @@ struct PressureCurve {
 // Vertex of a ribbon: position plus an edge alpha (1 in the core, 0 on the feathered rim).
 struct InkVertex { float x, y, a = 1.f; };
 
-QVector<InkPoint> smoothStroke(const QVector<InkPoint> &raw, float spacing);
+// Resample through every sample with a Catmull-Rom spline. centripetal (the "steady" option):
+// knots spaced by the square root of the distance, which never overshoots or loops where the
+// samples bunch up and spread out — uniform knots can, and that reads as a wobble.
+QVector<InkPoint> smoothStroke(const QVector<InkPoint> &raw, float spacing, bool centripetal = false);
+// Zero-lag steadying (the "steady" pen option, ADR mynotes-003): each sample moves toward a
+// Gaussian average of its neighbours along the path, on both sides, so nothing trails the pen.
+// The first and last samples stay exactly where the pen was — the tip is always raw — and a
+// sample settles by a fraction of a pixel as the samples after it arrive. Pressure is steadied
+// the same way, so width does not flicker. sigma is in page units along the path.
+QVector<InkPoint> steadyStroke(const QVector<InkPoint> &raw, float sigma);
+
 InkPoint predictPoint(const QVector<InkPoint> &pts, float dtMs, float damping = 0.6f, float maxDistance = 14.f);
 
 // Variable-width ribbon as ONE triangle strip: miter joins, round joins where the turn is sharp,
 // round caps, and a feathered rim of `feather` page units for shader-free anti-aliasing.
+// centred (the "true edges" option, ADR mynotes-003): the rim straddles the stroke's edge instead
+// of lying outside it, so half-coverage falls exactly at the nominal width — classic ink reads
+// half a rim wider than it is — and a highlighter's square ends are feathered too.
 void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, const PressureCurve &curve,
-                 QVector<InkVertex> &out, float feather = 0.f);
+                 QVector<InkVertex> &out, float feather = 0.f, bool centred = false);
 
 void appendStrip(QVector<InkVertex> &strip, const QVector<InkVertex> &piece);

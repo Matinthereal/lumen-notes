@@ -33,11 +33,46 @@ static InkPoint lerp(const InkPoint &a, const InkPoint &b, float t)
     return p;
 }
 
-QVector<InkPoint> smoothStroke(const QVector<InkPoint> &raw, float spacing)
+static QVector<InkPoint> centripetalStroke(const QVector<InkPoint> &raw, float spacing)
+{
+    const int n = raw.size();
+    QVector<InkPoint> out;
+    out.reserve(n * 2);
+    out.append(raw[0]);
+    // Barry and Goldman's pyramid, alpha 0.5. Ends get a mirrored phantom point, so the first and
+    // last spans have real knots instead of a zero-length one.
+    const auto knot = [](float ax, float ay, float bx, float by) { return std::max(std::sqrt(std::hypot(bx - ax, by - ay)), 1e-3f); };
+    for (int i = 0; i < n - 1; ++i) {
+        const InkPoint &p1 = raw[i], &p2 = raw[i + 1];
+        const float p0x = i > 0 ? raw[i - 1].x : 2 * p1.x - p2.x, p0y = i > 0 ? raw[i - 1].y : 2 * p1.y - p2.y;
+        const float p3x = i + 2 < n ? raw[i + 2].x : 2 * p2.x - p1.x, p3y = i + 2 < n ? raw[i + 2].y : 2 * p2.y - p1.y;
+        const float t0 = 0, t1 = t0 + knot(p0x, p0y, p1.x, p1.y), t2 = t1 + knot(p1.x, p1.y, p2.x, p2.y), t3 = t2 + knot(p2.x, p2.y, p3x, p3y);
+        const float segLen = std::hypot(p2.x - p1.x, p2.y - p1.y);
+        const int steps = std::max(1, int(std::ceil(segLen / spacing)));
+        for (int s = 1; s <= steps; ++s) {
+            const float u = float(s) / steps, t = t1 + (t2 - t1) * u;
+            const auto mix = [](float a, float b, float ta, float tb, float t) { return a * (tb - t) / (tb - ta) + b * (t - ta) / (tb - ta); };
+            const float a1x = mix(p0x, p1.x, t0, t1, t), a1y = mix(p0y, p1.y, t0, t1, t);
+            const float a2x = mix(p1.x, p2.x, t1, t2, t), a2y = mix(p1.y, p2.y, t1, t2, t);
+            const float a3x = mix(p2.x, p3x, t2, t3, t), a3y = mix(p2.y, p3y, t2, t3, t);
+            const float b1x = mix(a1x, a2x, t0, t2, t), b1y = mix(a1y, a2y, t0, t2, t);
+            const float b2x = mix(a2x, a3x, t1, t3, t), b2y = mix(a2y, a3y, t1, t3, t);
+            InkPoint p = lerp(p1, p2, u);
+            p.x = mix(b1x, b2x, t1, t2, t);
+            p.y = mix(b1y, b2y, t1, t2, t);
+            out.append(p);
+        }
+    }
+    return out;
+}
+
+QVector<InkPoint> smoothStroke(const QVector<InkPoint> &raw, float spacing, bool centripetal)
 {
     const int n = raw.size();
     if (n < 3 || spacing <= 0)
         return raw;
+    if (centripetal)
+        return centripetalStroke(raw, spacing);
     QVector<InkPoint> out;
     out.reserve(n * 2);
     out.append(raw[0]);
@@ -55,6 +90,33 @@ QVector<InkPoint> smoothStroke(const QVector<InkPoint> &raw, float spacing)
             p.y = 0.5f * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
             out.append(p);
         }
+    }
+    return out;
+}
+
+QVector<InkPoint> steadyStroke(const QVector<InkPoint> &raw, float sigma)
+{
+    const int n = raw.size();
+    if (n < 3 || sigma <= 0) return raw;
+    QVector<float> s(n, 0.f);                                   // arc length at each sample
+    for (int i = 1; i < n; ++i) s[i] = s[i - 1] + std::hypot(raw[i].x - raw[i - 1].x, raw[i].y - raw[i - 1].y);
+    const float reach = 3.f * sigma, inv = 1.f / (2.f * sigma * sigma);
+    QVector<InkPoint> out = raw;
+    for (int i = 1; i < n - 1; ++i) {
+        // Near an end the window is cut to what exists on both sides, so the average stays
+        // centred on the sample and never pulls the line toward one side.
+        const float half = std::min({reach, s[i] - s[0], s[n - 1] - s[i]});
+        if (half <= 1e-4f) continue;
+        float w = 0, x = 0, y = 0, pr = 0;
+        for (int j = i; j >= 0 && s[i] - s[j] <= half; --j) {
+            const float d = s[i] - s[j], k = std::exp(-d * d * inv);
+            w += k; x += k * raw[j].x; y += k * raw[j].y; pr += k * raw[j].pressure;
+        }
+        for (int j = i + 1; j < n && s[j] - s[i] <= half; ++j) {
+            const float d = s[j] - s[i], k = std::exp(-d * d * inv);
+            w += k; x += k * raw[j].x; y += k * raw[j].y; pr += k * raw[j].pressure;
+        }
+        out[i].x = x / w; out[i].y = y / w; out[i].pressure = pr / w;
     }
     return out;
 }
@@ -155,7 +217,7 @@ void flushRun(QVector<InkVertex> &out, const Side &run, float feather, const QVe
 } // namespace
 
 void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, const PressureCurve &curve,
-                 QVector<InkVertex> &out, float feather)
+                 QVector<InkVertex> &out, float feather, bool centred)
 {
     out.clear();
     const int n = pts.size();
@@ -178,6 +240,10 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
         }
         hw[i] = std::max(w, 0.3f) * 0.5f;
     }
+    // True edges: pull the solid core in by half the rim, so the rim's midpoint is the edge. A line
+    // thinner than the rim keeps a sliver of core and fades, as it would under a real rasteriser.
+    if (centred && feather > 0)
+        for (float &h : hw) h = std::max(h - feather * 0.5f, 0.05f);
 
     if (n == 1) {
         appendArc(out, pts[0].x, pts[0].y, hw[0], 0.f, 2.f * std::numbers::pi_v<float>, 14, feather);
@@ -232,7 +298,23 @@ void buildRibbon(const QVector<InkPoint> &pts, float baseWidth, InkTool tool, co
     if (pen) {
         const float ang = std::atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x);
         appendArc(out, pts[n - 1].x, pts[n - 1].y, hw[n - 1], ang - std::numbers::pi_v<float> / 2, ang + std::numbers::pi_v<float> / 2, 7, feather);
-    } else if (feather > 0) {
-        // Highlighter: square ends get a feathered rim too.
+    } else if (centred && feather > 0) {
+        // Highlighter: its square ends get a rim as well, with a corner piece joining it to the
+        // sides' rims, or the ends stay stair-stepped while the sides are smooth.
+        const auto endRim = [&](int i, float tx, float ty) {
+            const float nx = -ty, ny = tx, h = hw[i];
+            const InkVertex l{pts[i].x + nx * h, pts[i].y + ny * h, 1.f}, r{pts[i].x - nx * h, pts[i].y - ny * h, 1.f};
+            const float ox = tx * feather, oy = ty * feather;
+            appendStrip(out, {l, {l.x + ox, l.y + oy, 0.f}, r, {r.x + ox, r.y + oy, 0.f}});
+            appendStrip(out, {l, {l.x + nx * feather, l.y + ny * feather, 0.f}, {l.x + ox, l.y + oy, 0.f},
+                              {l.x + nx * feather + ox, l.y + ny * feather + oy, 0.f}});
+            appendStrip(out, {r, {r.x + ox, r.y + oy, 0.f}, {r.x - nx * feather, r.y - ny * feather, 0.f},
+                              {r.x - nx * feather + ox, r.y - ny * feather + oy, 0.f}});
+        };
+        const auto unit = [](float dx, float dy) { const float l = std::max(std::hypot(dx, dy), 1e-5f); return std::pair{dx / l, dy / l}; };
+        const auto [sx, sy] = unit(pts[0].x - pts[1].x, pts[0].y - pts[1].y);             // pointing back out of the start
+        const auto [ex, ey] = unit(pts[n - 1].x - pts[n - 2].x, pts[n - 1].y - pts[n - 2].y); // and on out of the end
+        endRim(0, sx, sy);
+        endRim(n - 1, ex, ey);
     }
 }

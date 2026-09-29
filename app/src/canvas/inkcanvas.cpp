@@ -88,6 +88,40 @@ QString InkCanvas::penStyle() const
     return {};
 }
 
+void InkCanvas::setInkEdges(const QString &edges)
+{
+    const bool on = edges == QLatin1String("true");
+    if (on == m_trueEdges) return;
+    m_trueEdges = on;
+    markAllChunksDirty();
+    emit styleChanged();
+    update();
+}
+
+void InkCanvas::setSteadyInk(bool on)
+{
+    if (on == m_steadyInk) return;
+    m_steadyInk = on;
+    markAllChunksDirty();
+    emit styleChanged();
+    update();
+}
+
+// σ = 1 page px, chosen by replaying the maker's 12,589 strokes (tests/pen_replay.cpp): no lag,
+// 0.21 px from the raw line at p95, a fifth less wobble, and ink settles at most 0.6 px (p95).
+QVector<InkPoint> InkCanvas::shapeStroke(const QVector<InkPoint> &pts, InkTool tool, float spacing) const
+{
+    if (m_steadyInk && tool == InkTool::Pen) return smoothStroke(steadyStroke(pts, 1.f), spacing, true);
+    return smoothStroke(pts, spacing);
+}
+
+float InkCanvas::featherWidth() const
+{
+    if (!m_trueEdges) return float(0.8 / m_zoom);
+    const qreal dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+    return float(1.0 / (m_zoom * std::max<qreal>(dpr, 1.0)));
+}
+
 void InkCanvas::setPenStyle(const QString &name)
 {
     PenStyle ps = m_penStyle;

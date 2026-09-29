@@ -59,6 +59,8 @@ class InkCanvas : public QQuickItem, public TabletSink {
     Q_PROPERTY(qreal predictionMs MEMBER m_predictionMs NOTIFY styleChanged)
     Q_PROPERTY(qreal pressureCeiling READ pressureCeiling WRITE setPressureCeiling NOTIFY styleChanged)
     Q_PROPERTY(QString penStyle READ penStyle WRITE setPenStyle NOTIFY styleChanged)
+    Q_PROPERTY(QString inkEdges READ inkEdges WRITE setInkEdges NOTIFY styleChanged)   // classic | true
+    Q_PROPERTY(bool steadyInk READ steadyInk WRITE setSteadyInk NOTIFY styleChanged)
     Q_PROPERTY(qreal smoothing MEMBER m_smoothing NOTIFY styleChanged)        // 0 = raw, 1 = calm
     Q_PROPERTY(bool shapeSnap MEMBER m_shapeSnap NOTIFY styleChanged)
     Q_PROPERTY(bool scratchOut MEMBER m_scratchOut NOTIFY styleChanged)   // scribble over ink to rub it out
@@ -100,6 +102,10 @@ public:
     void setPressureCeiling(qreal c);
     QString penStyle() const;
     void setPenStyle(const QString &s);
+    QString inkEdges() const { return m_trueEdges ? QStringLiteral("true") : QStringLiteral("classic"); }
+    void setInkEdges(const QString &edges);
+    bool steadyInk() const { return m_steadyInk; }
+    void setSteadyInk(bool on);
     QString lastShape() const { return m_lastShape; }
     QString stats() const { return m_stats; }
     int touchIgnored() const { return m_touchIgnored; }
@@ -242,6 +248,15 @@ private:
     UndoStack m_undo;
     PressureCurve m_curve = PressureCurve::forStyle(PenStyle::Classic);
     PenStyle m_penStyle = PenStyle::Classic;
+    // Classic: a 0.8-logical-pixel rim outside the stroke (what the maker approved). True edges: one
+    // device pixel, straddling the edge — crisper on a 2x screen, and the stroke is its real width.
+    bool m_trueEdges = false;
+    float featherWidth() const;
+    // Steady: the pen's line is steadied along its path at draw time, with no lag (steadyStroke),
+    // and drawn with a centripetal spline. Stored points stay raw, so turning it off shows the ink
+    // exactly as written. The highlighter is left alone.
+    bool m_steadyInk = false;
+    QVector<InkPoint> shapeStroke(const QVector<InkPoint> &pts, InkTool tool, float spacing) const;
     qreal m_smoothing = 0.0;   // 0 = raw samples (what the maker approved); >0 enables the 1€ filter
     bool m_shapeSnap = true;
     bool m_scratchOut = true;
