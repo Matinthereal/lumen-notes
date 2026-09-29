@@ -95,9 +95,9 @@ Rectangle {
                                                      highlighted: page.paperTick >= 0 && library.setting("page.paper", "#22262B") === modelData[1]
                                                      onClicked: { page.save("page.paper", modelData[1]); paperTick = paperTick + 1 } } } }
 
-                Section { text: "Tablet mode" }
+                Section { visible: !mobile; text: "Tablet mode" }
 
-                RowL { Lbl { text: "On-screen keyboard" }
+                RowL { visible: !mobile; Lbl { text: "On-screen keyboard" }
 
                        Repeater { model: [["In tablet mode", "tablet"], ["Always", "always"], ["Never", "never"]]
 
@@ -107,43 +107,44 @@ Rectangle {
 
                                                      onClicked: { page.save("keyboard.mode", modelData[1]); page.keyboardTick++ } } } }
 
-                Text { text: "Typing on a folded-back screen: the keyboard appears when a text box asks for it. Qt draws it inside this window, because Wayland will not let an app open the system one."
+                Text { visible: !mobile; text: "Typing on a folded-back screen: the keyboard appears when a text box asks for it. Qt draws it inside this window, because Wayland will not let an app open the system one."
 
                        color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
-                RowL { Lbl { text: "Tablet mode now" } Switch { id: tabletSwitch; checked: tabletMode.tablet; onToggled: tabletMode.tablet = checked
+                RowL { visible: !mobile; Lbl { text: "Tablet mode now" } Switch { id: tabletSwitch; checked: tabletMode.tablet; onToggled: tabletMode.tablet = checked
                                                                 Connections { target: tabletMode; function onTabletChanged() { tabletSwitch.checked = tabletMode.tablet } } } Text { text: tabletMode.kwinAvailable ? ("Plasma reports: " + (tabletMode.kwinTablet ? "tablet" : "laptop")) : "Plasma tablet-mode D-Bus not found"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
-                RowL { visible: tabletMode.canRotate; Lbl { text: "Rotate display" } Repeater { model: ["none", "left", "inverted", "right"]; delegate: Button { required property string modelData; text: modelData; font.pixelSize: 11; highlighted: tabletMode.rotation === modelData; onClicked: tabletMode.rotateDisplay(modelData) } } }
-                Text { text: "If your 2-in-1 does not switch to tablet mode by itself when you fold it, switch it here or press Ctrl+Shift+T anywhere."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                RowL { visible: !mobile && tabletMode.canRotate; Lbl { text: "Rotate display" } Repeater { model: ["none", "left", "inverted", "right"]; delegate: Button { required property string modelData; text: modelData; font.pixelSize: 11; highlighted: tabletMode.rotation === modelData; onClicked: tabletMode.rotateDisplay(modelData) } } }
+                Text { visible: !mobile; text: "If your 2-in-1 does not switch to tablet mode by itself when you fold it, switch it here or press Ctrl+Shift+T anywhere."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
-                Section { text: "Background services" }
+                Section { visible: helpers; text: "Background services" }
                 ServicesSection {
                     id: services
+                    visible: helpers
                     Layout.fillWidth: true
                     onToast: (m) => page.toast(m)
                     Connections { target: page; function onVisibleChanged() { if (page.visible) services.checkAll() } }
                 }
 
-                Section { text: "Transcription" }
-                RowL { Lbl { text: "Live model" } ComboBox { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }
-                RowL { Lbl { text: "Re-pass model" } ComboBox { model: ["small.en", "medium.en", "large-v3-turbo", "large-v3"]; currentIndex: model.indexOf(library.setting("audio.repassModel", "large-v3-turbo")); onActivated: page.save("audio.repassModel", currentText) } }
-                RowL { Lbl { text: "Backend" } Text { text: audio.backend; color: pal.text; font.pixelSize: 13 } Button { text: "Benchmark on the latest recording"; font.pixelSize: 11; onClicked: { const rs = audio.recordings(library.page(Number(library.setting("lastPage", "0"))).sectionId || 0); if (rs.length) audio.runBenchmark(rs[0].id); else page.toast("Record something in this section first") } } }
+                Section { visible: helpers; text: "Transcription" }
+                RowL { visible: helpers; Lbl { text: "Live model" } ComboBox { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }
+                RowL { visible: helpers; Lbl { text: "Re-pass model" } ComboBox { model: ["small.en", "medium.en", "large-v3-turbo", "large-v3"]; currentIndex: model.indexOf(library.setting("audio.repassModel", "large-v3-turbo")); onActivated: page.save("audio.repassModel", currentText) } }
+                RowL { visible: helpers; Lbl { text: "Backend" } Text { text: audio.backend; color: pal.text; font.pixelSize: 13 } Button { text: "Benchmark on the latest recording"; font.pixelSize: 11; onClicked: { const rs = audio.recordings(library.page(Number(library.setting("lastPage", "0"))).sectionId || 0); if (rs.length) audio.runBenchmark(rs[0].id); else page.toast("Record something in this section first") } } }
                 Connections { target: audio; function onBenchmarkDone(r) { let s = "Chosen: " + r.chosen + ". "; for (const x of r.results) s += x.backend + (x.available ? " " + x.realtime_factor + "× realtime" : " unavailable (" + (x.reason || "") + ")") + "; "; page.toast(s) } }
 
-                Section { visible: page.mode !== "typed"; text: "Handwriting" }
-                RowL { visible: page.mode !== "typed"; Lbl { text: "OCR model" } ComboBox { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11 } }
+                Section { visible: page.mode !== "typed" && helpers; text: "Handwriting" }
+                RowL { visible: page.mode !== "typed" && helpers; Lbl { text: "OCR model" } ComboBox { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11 } }
 
                 Section { text: "Backups" }
-                RowL { Lbl { text: "Folder" } TextField { id: backupPath; Layout.fillWidth: true; text: library.setting("backup.dir", ""); placeholderText: "~/Backups/lumen"; font.pixelSize: 12; onEditingFinished: page.save("backup.dir", text) } Button { text: "Choose…"; font.pixelSize: 11; onClicked: folderDlg.open() } }
+                RowL { visible: !mobile; Lbl { text: "Folder" } TextField { id: backupPath; Layout.fillWidth: true; text: library.setting("backup.dir", ""); placeholderText: "~/Backups/lumen"; font.pixelSize: 12; onEditingFinished: page.save("backup.dir", text) } Button { text: "Choose…"; font.pixelSize: 11; onClicked: folderDlg.open() } }
                 RowL { Lbl { text: "Keep" } SpinBox { from: 1; to: 60; value: Number(library.setting("backup.keep", "7")); onValueModified: page.save("backup.keep", value) } Text { text: Qt.platform.os === "linux" ? "nightly copies at 03:00 (systemd user timer)" : "a copy a day, made while Lumen is open"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 RowL { Lbl { text: "" } Button { text: "Back up now"; onClicked: { backupRunner.run() } } Text { id: backupStatus; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12 } }
                 Item { id: backupRunner; function run() { backupStatus.text = "running…"; backupNow.start() } Timer { id: backupNow; interval: 10; onTriggered: { const r = backupTool.runNow(); backupStatus.text = r } } }
 
-                Section { text: "Claude" }
-                RowL { Lbl { text: "Status" } Text { text: claude.available ? claude.version : (claude.reason || "checking…"); color: pal.text; font.pixelSize: 13 } Button { text: "Re-check"; font.pixelSize: 11; onClicked: claude.refreshStatus() } }
-                RowL { Lbl { text: "Online (web tools)" } Switch { id: onlineSwitch; checked: claude.online; onToggled: claude.online = checked 
+                Section { visible: helpers; text: "Claude" }
+                RowL { visible: helpers; Lbl { text: "Status" } Text { text: claude.available ? claude.version : (claude.reason || "checking…"); color: pal.text; font.pixelSize: 13 } Button { text: "Re-check"; font.pixelSize: 11; onClicked: claude.refreshStatus() } }
+                RowL { visible: helpers; Lbl { text: "Online (web tools)" } Switch { id: onlineSwitch; checked: claude.online; onToggled: claude.online = checked
                      Connections { target: claude; function onStatusChanged() { onlineSwitch.checked = claude.online } } } }
-                Text { text: "Every prompt is shown before it is sent and logged under claude-log/. Audio is never sent."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Text { visible: helpers; text: "Every prompt is shown before it is sent and logged under claude-log/. Audio is never sent."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
         }
     }

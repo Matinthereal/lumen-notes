@@ -24,12 +24,22 @@ QString cacheDir()
 }
 QString recordingsDir() { return dataDir() + QStringLiteral("/recordings"); }
 QString databasePath() { return dataDir() + QStringLiteral("/lumen.db"); }
-QString backupDir() { return QDir::homePath() + QStringLiteral("/Backups/lumen"); }
+QString backupDir()
+{
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    // The app's own Documents: on an iPad that is Files › On My iPad › Lumen › Backups.
+    return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + QStringLiteral("/Backups");
+#else
+    return QDir::homePath() + QStringLiteral("/Backups/lumen");
+#endif
+}
 
 void ensureDirs()
 {
     for (const QString &d : {dataDir(), journalDir(), attachmentsDir(), claudeLogDir(), modelsDir(), cacheDir(), recordingsDir()})
         QDir().mkpath(d);
 }
+
+QString openable(const QUrl &picked) { return picked.isLocalFile() ? picked.toLocalFile() : picked.toString(); }
 
 } // namespace paths

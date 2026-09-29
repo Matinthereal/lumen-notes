@@ -58,7 +58,7 @@ Window {
         canvas.palmRejectMs = Number(library.setting("touch.palmMs", "500"))
         canvas.eraserRadius = Number(library.setting("pen.eraserRadius", "12"))
         canvas.penStyle = library.setting("pen.style", "classic")
-        if (library.setting("tablet.forced", "") === "1") tabletMode.tablet = true
+        if (mobile || library.setting("tablet.forced", "") === "1") tabletMode.tablet = true
     }
     Component.onCompleted: applySavedSettings()
     onTabletChanged: { library.setSetting("tablet.forced", tablet ? "1" : "0"); if (tablet) leftPanel = "" }
@@ -357,8 +357,19 @@ Window {
     Loader { id: probeLoader; anchors.fill: parent; active: root.probeMode; sourceComponent: ProbePage {} }
 
     // ================================================================ layout
+    // Android and iPad draw the window under the status bar and the home indicator; everything
+    // full-screen sits inside what the system calls the safe area (all zero on a desktop).
+    Item {
+        id: safe
+        anchors {
+            fill: parent
+            topMargin: root.SafeArea.margins.top; bottomMargin: root.SafeArea.margins.bottom
+            leftMargin: root.SafeArea.margins.left; rightMargin: root.SafeArea.margins.right
+        }
+    }
+
     RowLayout {
-        anchors.fill: parent
+        anchors.fill: safe
         visible: !root.probeMode
         spacing: 0
         // Mirroring the top row alone flips which edge the rail and each panel sit on. It is not
@@ -383,7 +394,7 @@ Window {
             splitOpen: root.splitPageId > 0
             onTrashRequested: root.trashVisible = true
             onSettingsRequested: root.settingsVisible = !root.settingsVisible
-            onTabletRequested: tabletMode.tablet = !tabletMode.tablet
+            onTabletRequested: if (!mobile) tabletMode.tablet = !tabletMode.tablet
         }
         Binding { target: rail; property: "leftPanel"; value: root.leftPanel }
         Binding { target: rail; property: "rightPanel"; value: root.rightPanel }
@@ -650,7 +661,7 @@ Window {
 
             AudioPanel {
                 id: audioBar
-                visible: root.currentPageId > 0 && !root.presenting
+                visible: root.currentPageId > 0 && !root.presenting && helpers
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; bottomMargin: Ui.keyboardInset }
                 canvas: canvas
                 sectionId: library.page(root.currentPageId).sectionId || 0
@@ -1220,13 +1231,13 @@ Window {
 
     // full-screen pages
     ReviewPage {
-        visible: root.reviewVisible; anchors.fill: parent; z: 30
+        visible: root.reviewVisible; anchors.fill: safe; z: 30
         onClosed: root.reviewVisible = false
         onToast: (m) => toastBar.show(m, null)
     }
-    DashboardPage { visible: root.dashboardVisible; anchors.fill: parent; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
+    DashboardPage { visible: root.dashboardVisible; anchors.fill: safe; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
     SettingsPage {
-        visible: root.settingsVisible; anchors.fill: parent; canvas: canvas; z: 30
+        visible: root.settingsVisible; anchors.fill: safe; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet"); root.refreshNotesMode() }
         onHandChanged: (left) => root.leftHanded = left
         onToast: (m) => toastBar.show(m, null)
@@ -1234,7 +1245,7 @@ Window {
     // ---- The on-screen keyboard. It appears when a text field asks for input and the app is in
     // tablet mode (or you have set it to always), and it never covers the field it is filling.
     property string keyboardMode: library.setting("keyboard.mode", "tablet")   // tablet | always | never
-    readonly property bool keyboardWanted: keyboardMode === "always" || (keyboardMode === "tablet" && root.tablet)
+    readonly property bool keyboardWanted: !mobile && (keyboardMode === "always" || (keyboardMode === "tablet" && root.tablet))
     Keyboard {
         id: keyboard
         objectName: "chrome"
@@ -1256,18 +1267,18 @@ Window {
         Connections { target: keys; function onFocusChanged() { if (keys.focusIsText) keyboard.dismissed = false } }
     }
     ShortcutsPage {
-        visible: root.keysVisible; anchors.fill: parent; z: 30
+        visible: root.keysVisible; anchors.fill: safe; z: 30
         onClosed: root.keysVisible = false
     }
     TrashPage {
-        visible: root.trashVisible; anchors.fill: parent; z: 30
+        visible: root.trashVisible; anchors.fill: safe; z: 30
         onClosed: root.trashVisible = false
         onToast: (m) => toastBar.show(m, null)
         onOpenPage: (pageId) => { root.trashVisible = false; root.openPage(pageId) }
     }
     PageBrowser {
         id: pageBrowser
-        visible: root.browserVisible; anchors.fill: parent; z: 30
+        visible: root.browserVisible; anchors.fill: safe; z: 30
         sectionId: library.page(root.currentPageId).sectionId || 0
         currentPageId: root.currentPageId
         tag: root.browserTag
@@ -1284,7 +1295,7 @@ Window {
     }
     HoldTip { parent: Overlay.overlay }
     Onboarding {
-        visible: root.onboardingVisible; anchors.fill: parent; z: 40
+        visible: root.onboardingVisible; anchors.fill: safe; z: 40
         onDone: { root.onboardingVisible = false; library.setSetting("onboarded", "1"); root.keyboardMode = library.setting("keyboard.mode", "tablet"); root.refreshNotesMode() }
         onHandChosen: (left) => root.leftHanded = left
     }
@@ -1312,9 +1323,10 @@ Window {
     // Qt matches a shortcut before it delivers the key, and a text item only claims ShortcutOverride
     // for keys below Escape — so while you are typing this used to swallow Escape and a text field's
     // Keys.onEscapePressed never ran.
-    Shortcut { enabled: !keys.focusIsText; sequence: "Escape"; onActivated: {
+    function closeTopmost() {
         if (root.presenting) { root.stopPresenting(); return }
         if (objectMenu.opened) { objectMenu.close(); return }
+        if (newPageChooser.visible) { newPageChooser.close(); return }
         if (root.onboardingVisible) { root.onboardingVisible = false; return }
         if (root.reviewVisible) { root.reviewVisible = false; return }
         if (root.settingsVisible) { root.settingsVisible = false; return }
@@ -1323,14 +1335,21 @@ Window {
         if (root.trashVisible) { root.trashVisible = false; return }
         if (root.keysVisible) { root.keysVisible = false; return }
         canvas.selectNone(); if (root.tablet) { root.leftPanel = ""; root.rightPanel = "" }
-    } }
+    }
+    Shortcut { enabled: !keys.focusIsText; sequence: "Escape"; onActivated: root.closeTopmost() }
+    // Android's Back closes what is open, as Escape does; with nothing open it leaves the app as usual.
+    Shortcut {
+        enabled: root.overlayUp || objectMenu.opened || (root.tablet && (root.leftPanel.length > 0 || root.rightPanel.length > 0))
+        sequence: "Back"
+        onActivated: root.closeTopmost()
+    }
     Shortcut { enabled: root.inkKeys; sequences: ["Delete", "Backspace"]; onActivated: canvas.deleteSelection() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+C"; onActivated: canvas.hasTextSelection ? canvas.copyText() : canvas.copySelection() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+X"; onActivated: canvas.cutSelection() }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }
-    Shortcut { enabled: !root.overlayUp && audio.recording; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toastBar.show("Marked", null) } }
+    Shortcut { enabled: !root.overlayUp && audio.recording && helpers; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toastBar.show("Marked", null) } }
     Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toastBar.show(on ? "Page starred" : "Star removed", null) } }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: root.trashVisible = !root.trashVisible }
     Shortcut { sequences: ["Ctrl+/", "Ctrl+?"]; onActivated: root.keysVisible = !root.keysVisible }
@@ -1349,17 +1368,17 @@ Window {
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+S"; onActivated: pageStore.flush() }
     Shortcut { sequence: "Ctrl+K"; onActivated: search.open() }
     Shortcut { sequence: "Ctrl+\\"; onActivated: root.toggleLeft("notebooks") }
-    Shortcut { sequence: "Ctrl+J"; onActivated: root.toggleRight("claude") }
-    Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+H"; onActivated: root.toggleRight("handwriting") }
+    Shortcut { enabled: helpers; sequence: "Ctrl+J"; onActivated: root.toggleRight("claude") }
+    Shortcut { enabled: !root.overlayUp && helpers; sequence: "Ctrl+Shift+H"; onActivated: root.toggleRight("handwriting") }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+L"; onActivated: root.toggleRight("page") }
     Shortcut { enabled: !root.overlayUp && root.currentPageId > 0; sequence: "Ctrl+Shift+S"; onActivated: root.toggleSplit() }
     Shortcut { sequence: "Ctrl+Shift+C"; onActivated: root.toggleLeft("cards") }
     Shortcut { sequence: "Ctrl+Shift+P"; onActivated: root.toggleLeft("papers") }
     Shortcut { sequence: "Ctrl+Shift+R"; onActivated: root.reviewVisible = !root.reviewVisible }
-    Shortcut { sequence: "Ctrl+Shift+T"; onActivated: tabletMode.tablet = !tabletMode.tablet }
+    Shortcut { enabled: !mobile; sequence: "Ctrl+Shift+T"; onActivated: tabletMode.tablet = !tabletMode.tablet }
     Shortcut { sequence: "Ctrl+,"; onActivated: root.settingsVisible = !root.settingsVisible }
-    Shortcut { enabled: !root.overlayUp && root.currentPageId > 0; sequence: "Ctrl+R"; onActivated: { if (audio.recording) audio.stopRecording(); else audioBar.startRecording() } }
-    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+M"; onActivated: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng()) }
+    Shortcut { enabled: !root.overlayUp && root.currentPageId > 0 && helpers; sequence: "Ctrl+R"; onActivated: { if (audio.recording) audio.stopRecording(); else audioBar.startRecording() } }
+    Shortcut { enabled: root.inkKeys && helpers; sequence: "Ctrl+M"; onActivated: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng()) }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+E"; onActivated: exportDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+Shift+O"; onActivated: { const info = library.page(root.currentPageId); if (info.id) { importDialog.notebookId = info.notebookId; importDialog.open() } } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+B"; onActivated: canvas.addBenchmarkStrokes(10000) }

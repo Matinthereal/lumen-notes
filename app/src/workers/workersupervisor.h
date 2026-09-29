@@ -1,16 +1,22 @@
 #pragma once
 #include <QElapsedTimer>
 #include <QJsonObject>
-#include <QLocalServer>
 #include <QMap>
 #include <QSet>
 #include <QObject>
 #include <QPointer>
-#include <QProcess>
 #include <QString>
+#ifdef LUMEN_HAVE_HELPERS
+#include <QLocalServer>
+#include <QProcess>
 #include "ipc/jsonlines.h"
-
 class QLocalSocket;
+#else
+#include <memory>
+#include "inprocessworker.h"
+class QThread;
+#endif
+
 class QTimer;
 
 // Owns one Python worker process (D-006): a Unix socket the worker connects to, newline-JSON
@@ -21,6 +27,10 @@ class QTimer;
 // there at all (a worker that dies on an import is "not installed", not crashed, and is not
 // restarted in a loop), what it is doing right now from the worker's progress notifications, and
 // a way to cancel a request the worker honours between steps.
+//
+// Built without the helpers (LUMEN_HAVE_HELPERS unset: Android, iOS), there is no process: a helper
+// with an in-process implementation (workersupervisor_inprocess.cpp) runs on a thread instead, and
+// any other answers every request with "not available on this device".
 class WorkerSupervisor : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString name READ name CONSTANT)
@@ -75,22 +85,29 @@ signals:
 
 private:
     void setState(State s);
+    void began(int id, const QString &method);
+    void ended(int id);
+    void failEverything(const QString &message, int code);
+#ifdef LUMEN_HAVE_HELPERS
     void onNewConnection();
     void onReadyRead();
     void onProcessFinished(int code, QProcess::ExitStatus status);
     void scheduleRestart();
-    void began(int id, const QString &method);
-    void ended(int id);
-    void failEverything(const QString &message, int code);
 
-    QString m_name;
-    QString m_python;
     QString m_socketPath;
     QLocalServer m_server;
     QPointer<QLocalSocket> m_conn;
     QProcess m_proc;
     QTimer *m_restartTimer = nullptr;
     JsonLineBuffer m_rx;
+#else
+    std::unique_ptr<InProcessWorker> m_local;
+    QThread *m_thread = nullptr;
+    QObject *m_threadContext = nullptr;     // lives on m_thread: requests are queued to it
+#endif
+
+    QString m_name;
+    QString m_python;
     State m_state = State::Stopped;
     int m_nextId = 1;
     int m_restarts = 0;

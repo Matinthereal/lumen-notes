@@ -73,6 +73,9 @@ private slots:
         QVERIFY2(!typed.contains("**"), "Markdown syntax should not be printed literally");
     }
     void latexWorkerRendersAndReportsErrors() {
+#ifndef LUMEN_HAVE_HELPERS
+        QSKIP("no Python helpers in this build, so no LaTeX");
+#endif
         QTemporaryDir dir;
         WorkerSupervisor w("latex");
         w.start();

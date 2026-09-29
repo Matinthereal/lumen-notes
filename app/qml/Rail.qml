@@ -60,15 +60,15 @@ Rectangle {
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-preview"; tip: "All pages in this section (Ctrl+P)"; onClicked: rail.browserRequested() }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-split"; tip: rail.splitOpen ? "Close split view (Ctrl+Shift+S)" : "Split view: another page beside this one (Ctrl+Shift+S)"; on: rail.splitOpen; onClicked: rail.splitRequested() }
         Rectangle { Layout.alignment: Qt.AlignHCenter; implicitWidth: Ui.rail - 24; implicitHeight: 1; color: Qt.alpha(pal.text, 0.14); Layout.topMargin: 4; Layout.bottomMargin: 4 }
-        RailButton { Layout.alignment: Qt.AlignHCenter; icon: "tools-wizard"; tip: "Claude (Ctrl+J)"; on: rail.rightPanel === "claude"; onClicked: rail.rightPanel = rail.rightPanel === "claude" ? "" : "claude" }
-        RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-list-text"; tip: "Transcript"; on: rail.rightPanel === "transcript"; onClicked: rail.rightPanel = rail.rightPanel === "transcript" ? "" : "transcript" }
+        RailButton { visible: helpers; Layout.alignment: Qt.AlignHCenter; icon: "tools-wizard"; tip: "Claude (Ctrl+J)"; on: rail.rightPanel === "claude"; onClicked: rail.rightPanel = rail.rightPanel === "claude" ? "" : "claude" }
+        RailButton { visible: helpers; Layout.alignment: Qt.AlignHCenter; icon: "view-list-text"; tip: "Transcript"; on: rail.rightPanel === "transcript"; onClicked: rail.rightPanel = rail.rightPanel === "transcript" ? "" : "transcript" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "document-properties"; tip: "This page: tags and links (Ctrl+Shift+L)"; on: rail.rightPanel === "page"; onClicked: rail.rightPanel = rail.rightPanel === "page" ? "" : "page" }
-        RailButton { visible: rail.handwriting; Layout.alignment: Qt.AlignHCenter; icon: "edit-rename"; tip: "Handwriting read from this page (Ctrl+Shift+H)"; on: rail.rightPanel === "handwriting"; onClicked: rail.rightPanel = rail.rightPanel === "handwriting" ? "" : "handwriting" }
+        RailButton { visible: rail.handwriting && helpers; Layout.alignment: Qt.AlignHCenter; icon: "edit-rename"; tip: "Handwriting read from this page (Ctrl+Shift+H)"; on: rail.rightPanel === "handwriting"; onClicked: rail.rightPanel = rail.rightPanel === "handwriting" ? "" : "handwriting" }
         Rectangle { Layout.alignment: Qt.AlignHCenter; implicitWidth: Ui.rail - 24; implicitHeight: 1; color: Qt.alpha(pal.text, 0.14); Layout.topMargin: 4; Layout.bottomMargin: 4 }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "view-list-details"; tip: "Flashcards (Ctrl+Shift+C) · review Ctrl+Shift+R"; on: rail.leftPanel === "cards"; badge: cards.dueCount > 0 ? String(cards.dueCount) : ""; onClicked: rail.leftPanel = rail.leftPanel === "cards" ? "" : "cards" }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "document-edit-verify"; tip: "Past papers (Ctrl+Shift+P)"; on: rail.leftPanel === "papers"; onClicked: rail.leftPanel = rail.leftPanel === "papers" ? "" : "papers" }
         Item { Layout.fillHeight: true }
-        RailButton { Layout.alignment: Qt.AlignHCenter; icon: "input-tablet"; tip: rail.tablet ? "Tablet mode on (Ctrl+Shift+T)" : "Tablet mode (Ctrl+Shift+T)"; on: rail.tablet; onClicked: rail.tabletRequested() }
+        RailButton { visible: !mobile; Layout.alignment: Qt.AlignHCenter; icon: "input-tablet"; tip: rail.tablet ? "Tablet mode on (Ctrl+Shift+T)" : "Tablet mode (Ctrl+Shift+T)"; on: rail.tablet; onClicked: rail.tabletRequested() }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "user-trash"; tip: "Recently deleted (Ctrl+Shift+D)"; onClicked: rail.trashRequested() }
         RailButton { Layout.alignment: Qt.AlignHCenter; icon: "configure"; tip: "Settings (Ctrl+,)"; onClicked: rail.settingsRequested() }
     }

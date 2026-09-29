@@ -64,11 +64,11 @@ Popup {
             }
         }
         RowLayout {
-            Button { text: "Work it out"; enabled: field.text.trim().length > 0 && !maths.busy
+            Button { visible: helpers; text: "Work it out"; enabled: field.text.trim().length > 0 && !maths.busy
                      onClicked: { pop.awaitingAnswer = true; maths.solve(field.text.trim(), []) }
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Evaluate it, or solve it for its unknown — offline, in sympy" }
             Button { text: "Insert"; enabled: field.text.trim().length > 0; onClicked: { pop.insert(field.text.trim(), pop.anchorRect); pop.close() } }
-            Button { text: claude.busy ? "Asking Claude…" : "Improve with Claude"; enabled: claude.available && !claude.busy; onClicked: pop.improve(pop.png, field.text)
+            Button { visible: helpers; text: claude.busy ? "Asking Claude…" : "Improve with Claude"; enabled: claude.available && !claude.busy; onClicked: pop.improve(pop.png, field.text)
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Sends the picture of the selection to Claude (Read tool) — only when you press this" }
             Item { Layout.fillWidth: true }
             Button { text: "Cancel"; onClicked: pop.close() }

@@ -1,4 +1,5 @@
 #include "papersservice.h"
+#include "storage/paths.h"
 #include "pdf/pdfservice.h"
 #include "storage/attachments.h"
 #include "storage/database.h"
@@ -20,15 +21,15 @@ void PapersService::call(const QString &method, const QJsonObject &params, Callb
 void PapersService::importPair(const QUrl &paperPdf, const QUrl &schemePdf, const QString &subject, int year, const QString &name, const QString &board, int minutes)
 {
     QString err;
-    const QString paperSha = attachments::store(m_db, paperPdf.toLocalFile(), "application/pdf", &err);
+    const QString paperSha = attachments::store(m_db, paths::openable(paperPdf), "application/pdf", &err);
     if (paperSha.isEmpty()) { emit failed(err); return; }
     QString schemeSha;
-    if (schemePdf.isValid() && !schemePdf.isEmpty()) schemeSha = attachments::store(m_db, schemePdf.toLocalFile(), "application/pdf", &err);
+    if (schemePdf.isValid() && !schemePdf.isEmpty()) schemeSha = attachments::store(m_db, paths::openable(schemePdf), "application/pdf", &err);
     // The paper's pages live in a "Past papers" section of the subject's notebook.
     qint64 notebookId = 0;
     for (const QVariant &n : m_lib.notebooks()) if (n.toMap().value("name").toString() == subject) notebookId = n.toMap().value("id").toLongLong();
     if (!notebookId) notebookId = m_lib.createNotebook(subject, "#5C6B7A", board);
-    const QString title = name.isEmpty() ? QFileInfo(paperPdf.toLocalFile()).completeBaseName() : name;
+    const QString title = name.isEmpty() ? QFileInfo(paths::openable(paperPdf)).completeBaseName() : name;
     Database::Query q(m_db, "INSERT INTO paper(subject, year, name, board, paper_attachment, scheme_attachment, minutes, created) VALUES (?,?,?,?,?,?,?,?)");
     q.bind(1, subject).bind(2, year).bind(3, title).bind(4, board).bind(5, paperSha); if (schemeSha.isEmpty()) q.bindNull(6); else q.bind(6, schemeSha); q.bind(7, minutes).bind(8, QDateTime::currentSecsSinceEpoch());
     if (!q.run()) { emit failed(m_db.lastError()); return; }

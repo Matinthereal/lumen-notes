@@ -221,7 +221,7 @@ Rectangle {
         Pill { readonly property bool holdAction: true; label: Math.round(canvas.zoom * 100) + "%"; tip: "Tap: fit page (Ctrl+0) · long-press: fit width (Ctrl+1)"
                onClicked: canvas.fitPage(); onLongPressed: canvas.fitWidth() }
         Sep {}
-        Pill { visible: canvas.hasSelection; label: "∑ LaTeX"; tip: "Convert the lasso'd maths to an editable LaTeX block (Ctrl+M)"; onClicked: bar.latexRequested() }
+        Pill { visible: canvas.hasSelection && helpers; label: "∑ LaTeX"; tip: "Convert the lasso'd maths to an editable LaTeX block (Ctrl+M)"; onClicked: bar.latexRequested() }
         IconButton { visible: canvas.hasSelection; icon: "edit-delete"; tip: "Delete selection (Delete)"; onClicked: canvas.deleteSelection() }
         IconButton { id: moreButton; icon: "overflow-menu"; tip: "Page style, paper colour, clear, export"; onClicked: moreMenu.openFrom(moreButton) }
     }

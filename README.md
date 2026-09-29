@@ -50,9 +50,25 @@ Grab the latest build from this repo's [Releases](../../releases) page:
 - **Windows** — download and run the `Lumen-Setup-*.exe` installer.
 - **Linux** — download the `Lumen-*.AppImage`, `chmod +x` it, and run it (or use your AppImage
   launcher of choice).
+- **Android tablet** — download `Lumen-*-android.apk` on the tablet and open it; Android asks once
+  to allow installs from your browser or file manager.
+- **iPad** — Apple only runs apps it has signed, so `Lumen-*-ipad-unsigned.ipa` is signed with your
+  own Apple ID on the way in. Install **Sideloadly** on a Windows PC or Mac, plug the iPad in, drop
+  the `.ipa` onto it and sign in. Then on the iPad: Settings › Privacy & Security › Developer Mode
+  on (it restarts), and Settings › General › VPN & Device Management › trust your Apple ID. A free
+  Apple ID's signature lasts 7 days; run Sideloadly again to renew it. Export your notebooks to
+  Files (`.lumen`) before renewing, in case the reinstall starts afresh.
 
-Both are built by CI from `main` and from tags; see [Build from source](#build-from-source) if you'd
-rather build your own.
+All four are built by CI from `main` and from tags; see [Build from source](#build-from-source) if
+you'd rather build your own.
+
+### On a tablet
+
+Android and iPad run the same app with a pen, a finger or a keyboard: handwritten and typed pages,
+sticky notes, pictures, shapes, notebooks, search, PDF import, annotation and export, flashcard
+review and past papers. The parts that run in the desktop's Python helpers aren't there: recording
+and transcription, handwriting recognition, Math Notes, LaTeX images, Anki import/export and the AI
+add-on. Backups go to the app's own Documents folder (on an iPad, Files › On My iPad › Lumen).
 
 ## Optional AI add-on setup
 
@@ -121,6 +137,30 @@ cmake --build build --parallel
 Windows); `-DLUMEN_ENABLE_DBUS=OFF` skips the KWin/Plasma tablet-mode integration, which is
 Linux-only anyway. Run `windeployqt` on `build\app\lumen.exe` to gather the Qt DLLs and QML
 modules before running it outside the build tree.
+
+### Android
+
+Everything needed (JDK 17, the Android SDK and NDK, an emulator image, Qt for Android) installs
+without root into `~/Android` and `~/Qt`:
+```
+scripts/setup-android.sh
+scripts/android-dev.sh            # build for the x86_64 emulator, install and start it
+scripts/android-dev.sh --uitest   # the same, running the UI sweep on the device
+ABI=arm64-v8a scripts/android-dev.sh   # a real tablet over USB
+```
+There are no Python helpers on Android (or iOS): the build switches `LUMEN_HELPERS` off, PDF runs
+in-process on [PDFium](https://github.com/bblanchon/pdfium-binaries), and the other helpers'
+features are hidden. `-DLUMEN_HELPERS=OFF` does the same on Linux, which is how that path is
+tested here.
+
+### iPad
+
+Xcode builds need a Mac. With Qt for iOS and the matching macOS Qt installed:
+```
+<Qt>/ios/bin/qt-cmake -B build-ios -G Xcode -DQT_HOST_PATH=<Qt>/macos
+cmake --build build-ios --config Release -- -sdk iphoneos
+```
+CI does this on every push and attaches an unsigned `.ipa` to releases.
 
 ## Running tests
 

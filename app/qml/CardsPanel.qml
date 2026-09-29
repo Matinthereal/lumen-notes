@@ -29,8 +29,8 @@ Rectangle {
         }
         RowLayout {
             TextField { id: filter; Layout.fillWidth: true; placeholderText: "Filter…"; font.pixelSize: Ui.small + 1; onTextChanged: panel.reload() }
-            Button { text: "Export"; font.pixelSize: Ui.small; onClicked: exportDlg.open() }
-            Button { text: "Import"; font.pixelSize: Ui.small; onClicked: importDlg.open() }
+            Button { visible: helpers; text: "Export"; font.pixelSize: Ui.small; onClicked: exportDlg.open() }
+            Button { visible: helpers; text: "Import"; font.pixelSize: Ui.small; onClicked: importDlg.open() }
         }
         // add by hand
         Rectangle {

@@ -166,7 +166,7 @@ Rectangle {
         }
         BarAction {
             objectName: "tagPill"
-            visible: bar.subject === "ink"
+            visible: bar.subject === "ink" && helpers
             label: "# Tag"
             onClicked: bar.tagRequested()
             ToolTip.visible: tagHover.hovered; ToolTip.delay: 600

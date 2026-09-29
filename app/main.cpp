@@ -1,13 +1,16 @@
 #include <QGuiApplication>
 #include <QCursor>
+#include <QFontDatabase>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
 #include <QMouseEvent>
 #include <QQuickWindow>
+#if QT_CONFIG(opengl)
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
+#endif
 #include <QSurfaceFormat>
 #include <QTimer>
 #include "canvas/inkcanvas.h"
@@ -61,9 +64,13 @@ int main(int argc, char *argv[])
     // unhandled on purpose and Qt turns them into mouse events, so buttons and lists work with the pen.
     QGuiApplication::setAttribute(Qt::AA_SynthesizeMouseForUnhandledTabletEvents, true);
 
-    // D-003: 4x MSAA for the ink ribbons, set before any window exists.
+    // D-003: 4x MSAA for the ink ribbons, set before any window exists. Not on Android or iOS: on
+    // Android a multisampled window stopped reaching the screen after its first frames, and tablet
+    // screens are dense enough to do without it.
     QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
+#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
     fmt.setSamples(4);
+#endif
     // No alpha channel on the window surface. With one, anything that writes zero alpha — a shape
     // drawn with blending off, a driver quirk at high zoom — makes the compositor show the desktop
     // through the app, which is exactly what the maker saw when zooming with a shape selected.
@@ -71,6 +78,12 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QGuiApplication app(argc, argv);
+#ifdef Q_OS_ANDROID
+    // Android's fonts lack most of the symbols the interface draws with (☐ ▾ ⇥ ★ …); a subset of
+    // DejaVu Sans (packaging/make-symbol-font.sh) carries them.
+    if (QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/symbols.ttf")) >= 0)
+        QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Common, QStringLiteral("DejaVu Sans"));
+#endif
     // Wayland app_id = the desktop file name: this is what lets Plasma match the window to
     // lumen.desktop, show its icon in the task manager, and pin it.
     QGuiApplication::setDesktopFileName(QStringLiteral("lumen-notes"));
@@ -123,8 +136,10 @@ int main(int argc, char *argv[])
     WorkerSupervisor ocrWorker(QStringLiteral("ocr"));
     WorkerSupervisor mathsWorker(QStringLiteral("maths"));
     OcrService ocr(db, library, &ocrWorker);
+#ifdef LUMEN_HAVE_HELPERS
     QObject::connect(&pageStore, &PageStore::saved, &ocr, &OcrService::schedule);
     QObject::connect(&splitStore, &PageStore::saved, &ocr, &OcrService::schedule);
+#endif
     PapersService papers(db, library, pdf, &pdfWorker);
     Images images(db);
     Shapes shapes(db);
@@ -172,6 +187,20 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("maths"), &maths);
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
     engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
+    // Phones and tablets have no Python helpers, so their features are hidden rather than failing;
+    // LUMEN_MOBILE_UI=1 shows that interface on a desktop, for testing it here.
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    const bool mobileUi = true;
+#else
+    const bool mobileUi = qEnvironmentVariableIntValue("LUMEN_MOBILE_UI") == 1;
+#endif
+#ifdef LUMEN_HAVE_HELPERS
+    const bool helpersBuilt = true;
+#else
+    const bool helpersBuilt = false;
+#endif
+    engine.rootContext()->setContextProperty(QStringLiteral("mobile"), mobileUi);
+    engine.rootContext()->setContextProperty(QStringLiteral("helpers"), helpersBuilt && !mobileUi);
     // Every helper, in the order Settings › Background services lists them.
     engine.rootContext()->setContextProperty(QStringLiteral("workers"), QVariant::fromValue(QList<QObject *>{
         &pdfWorker, &audioWorker, &ocrWorker, &mathsWorker, &latexWorker, &cardsWorker, &claudeWorker, &pingWorker}));
@@ -187,6 +216,7 @@ int main(int argc, char *argv[])
         // Mesa gives the window an alpha channel even though the format above asks for none, so a
         // pixel any item leaves below full alpha shows the desktop through the app. Seal alpha to 1
         // at the end of every pass. Only OpenGL surfaces are composited with their alpha.
+#if QT_CONFIG(opengl) && !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
         QObject::connect(win, &QQuickWindow::afterRenderPassRecording, win, [win] {
             if (win->rendererInterface()->graphicsApi() != QSGRendererInterface::OpenGL) return;
             QOpenGLContext *ctx = QOpenGLContext::currentContext();
@@ -199,6 +229,7 @@ int main(int argc, char *argv[])
             gl->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             win->endExternalCommands();
         }, Qt::DirectConnection);
+#endif
         if (args.contains(QStringLiteral("--fullscreen"))) win->showFullScreen();
         else if (args.contains(QStringLiteral("--maximized"))) win->showMaximized();
         tabletFilter.attachWindow(win);
@@ -213,18 +244,20 @@ int main(int argc, char *argv[])
             QMetaObject::invokeMethod(win, "openLastPage");
         }
     }
-    pingWorker.start();
     pdfWorker.start();
+#ifdef LUMEN_HAVE_HELPERS
+    pingWorker.start();
     audioWorker.start();
     for (WorkerSupervisor *w : {&latexWorker, &claudeWorker, &ocrWorker, &cardsWorker, &mathsWorker}) w->setAutoStart(true);   // start on first use
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(15000, &ocr, [&ocr] { ocr.prepare(); ocr.scanStale(); });
     if (!args.contains(QStringLiteral("--smoke"))) QTimer::singleShot(4000, &audio, &AudioService::prepareModels);
+#endif
 
     // Nightly backup timer (D-014): never in tests (they point LUMEN_DATA_DIR elsewhere) or headless
     // runs. On Linux
     // a systemd --user timer runs `lumen --backup`, installed once. Elsewhere there is no systemd
     // equivalent, so an in-app timer checks hourly and runs the backup itself when one is due.
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
     if (liveSession && qgetenv("LUMEN_DATA_DIR").isEmpty() && !args.contains(QStringLiteral("--smoke")) && backup::timerNeedsUpdate(QCoreApplication::applicationFilePath())) {
         QString err;
         if (!backup::installUserTimer(QCoreApplication::applicationFilePath(), &err)) qWarning("backup timer: %s", qPrintable(err));

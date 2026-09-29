@@ -139,8 +139,99 @@ jobs:
           name: lumen-windows-installer
           path: packaging/windows/Output/Lumen-Setup-*.exe
 
+  # Android tablets (ADR mynotes-002): an arm64 release APK, built exactly as scripts/setup-android.sh
+  # builds it locally. Signed only when the repository has the signing secrets; without them the
+  # artifact is unsigned and cannot be installed.
+  android:
+    runs-on: ubuntu-24.04
+    env:
+      QT_DIR: ${{ github.workspace }}/Qt
+      JDK_DIR: ${{ github.workspace }}/jdk-17
+      JAVA_HOME: ${{ github.workspace }}/jdk-17
+      ANDROID_EMULATOR: 0
+      QT_ANDROID_ARCHS: android_arm64_v8a
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Android toolchain and Qt for Android
+        run: |
+          pipx install aqtinstall==3.3.0
+          QT_VERSION=${{ env.QT_VERSION }} bash scripts/setup-android.sh
+
+      - name: Configure
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          "$QT_DIR/${{ env.QT_VERSION }}/android_arm64_v8a/bin/qt-cmake" -B build-android -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DQT_HOST_PATH="$QT_DIR/${{ env.QT_VERSION }}/gcc_64" \
+            -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" -DANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+
+      - name: Build
+        run: cmake --build build-android --parallel
+
+      - name: Sign
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          version=$(sed -n 's/^project(lumen VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          bt="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          unsigned=build-android/app/android-build/build/outputs/apk/release/android-build-release-unsigned.apk
+          "$bt/zipalign" -f -p 4 "$unsigned" aligned.apk
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > release.jks
+            "$bt/apksigner" sign --ks release.jks --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" \
+              --out "Lumen-$version-android.apk" aligned.apk
+            rm release.jks
+            "$bt/apksigner" verify "Lumen-$version-android.apk"
+          else
+            echo "::warning::no ANDROID_KEYSTORE_BASE64 secret: the APK is unsigned"
+            mv aligned.apk "Lumen-$version-android-unsigned.apk"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-android-apk
+          path: Lumen-*-android*.apk
+
+  # iPad: Xcode builds need a Mac, so this is the only place the iOS app is built. It is unsigned;
+  # Sideloadly (or AltStore) signs it with the installer's own Apple ID when it goes on the iPad.
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt for iOS
+        run: |
+          pipx install aqtinstall==3.3.0
+          aqt install-qt mac desktop ${{ env.QT_VERSION }} clang_64 -O "$RUNNER_TEMP/Qt"
+          aqt install-qt mac ios ${{ env.QT_VERSION }} ios -O "$RUNNER_TEMP/Qt"
+
+      - name: Configure
+        run: |
+          qt="$RUNNER_TEMP/Qt/${{ env.QT_VERSION }}"
+          "$qt/ios/bin/qt-cmake" -B build-ios -G Xcode -DQT_HOST_PATH="$qt/macos" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build-ios --config Release -- -sdk iphoneos -quiet \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package the IPA
+        run: |
+          version=$(sed -n 's/^project(lumen VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          app=$(find build-ios -maxdepth 4 -path '*Release-iphoneos/Lumen.app' | head -1)
+          test -n "$app" && test -f "$app/Frameworks/libpdfium.dylib"
+          mkdir Payload && cp -R "$app" Payload/
+          zip -qry "Lumen-$version-ipad-unsigned.ipa" Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-ipad-ipa
+          path: Lumen-*-ipad-unsigned.ipa
+
   release:
-    needs: [linux, windows]
+    needs: [linux, windows, android, ios]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     # The repository's default token is read-only; making a release needs write. v0.1.0's release
@@ -157,3 +248,5 @@ jobs:
           files: |
             dist/lumen-linux-appimage/Lumen*.AppImage
             dist/lumen-windows-installer/Lumen-Setup-*.exe
+            dist/lumen-android-apk/Lumen-*-android*.apk
+            dist/lumen-ipad-ipa/Lumen-*-ipad-unsigned.ipa

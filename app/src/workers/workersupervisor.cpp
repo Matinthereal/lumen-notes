@@ -4,7 +4,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#ifdef LUMEN_HAVE_HELPERS
 #include <QLocalSocket>
+#endif
 #include <QLoggingCategory>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -48,6 +50,7 @@ QString WorkerSupervisor::findPython()
     return sys.isEmpty() ? sysPython : sys;
 }
 
+#ifdef LUMEN_HAVE_HELPERS
 WorkerSupervisor::WorkerSupervisor(const QString &name, QObject *parent)
     : QObject(parent), m_name(name), m_python(findPython())
 {
@@ -87,6 +90,8 @@ WorkerSupervisor::WorkerSupervisor(const QString &name, QObject *parent)
     connect(m_busyTimer, &QTimer::timeout, this, &WorkerSupervisor::activityChanged);
 }
 
+#endif // LUMEN_HAVE_HELPERS
+
 WorkerSupervisor::~WorkerSupervisor() { stop(); }
 
 QString WorkerSupervisor::stateName() const
@@ -114,12 +119,15 @@ QString WorkerSupervisor::status() const
     return stateName();
 }
 
+#ifdef LUMEN_HAVE_HELPERS
 void WorkerSupervisor::check()
 {
     if (m_state == State::Ready || m_state == State::Starting) return;      // it has said, or is about to
     m_stopAfterHello = !m_wantRunning || m_state == State::NotInstalled;
     if (m_state == State::NotInstalled) restart(); else start();
 }
+
+#endif // LUMEN_HAVE_HELPERS
 
 bool WorkerSupervisor::busy() const
 {
@@ -176,6 +184,7 @@ void WorkerSupervisor::restart()
     start();
 }
 
+#ifdef LUMEN_HAVE_HELPERS
 void WorkerSupervisor::cancel(int id)
 {
     for (int i = 0; i < m_queue.size(); ++i) {
@@ -189,6 +198,8 @@ void WorkerSupervisor::cancel(int id)
         m_conn->write(JsonLineBuffer::encode({{"method", "cancel"}, {"params", QJsonObject{{"id", id}}}}));
 }
 
+#endif // LUMEN_HAVE_HELPERS
+
 void WorkerSupervisor::setState(State s)
 {
     if (m_state == s) return;
@@ -196,6 +207,7 @@ void WorkerSupervisor::setState(State s)
     emit stateChanged();
 }
 
+#ifdef LUMEN_HAVE_HELPERS
 void WorkerSupervisor::start()
 {
     m_wantRunning = true;
@@ -370,3 +382,4 @@ void WorkerSupervisor::scheduleRestart()
     m_restartTimer->start(m_backoffMs);
     m_backoffMs = qMin(m_backoffMs * 2, 30000);
 }
+#endif // LUMEN_HAVE_HELPERS

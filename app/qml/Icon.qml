@@ -18,6 +18,9 @@ Item {
 
     readonly property string path: {
         switch (name) {
+        // ---- navigation
+        case "go-previous":     return "M 15 5 L 8 12 L 15 19"
+        case "go-next":         return "M 9 5 L 16 12 L 9 19"
         // ---- tools
         case "draw-freehand":   return "M 4 20 L 7 19 L 19 7 A 2.1 2.1 0 0 0 16 4 L 4 16 Z M 15 5 L 18 8"
         case "draw-highlight":  return "M 4 20 L 9 20 M 6 16 L 12 4 L 19 8 L 12 18 Z"

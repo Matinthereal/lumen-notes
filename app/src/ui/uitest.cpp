@@ -338,11 +338,20 @@ void shot(QQuickWindow *w, const QString &name)
     w->grabWindow().save(dir + QLatin1Char('/') + name + QStringLiteral(".png"));
 }
 
+// The mobile/helpers context properties main.cpp sets: read them, not the env var, so the test
+// sees what the app itself decided.
+bool contextFlag(QObject *root, const QString &name)
+{
+    QQmlEngine *engine = qmlEngine(root);
+    return engine && engine->rootContext()->contextProperty(name).toBool();
+}
+
 // The page, notebook and navigation features: links, tags, split view, presentation and the rest.
 // Also runnable on its own with LUMEN_UITEST_ONLY=pages.
 void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
 {
     const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    const bool helpersUi = contextFlag(root, QStringLiteral("helpers"));
     QObject *library = nullptr;
     if (QQmlEngine *engine = qmlEngine(root))
         library = engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>();
@@ -438,7 +447,12 @@ void pageFeatures(QQuickWindow *win, QObject *root, Report &r)
             for (const QVariant &t : tags) names << t.toMap().value(QStringLiteral("name")).toString();
             return names;
         };
-        if (canvas && ocr) {
+        if (!helpersUi) {
+            qInfo("UITEST SKIP 16: no helpers on this build (lasso-to-OCR tagging)");
+            // The rest of this group (page panel, browser, search) exercises pure-C++ tagging and
+            // must still work on mobile — give it the tag the OCR path would have made.
+            QMetaObject::invokeMethod(root, "addTag", Q_ARG(QVariant, QVariant::fromValue(inked)), Q_ARG(QVariant, QStringLiteral("Revision")));
+        } else if (canvas && ocr) {
             canvas->setTool(QStringLiteral("pen"));
             const QPointF mid = centre(canvas);
             const auto sample = [&](TabletSample::Kind kind, QPointF at) {
@@ -1338,6 +1352,8 @@ int uitest::run(QQuickWindow *win, QObject *root)
 {
     g_previous = qInstallMessageHandler(collectMessages);
     Report r;
+    const bool mobileUi = contextFlag(root, QStringLiteral("mobile"));
+    const bool helpersUi = contextFlag(root, QStringLiteral("helpers"));
 
     root->setProperty("onboardingVisible", false);
     // The checks below are about ink pages; typed pages have their own section.
@@ -1350,6 +1366,11 @@ int uitest::run(QQuickWindow *win, QObject *root)
     spin(400);
 
     const auto currentPage = [&] { return root->property("currentPageId").toLongLong(); };
+    // In tablet mode, opening a page dismisses the drawer it came from: reopen it before the next
+    // row lookup, the way a finger would. A no-op whenever the drawer was never closed.
+    const auto reopenNotebooks = [&] {
+        if (root->property("leftPanel").toString().isEmpty()) { root->setProperty("leftPanel", QStringLiteral("notebooks")); spin(250); }
+    };
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("notes")) {
         waitFor([&] { return currentPage() > 0; }, 3000);
         if (currentPage() == 0) QMetaObject::invokeMethod(root, "newPageAnywhere", Q_ARG(QVariant, QStringLiteral("a4")));
@@ -1405,6 +1426,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 2. Tapping the row that is already current still must not pop a menu (the reported bug:
     //         the ⋯ appeared on the current row and swallowed the tap).
+    reopenNotebooks();
     if (QQuickItem *row = pageRow(win, true)) {
         const qint64 before = currentPage();
         tap(win, row);
@@ -1415,6 +1437,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
     }
 
     // ---- 3. Press and hold is what opens the menu.
+    reopenNotebooks();
     revealCurrent(win, root);
     QQuickItem *target = pageRow(win, true);
     if (target) {
@@ -1434,6 +1457,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
     if (!canFinger()) {
         qWarning("UITEST skip  finger input needs -DLUMEN_UITEST_TOUCH=ON");
     } else {
+        reopenNotebooks();
         QQuickItem *other = pageRow(win, false);
         if (other) {
             const qint64 want = other->property("rowPageId").toLongLong();
@@ -1443,12 +1467,14 @@ int uitest::run(QQuickWindow *win, QObject *root)
             r.check("a finger tap does not open the menu", !sheetOpen(win));
             if (delivered) {
                 // a deliberate, slow tap — still a tap
+                reopenNotebooks();
                 revealCurrent(win, root);
                 if (QQuickItem *cur = pageRow(win, true)) {
                     fingerTap(win, cur, 400);
                     r.check("a slow finger tap still does not open the menu", !sheetOpen(win));
                 }
                 // and a real hold does open it
+                reopenNotebooks();
                 revealCurrent(win, root);
                 if (QQuickItem *cur = pageRow(win, true)) {
                     fingerTap(win, cur, 900, 0);
@@ -1459,6 +1485,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
     }
     // A slow mouse press is a tap too.
     if (!sheetOpen(win)) {
+        reopenNotebooks();
         if (QQuickItem *other = pageRow(win, false)) {
             const QPointF p = centre(other);
             sendMouse(win, QEvent::MouseButtonPress, p, Qt::LeftButton);
@@ -1469,6 +1496,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
         }
     }
     if (!sheetOpen(win)) {
+        reopenNotebooks();
         revealCurrent(win, root);
         if (QQuickItem *cur = pageRow(win, true)) hold(win, cur, 900);
     }
@@ -2306,7 +2334,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12b. Tablet mode has to be able to type: the in-window keyboard must come up when a
     //           text field asks for input, and go away when it does not.
-    {
+    if (mobileUi) {
+        qInfo("UITEST SKIP 12b: mobile uses the system keyboard, not this build's own one");
+    } else {
         QObject *tabletMode = nullptr;
         if (QQmlEngine *engine = qmlEngine(root))
             tabletMode = engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>();
@@ -2663,10 +2693,12 @@ int uitest::run(QQuickWindow *win, QObject *root)
     holdTipChecks();
 
     // ---- 12f. (above)
-    progressChecks();
+    if (helpersUi) progressChecks();
+    else qInfo("UITEST SKIP 12f: no helpers on this build");
 
     // ---- 12g. (above)
-    servicesChecks();
+    if (helpersUi) servicesChecks();
+    else qInfo("UITEST SKIP 12g: no helpers on this build");
 
     // ---- 12h. (above)
     handChecks();
@@ -2682,6 +2714,10 @@ int uitest::run(QQuickWindow *win, QObject *root)
         const int windowsBefore = QGuiApplication::topLevelWindows().size();
         int tapped = 0, unreachable = 0;
         QStringList trouble, small;
+        const QStringList rightPanels = helpersUi
+            ? QStringList{QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting"), QStringLiteral("page")}
+            : QStringList{QString(), QStringLiteral("page")};
+        if (!helpersUi) qInfo("UITEST note  13: not opening claude/transcript/handwriting — no helpers on this build");
         for (int posture = 0; posture < 2; ++posture) {
             QObject *tabletMode = nullptr;
             if (QQmlEngine *engine = qmlEngine(root))
@@ -2692,7 +2728,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
             // Panels have to be open for their controls to exist at all.
             for (const QString &left : {QStringLiteral("notebooks"), QStringLiteral("cards"), QStringLiteral("papers")}) {
-                for (const QString &right : {QString(), QStringLiteral("claude"), QStringLiteral("transcript"), QStringLiteral("handwriting"), QStringLiteral("page")}) {
+                for (const QString &right : rightPanels) {
                     root->setProperty("leftPanel", left);
                     root->setProperty("rightPanel", right);
                     spin(220);

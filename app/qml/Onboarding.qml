@@ -39,7 +39,7 @@ Rectangle {
         const bits = []
         if (hasPen) bits.push("a pen")
         if (hasTouch) bits.push("a touchscreen")
-        bits.push("a keyboard")
+        if (!mobile) bits.push("a keyboard")
         return bits.join(", ").replace(/, ([^,]*)$/, " and $1")
     }
 
@@ -75,7 +75,7 @@ Rectangle {
             anchors { fill: parent; margins: 28 }
             spacing: 12
             Text { text: "Lumen"; color: pal.windowText; font.pixelSize: 26; font.weight: Font.DemiBold }
-            Text { text: "This computer has " + page.found + ", so Lumen has set itself up this way:"
+            Text { text: (mobile ? "This tablet has " : "This computer has ") + page.found + ", so Lumen has set itself up this way:"
                    color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
             component SetupRow: RowLayout { spacing: 8; Layout.fillWidth: true }
@@ -103,7 +103,7 @@ Rectangle {
                 Item { Layout.fillWidth: true }
             }
             SetupRow {
-                visible: page.hasTouch
+                visible: page.hasTouch && !mobile
                 SetupLabel { text: "On-screen keyboard" }
                 Choice { label: "In tablet mode"; on: page.keyboardMode === "tablet"; onChosen: page.keyboardMode = "tablet" }
                 Choice { label: "Always"; on: page.keyboardMode === "always"; onChosen: page.keyboardMode = "always" }
@@ -115,14 +115,18 @@ Rectangle {
             component Tip: RowLayout { property string icon; property string body; spacing: 12; Layout.fillWidth: true
                 Icon { name: "" + icon; implicitWidth: 24; implicitHeight: 24; Layout.alignment: Qt.AlignTop }
                 Text { text: body; color: pal.text; font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true } }
-            Tip { visible: page.notesMode !== "ink"; icon: "input-keyboard"; body: "Just start typing on a typed page. Ctrl+B, Ctrl+I and Ctrl+U format text, Ctrl+Alt+1–3 make headings." }
+            Tip { visible: page.notesMode !== "ink"; icon: "input-keyboard"
+                  body: mobile ? "Tap a typed page to start typing; the bar at the top makes headings, lists and bold."
+                               : "Just start typing on a typed page. Ctrl+B, Ctrl+I and Ctrl+U format text, Ctrl+Alt+1–3 make headings." }
             Tip { visible: page.notesMode !== "typed"; icon: "draw-freehand"
                   body: "On a handwritten page the toolbar at the top holds the pen, highlighter, eraser and lasso, and sticky notes for typed words. Hold any button to see what it does." }
-            Tip { icon: "edit-find"; body: "Ctrl+K searches everything you have typed and every PDF you have imported — and, with the AI add-on, your handwriting and lesson transcripts." }
-            Tip { icon: "folder"; body: "Notebooks hold sections, sections hold pages. Everything is saved as you go and stays on this computer." }
+            Tip { icon: "edit-find"
+                  body: mobile ? "Search, on the left, finds everything you have typed and every PDF you have imported."
+                               : "Ctrl+K searches everything you have typed and every PDF you have imported — and, with the AI add-on, your handwriting and lesson transcripts." }
+            Tip { icon: "folder"; body: "Notebooks hold sections, sections hold pages. Everything is saved as you go and stays on this " + (mobile ? "tablet." : "computer.") }
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Press F1 to see this again."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; Layout.fillWidth: true }
+                Text { text: mobile ? "" : "Press F1 to see this again."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; Layout.fillWidth: true }
                 Button { objectName: "onboardingStart"; text: "Start"; implicitHeight: Ui.target; onClicked: page.start() }
             }
         }

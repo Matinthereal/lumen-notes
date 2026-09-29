@@ -57,8 +57,9 @@ Item {
     property int words: 0
     signal pageLinkActivated(string url)
     // save() first: blockId still names the page being left, and its last 700 ms of typing may
-    // not have reached the database yet.
-    onPageIdChanged: { linkPicker.close(); save(); load(); refreshLinks(); Qt.callLater(() => { if (typed.visible) area.forceActiveFocus() }) }
+    // not have reached the database yet. On a tablet, focus would open the system keyboard over
+    // the page (and over any dialog), so there the caret waits for a tap.
+    onPageIdChanged: { linkPicker.close(); save(); load(); refreshLinks(); Qt.callLater(() => { if (typed.visible && !mobile) area.forceActiveFocus() }) }
 
     // ---- [[page]] links: typing [[ opens the picker; [[Exact title]] typed out in full links too.
     property var backlinks: []

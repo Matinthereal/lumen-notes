@@ -50,10 +50,10 @@ bool PdfService::pageHasPdf(qint64 pageId) const { return refFor(pageId).index >
 void PdfService::importAsSection(const QUrl &file, qint64 notebookId, const QString &sectionName, const QString &token)
 {
     QString err;
-    const QString sha = attachments::store(m_db, file.toLocalFile(), "application/pdf", &err);
+    const QString sha = attachments::store(m_db, paths::openable(file), "application/pdf", &err);
     if (sha.isEmpty()) { emit failed(err); return; }
     const QString path = attachments::pathFor(sha, "application/pdf");
-    const QString name = sectionName.isEmpty() ? QFileInfo(file.toLocalFile()).completeBaseName() : sectionName;
+    const QString name = sectionName.isEmpty() ? QFileInfo(paths::openable(file)).completeBaseName() : sectionName;
     call("info", {{"path", path}}, [this, sha, path, notebookId, name, token](const QJsonObject &r, const QJsonObject &e) {
         if (!e.isEmpty()) { emit failed(e.value("message").toString()); return; }
         const int pages = r.value("pages").toInt();
@@ -86,7 +86,7 @@ void PdfService::importAsSection(const QUrl &file, qint64 notebookId, const QStr
 void PdfService::importAsBackground(const QUrl &file, qint64 pageId, int index)
 {
     QString err;
-    const QString sha = attachments::store(m_db, file.toLocalFile(), "application/pdf", &err);
+    const QString sha = attachments::store(m_db, paths::openable(file), "application/pdf", &err);
     if (sha.isEmpty()) { emit failed(err); return; }
     const QString path = attachments::pathFor(sha, "application/pdf");
     call("info", {{"path", path}}, [this, sha, path, pageId, index](const QJsonObject &r, const QJsonObject &e) {
@@ -226,7 +226,7 @@ void PdfService::exportPages(const QString &kind, qint64 id, const QUrl &dest)
     if (pageIds.isEmpty()) { emit failed("nothing to export"); return; }
     QJsonArray pages;
     for (qint64 pid : pageIds) pages.append(pagePayload(pid));
-    call("export", {{"pages", pages}, {"out", dest.toLocalFile()}}, [this](const QJsonObject &r, const QJsonObject &e) {
+    call("export", {{"pages", pages}, {"out", paths::openable(dest)}}, [this](const QJsonObject &r, const QJsonObject &e) {
         if (!e.isEmpty()) { emit failed(e.value("message").toString()); return; }
         emit exported(r.value("file").toString(), r.value("pages").toInt());
     });

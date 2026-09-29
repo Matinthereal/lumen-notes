@@ -43,6 +43,54 @@ qt_add_library(lumen_core STATIC
 )
 target_include_directories(lumen_core PUBLIC src)
 
+# ---- Without the Python helpers, WorkerSupervisor serves the pdf helper in-process on PDFium:
+#      prebuilt by github.com/bblanchon/pdfium-binaries (MIT). It is the engine QtPdf is built on,
+#      and Qt ships no QtPdf for Android.
+if(LUMEN_HELPERS)
+    target_compile_definitions(lumen_core PUBLIC LUMEN_HAVE_HELPERS)
+else()
+    set(_pdfium_release https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8066)
+    if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
+        set(_pdfium android-arm64 a665e3a9d40fb0024e3959261a400a722a13f7aa6602c59a82c93d44a362c055)
+    elseif(ANDROID AND ANDROID_ABI STREQUAL "x86_64")
+        set(_pdfium android-x64 44b9444d58f055ab892019aea27423bab74d671a37b5bad84647a91abec82a1d)
+    elseif(IOS)
+        set(_pdfium ios-device-arm64 0b4c5e0a6a4e9e6102ca832b704a676b1bbd5fb7ae7ba23caeb91bbca305a952)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        set(_pdfium linux-x64 0b43f405477cf2cfc4dbff06905093c3309756c6bca1fb9da99234a2ca97fed2)
+    else()
+        message(FATAL_ERROR "No PDFium package is set up for this platform; build with -DLUMEN_HELPERS=ON")
+    endif()
+    list(GET _pdfium 0 _pdfium_package)
+    list(GET _pdfium 1 _pdfium_sha256)
+    include(FetchContent)
+    FetchContent_Declare(lumen_pdfium
+        URL ${_pdfium_release}/pdfium-${_pdfium_package}.tgz
+        URL_HASH SHA256=${_pdfium_sha256}
+        SOURCE_SUBDIR no-cmake-project      # a prebuilt package: fetch it, don't add_subdirectory it
+    )
+    FetchContent_MakeAvailable(lumen_pdfium)
+    set(LUMEN_PDFIUM_LIBRARY ${lumen_pdfium_SOURCE_DIR}/lib/libpdfium${CMAKE_SHARED_LIBRARY_SUFFIX})
+    if(IOS)
+        # The package names itself ./libpdfium.dylib, which iOS cannot load; the bundle carries it
+        # in Frameworks/ and finds it through @rpath (see the lumen target below).
+        file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/pdfium)
+        file(COPY_FILE ${LUMEN_PDFIUM_LIBRARY} ${CMAKE_BINARY_DIR}/pdfium/libpdfium.dylib)
+        set(LUMEN_PDFIUM_LIBRARY ${CMAKE_BINARY_DIR}/pdfium/libpdfium.dylib)
+        execute_process(COMMAND install_name_tool -id @rpath/libpdfium.dylib ${LUMEN_PDFIUM_LIBRARY} COMMAND_ERROR_IS_FATAL ANY)
+    endif()
+    add_library(lumen_pdfium SHARED IMPORTED)
+    set_target_properties(lumen_pdfium PROPERTIES
+        IMPORTED_LOCATION ${LUMEN_PDFIUM_LIBRARY}
+        INTERFACE_INCLUDE_DIRECTORIES ${lumen_pdfium_SOURCE_DIR}/include)
+    target_sources(lumen_core PRIVATE
+        src/workers/inprocessworker.h
+        src/workers/workersupervisor_inprocess.cpp
+        src/pdf/pdfengine.h            src/pdf/pdfengine.cpp)
+    target_link_libraries(lumen_core PUBLIC lumen_pdfium)
+    target_compile_definitions(lumen_core PUBLIC LUMEN_HAVE_PDFIUM)
+endif()
+
 # ---- D-Bus: tablet-mode's KWin auto-detect (tabletmode.cpp) is Linux/Plasma-only and optional —
 #      without it the manual tablet-mode toggle still works, just with no KWin auto-detect.
 if(LINUX)
@@ -69,6 +117,9 @@ find_package(Qt6 QUIET COMPONENTS VirtualKeyboard)
 # ---- SQLite: the system library via pkg-config, or a bundled amalgamation when that isn't
 #      available (no pkg-config sqlite3 package on Windows) or when forced with LUMEN_BUNDLED_SQLITE.
 option(LUMEN_BUNDLED_SQLITE "Fetch and build the SQLite amalgamation instead of the system library" OFF)
+if(LUMEN_MOBILE)
+    set(LUMEN_BUNDLED_SQLITE ON)     # pkg-config would find the build machine's own library
+endif()
 if(NOT LUMEN_BUNDLED_SQLITE)
     find_package(PkgConfig)
     if(PkgConfig_FOUND)
@@ -168,10 +219,52 @@ qt_add_qml_module(lumen
 target_include_directories(lumen PRIVATE src src/input src/canvas src/text)
 target_link_libraries(lumen PRIVATE lumen_core Qt6::Quick Qt6::Qml)
 
+# ---- Android and iPad packaging (ADR mynotes-002). The app id is permanent: an update only
+#      installs over an app with the same id and signing key.
+set(LUMEN_APP_ID io.github.matinthereal.lumen)
+math(EXPR LUMEN_VERSION_CODE "${PROJECT_VERSION_MAJOR} * 10000 + ${PROJECT_VERSION_MINOR} * 100 + ${PROJECT_VERSION_PATCH}")
+if(ANDROID)
+    set_target_properties(lumen PROPERTIES
+        QT_ANDROID_PACKAGE_NAME ${LUMEN_APP_ID}
+        QT_ANDROID_APP_NAME Lumen
+        QT_ANDROID_APP_ICON @mipmap/ic_launcher
+        QT_ANDROID_PACKAGE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/packaging/android
+        QT_ANDROID_VERSION_NAME ${PROJECT_VERSION}
+        QT_ANDROID_VERSION_CODE ${LUMEN_VERSION_CODE}
+        QT_ANDROID_MIN_SDK_VERSION 28
+        QT_ANDROID_TARGET_SDK_VERSION 35)
+    set_property(TARGET lumen APPEND PROPERTY QT_ANDROID_EXTRA_LIBS ${LUMEN_PDFIUM_LIBRARY})
+    qt_add_resources(lumen "fonts" PREFIX "/fonts" BASE "${CMAKE_SOURCE_DIR}/packaging/fonts"
+                     FILES "${CMAKE_SOURCE_DIR}/packaging/fonts/symbols.ttf")
+elseif(IOS)
+    set(asset_catalog ${CMAKE_SOURCE_DIR}/packaging/ios/Assets.xcassets)
+    target_sources(lumen PRIVATE ${asset_catalog})
+    set_source_files_properties(${asset_catalog} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(lumen PROPERTIES
+        OUTPUT_NAME Lumen
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/packaging/ios/Info.plist.in
+        MACOSX_BUNDLE_GUI_IDENTIFIER ${LUMEN_APP_ID}
+        MACOSX_BUNDLE_BUNDLE_NAME Lumen
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+        MACOSX_BUNDLE_BUNDLE_VERSION ${LUMEN_VERSION_CODE}
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${LUMEN_APP_ID}
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "2"                   # iPad
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
+        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/Frameworks"
+        XCODE_EMBED_FRAMEWORKS ${LUMEN_PDFIUM_LIBRARY}
+        XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY ON)
+endif()
+
 # --uitest drives the real window. Synthesising *touch* needs QtTest's helper (positions on a
 # QEventPoint are otherwise private API), so it is opt-in: on for development builds, off for
 # packaging, where the binary must not link libQt6Test.
-option(LUMEN_UITEST_TOUCH "Link QtTest so --uitest can synthesise finger input" ON)
+if(LUMEN_MOBILE)
+    set(LUMEN_UITEST_TOUCH_DEFAULT OFF)
+else()
+    set(LUMEN_UITEST_TOUCH_DEFAULT ON)
+endif()
+option(LUMEN_UITEST_TOUCH "Link QtTest so --uitest can synthesise finger input" ${LUMEN_UITEST_TOUCH_DEFAULT})
 if(LUMEN_UITEST_TOUCH)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     target_link_libraries(lumen PRIVATE Qt6::Test)

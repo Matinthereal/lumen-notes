@@ -1,8 +1,10 @@
+#include <QProcess>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <QSignalSpy>
 #include "ink/inkdocument.h"
+#include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/journal.h"
 #include "storage/library.h"
@@ -33,6 +35,45 @@ static Stroke randomStroke(quint64 id, int n = 50)
 class TstStorage : public QObject {
     Q_OBJECT
 private slots:
+    // Phones and tablets have no zip or tar program, so their backup is a tar written in-process;
+    // the system tar is the judge of whether it is a real one.
+    void tarBackupIsARealTarWithAConsistentDatabase() {
+        QTemporaryDir dir;
+        const QString data = dir.path() + "/data";
+        QDir().mkpath(data + "/attachments/ab");
+        QDir().mkpath(data + "/cache/pdf");
+        {
+            Database db; QVERIFY(db.open(data + "/lumen.db")); QVERIFY(ensureSchema(db) > 0);
+            Library lib(db); lib.seedDefaults();
+            QVERIFY(db.exec("CREATE TABLE marker(v TEXT); INSERT INTO marker VALUES('still here')"));
+        }
+        const QString deep = "attachments/ab/" + QString(90, QLatin1Char('x')) + ".pdf";     // needs the ustar prefix field
+        QByteArray payload(70000, '\0');
+        for (int i = 0; i < payload.size(); ++i) payload[i] = char(i * 7);
+        { QFile f(data + "/" + deep); QVERIFY(f.open(QIODevice::WriteOnly)); f.write(payload); }
+        { QFile f(data + "/cache/pdf/skip.png"); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("cache"); }
+        const QString tar = dir.path() + "/lumen-test.tar";
+        QString error;
+        QVERIFY2(backup::writeTar(data, tar, &error), qPrintable(error));
+        QProcess list;
+        list.start("tar", {"-tf", tar});
+        QVERIFY(list.waitForFinished(20000));
+        QCOMPARE(list.exitCode(), 0);
+        const QStringList names = QString::fromUtf8(list.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+        QVERIFY2(names.contains("lumen.db"), qPrintable(names.join(", ")));
+        QVERIFY(names.contains(deep));
+        QVERIFY(!names.contains("cache/pdf/skip.png"));
+        QVERIFY(!names.contains("lumen.db-wal"));
+        const QString restored = dir.path() + "/restored";
+        QDir().mkpath(restored);
+        QProcess extract;
+        extract.start("tar", {"-xf", tar, "-C", restored});
+        QVERIFY(extract.waitForFinished(20000));
+        QCOMPARE(extract.exitCode(), 0);
+        QFile back(restored + "/" + deep); QVERIFY(back.open(QIODevice::ReadOnly)); QCOMPARE(back.readAll(), payload);
+        Database db; QVERIFY(db.open(restored + "/lumen.db"));
+        Database::Query q(db, "SELECT v FROM marker"); QVERIFY(q.step()); QCOMPARE(q.text(0), QStringLiteral("still here"));
+    }
     void codecRoundTripIsExactWhereItPromises() {
         QVector<Stroke> in; for (int i = 1; i <= 40; ++i) in.append(randomStroke(i, 5 + i));
         in.append(Stroke{}); in.last().id = 99; in.last().points.append({1.5f, -2.25f, 0.5f, 0, 0, 0}); in.last().updateBounds();
