@@ -22,10 +22,18 @@ qint64 Library::now() const { return QDateTime::currentSecsSinceEpoch(); }
 QVariantList Library::notebooks() const
 {
     QVariantList out;
-    Database::Query q(m_db, "SELECT n.id, n.name, n.colour, n.board, (SELECT COUNT(*) FROM section s WHERE s.notebook_id=n.id AND s.deleted_at IS NULL)"
+    // For the covers: how many pages, when one was last written in, and the page to open on a tap
+    // (the one opened last, else the first).
+    Database::Query q(m_db, "SELECT n.id, n.name, n.colour, n.board, (SELECT COUNT(*) FROM section s WHERE s.notebook_id=n.id AND s.deleted_at IS NULL),"
+                            " (SELECT COUNT(*) FROM page p JOIN section s ON s.id=p.section_id WHERE s.notebook_id=n.id AND p.deleted_at IS NULL AND s.deleted_at IS NULL),"
+                            " (SELECT COALESCE(MAX(p.modified),0) FROM page p JOIN section s ON s.id=p.section_id WHERE s.notebook_id=n.id AND p.deleted_at IS NULL AND s.deleted_at IS NULL),"
+                            " (SELECT p.id FROM page p JOIN section s ON s.id=p.section_id LEFT JOIN setting ON setting.key='opened.'||p.id"
+                            "  WHERE s.notebook_id=n.id AND p.deleted_at IS NULL AND s.deleted_at IS NULL"
+                            "  ORDER BY CAST(COALESCE(setting.value,'0') AS INTEGER) DESC, s.sort, s.id, p.sort, p.id LIMIT 1)"
                             " FROM notebook n WHERE n.deleted_at IS NULL ORDER BY n.sort, n.id");
     while (q.step())
-        out.append(QVariantMap{{"id", q.i64(0)}, {"name", q.text(1)}, {"colour", q.text(2)}, {"board", q.text(3)}, {"sectionCount", q.i32(4)}});
+        out.append(QVariantMap{{"id", q.i64(0)}, {"name", q.text(1)}, {"colour", q.text(2)}, {"board", q.text(3)}, {"sectionCount", q.i32(4)},
+                               {"pageCount", q.i32(5)}, {"modified", q.i64(6)}, {"lastPageId", q.i64(7)}});
     return out;
 }
 

@@ -116,7 +116,7 @@ Rectangle {
 
         Item { Layout.fillHeight: true }
 
-        Button { text: "Clear ink"; onClicked: probe.clear() }
+        LButton { text: "Clear ink"; onClicked: probe.clear() }
         Text { text: "log: " + probe.logPath; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(11); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
     }
 }

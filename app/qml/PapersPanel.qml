@@ -38,27 +38,27 @@ Rectangle {
         property var schemeUrl: ""
         parent: Overlay.overlay
         x: (parent.width - width) / 2; y: 120; width: 420; padding: 16; modal: true; focus: true
-        background: Rectangle { radius: 10; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha) }
+        background: Card {}
         ColumnLayout {
             anchors.fill: parent; spacing: 8
             Text { text: "New past paper"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
             ComboBox { id: subj; Layout.fillWidth: true; model: library.notebooks().map(n => n.name); font.pixelSize: Ui.text }
             RowLayout {
-                TextField { id: year; Layout.preferredWidth: 90; placeholderText: "Year"; text: String(new Date().getFullYear() - 1); font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 } }
-                TextField { id: nameField; Layout.fillWidth: true; placeholderText: "Paper (e.g. Paper 2)"; font.pixelSize: Ui.text }
+                LField { id: year; Layout.preferredWidth: 90; placeholderText: "Year"; text: String(new Date().getFullYear() - 1); font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 } }
+                LField { id: nameField; Layout.fillWidth: true; placeholderText: "Paper (e.g. Paper 2)"; font.pixelSize: Ui.text }
             }
             RowLayout {
-                TextField { id: board; Layout.fillWidth: true; placeholderText: "board (Edexcel, AQA, OCR)"
+                LField { id: board; Layout.fillWidth: true; placeholderText: "board (Edexcel, AQA, OCR)"
                         function suggest() { const n = library.notebooks().find(nb => nb.name === subj.currentText); text = n ? (n.board || "") : "" }
                         Component.onCompleted: suggest()
                         Connections { target: subj; function onCurrentTextChanged() { if (!board.activeFocus) board.suggest() } } }
-                TextField { id: minutes; Layout.preferredWidth: 110; placeholderText: "Minutes"; text: "120"; font.pixelSize: Ui.text; validator: IntValidator { bottom: 10; top: 300 } }
+                LField { id: minutes; Layout.preferredWidth: 110; placeholderText: "Minutes"; text: "120"; font.pixelSize: Ui.text; validator: IntValidator { bottom: 10; top: 300 } }
             }
             Text { text: "Questions are detected from the PDF's own numbering; you can fix regions and marks afterwards."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; wrapMode: Text.Wrap; Layout.fillWidth: true }
             RowLayout {
                 Item { Layout.fillWidth: true }
-                Button { text: "Cancel"; onClicked: importForm.close() }
-                Button { text: "Import"; enabled: subj.currentText.length > 0; onClicked: { papers.importPair(importForm.paperUrl, importForm.schemeUrl, subj.currentText, Number(year.text), nameField.text, board.text, Number(minutes.text)); importForm.close() } }
+                LButton { text: "Cancel"; onClicked: importForm.close() }
+                LButton { text: "Import"; enabled: subj.currentText.length > 0; onClicked: { papers.importPair(importForm.paperUrl, importForm.schemeUrl, subj.currentText, Number(year.text), nameField.text, board.text, Number(minutes.text)); importForm.close() } }
             }
         }
     }
@@ -67,8 +67,8 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 6
         RowLayout {
-            Text { text: "Past papers"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Button { text: "Import pair"; font.pixelSize: Ui.small; onClicked: paperDlg.open() }
+            Text { text: "Past papers"; color: pal.windowText; font.pixelSize: Ui.text + 8; font.family: Ui.titleFont; font.weight: Font.Medium; Layout.fillWidth: true }
+            LButton { text: "Import pair"; font.pixelSize: Ui.small; onClicked: paperDlg.open() }
         }
         ListView {
             Layout.fillWidth: true; Layout.fillHeight: true

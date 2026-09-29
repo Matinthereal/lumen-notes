@@ -85,7 +85,7 @@ Rectangle {
             spacing: 18
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: "Keys"; color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold }
+                Text { text: "Keys"; color: pal.windowText; font.pixelSize: Ui.title; font.family: Ui.titleFont; font.weight: Font.Medium }
                 Item { Layout.fillWidth: true }
                 Rectangle {
                     implicitWidth: closeLabel.implicitWidth + 26; implicitHeight: Ui.target

@@ -77,7 +77,7 @@ Rectangle {
         parent: Overlay.overlay
         x: (parent.width - width) / 2; y: 100; width: 380; padding: 14
         modal: true; focus: true
-        background: Rectangle { radius: 12; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+        background: Card {}
         property var moving: []
         function begin(ids) { moving = ids; targets.model = library.allSections(); open() }
         ColumnLayout {
@@ -119,7 +119,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 10
             Text { text: browser.tag.length ? "#" + browser.tagName : (browser.info.notebookName ? (browser.info.notebookName + " › " + browser.info.name) : "Pages")
-                   color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold; elide: Text.ElideRight
+                   color: pal.windowText; font.pixelSize: Ui.title; font.family: Ui.titleFont; font.weight: Font.Medium; elide: Text.ElideRight
                    Layout.maximumWidth: browser.width * 0.45 }
             Text { text: pages.count + (pages.count === 1 ? " page" : " pages"); color: Qt.alpha(pal.windowText, 0.6); font.pixelSize: Ui.small }
             Item { Layout.fillWidth: true }
@@ -129,9 +129,8 @@ Rectangle {
                 property bool danger: false
                 signal clicked()
                 implicitWidth: t.implicitWidth + 24; implicitHeight: Ui.target
-                radius: 9
-                color: bt.pressed ? Qt.alpha(danger ? Ui.danger : pal.text, 0.28) : "transparent"
-                border.color: danger ? Qt.alpha(Ui.danger, 0.6) : Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1
+                radius: height / 2
+                color: Qt.alpha(danger ? Ui.danger : pal.text, bt.pressed ? 0.2 : (danger ? 0.1 : 0.06))
                 Text { id: t; anchors.centerIn: parent; text: parent.label; color: parent.danger ? Ui.danger : pal.windowText; font.pixelSize: Ui.text }
                 TapHandler { id: bt; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.clicked() }
             }

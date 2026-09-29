@@ -24,13 +24,13 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 6
         RowLayout {
-            Text { text: "Flashcards"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Button { text: "Review " + (cards.dueCount ? "(" + cards.dueCount + ")" : ""); font.pixelSize: Ui.small; onClicked: panel.review() }
+            Text { text: "Flashcards"; color: pal.windowText; font.pixelSize: Ui.text + 8; font.family: Ui.titleFont; font.weight: Font.Medium; Layout.fillWidth: true }
+            LButton { text: "Review " + (cards.dueCount ? "(" + cards.dueCount + ")" : ""); font.pixelSize: Ui.small; onClicked: panel.review() }
         }
         RowLayout {
-            TextField { id: filter; Layout.fillWidth: true; placeholderText: "Filter…"; font.pixelSize: Ui.small + 1; onTextChanged: panel.reload() }
-            Button { visible: helpers; text: "Export"; font.pixelSize: Ui.small; onClicked: exportDlg.open() }
-            Button { visible: helpers; text: "Import"; font.pixelSize: Ui.small; onClicked: importDlg.open() }
+            LField { id: filter; Layout.fillWidth: true; placeholderText: "Filter…"; font.pixelSize: Ui.small + 1; onTextChanged: panel.reload() }
+            LButton { visible: helpers; text: "Export"; font.pixelSize: Ui.small; onClicked: exportDlg.open() }
+            LButton { visible: helpers; text: "Import"; font.pixelSize: Ui.small; onClicked: importDlg.open() }
         }
         // add by hand
         Rectangle {
@@ -39,12 +39,12 @@ Rectangle {
                 id: addCol
                 anchors { fill: parent; margins: 6 }
                 spacing: 4
-                TextField { id: front; Layout.fillWidth: true; placeholderText: "Front — or a cloze: The {{c1::integral}} of x is …"; font.pixelSize: Ui.small + 1 }
-                TextField { id: back; Layout.fillWidth: true; placeholderText: "Back (blank for a cloze)"; font.pixelSize: Ui.small + 1 }
+                LField { id: front; Layout.fillWidth: true; placeholderText: "Front — or a cloze: The {{c1::integral}} of x is …"; font.pixelSize: Ui.small + 1 }
+                LField { id: back; Layout.fillWidth: true; placeholderText: "Back (blank for a cloze)"; font.pixelSize: Ui.small + 1 }
                 RowLayout {
-                    TextField { id: tag; Layout.fillWidth: true; placeholderText: "Topic tag"; font.pixelSize: Ui.small + 1 }
+                    LField { id: tag; Layout.fillWidth: true; placeholderText: "Topic tag"; font.pixelSize: Ui.small + 1 }
                     CheckBox { id: rev; text: "Reverse too"; font.pixelSize: Ui.small }
-                    Button { text: "Add"; font.pixelSize: Ui.small; enabled: front.text.trim().length > 0
+                    LButton { text: "Add"; font.pixelSize: Ui.small; enabled: front.text.trim().length > 0
                              onClicked: { cards.add(front.text.includes("{{c1::") ? "cloze" : "basic", front.text.trim(), back.text.trim(), panel.pageId, tag.text.trim(), rev.checked); front.text = ""; back.text = ""; panel.toast("Card added") } }
                 }
             }

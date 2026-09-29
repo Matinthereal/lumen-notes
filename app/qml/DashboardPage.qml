@@ -28,7 +28,7 @@ Rectangle {
         spacing: 18
         RowLayout {
             Text { text: page.subject + " — past papers"; color: pal.windowText; font.pixelSize: Ui.px(22); font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Button { text: Ui.keys("Close (Esc)"); onClicked: page.closed() }
+            LButton { text: Ui.keys("Close (Esc)"); onClicked: page.closed() }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true

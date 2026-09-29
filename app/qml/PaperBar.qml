@@ -96,13 +96,13 @@ Rectangle {
             Text { text: info.totalMarks ? info.totalMarks + " marks" : ""; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small }
             Item { Layout.fillWidth: true }
             Text { visible: papers.activeAttempt > 0 && bar.info.minutes > 0; text: "⏱ " + bar.fmt(bar.examSeconds); color: bar.examSeconds < 300 ? Ui.danger : pal.text; font.pixelSize: Ui.text; font.family: "monospace" }
-            Button { visible: papers.activeAttempt === 0; text: "Start attempt"; font.pixelSize: Ui.small; onClicked: { papers.startAttempt(bar.paperId, false); bar.timedMode = false; bar.answers = {}; bar.examSeconds = 0; bar.timerRunning = true; if (qs.count) bar.jumpTo(0) } }
-            Button { visible: papers.activeAttempt === 0; text: "Timed"; font.pixelSize: Ui.small; onClicked: { papers.startAttempt(bar.paperId, true); bar.timedMode = true; bar.answers = {}; bar.examSeconds = (bar.info.minutes || 120) * 60; bar.timerRunning = true; if (qs.count) bar.jumpTo(0) }
+            LButton { visible: papers.activeAttempt === 0; text: "Start attempt"; font.pixelSize: Ui.small; onClicked: { papers.startAttempt(bar.paperId, false); bar.timedMode = false; bar.answers = {}; bar.examSeconds = 0; bar.timerRunning = true; if (qs.count) bar.jumpTo(0) } }
+            LButton { visible: papers.activeAttempt === 0; text: "Timed"; font.pixelSize: Ui.small; onClicked: { papers.startAttempt(bar.paperId, true); bar.timedMode = true; bar.answers = {}; bar.examSeconds = (bar.info.minutes || 120) * 60; bar.timerRunning = true; if (qs.count) bar.jumpTo(0) }
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Exam conditions: a countdown from the paper's time, per-question splits" }
-            Button { visible: papers.activeAttempt > 0; text: bar.timerRunning ? "Pause" : "Resume"; font.pixelSize: Ui.small; onClicked: bar.timerRunning = !bar.timerRunning }
-            Button { visible: papers.activeAttempt > 0; text: "Finish"; onPressed: bar.harvestFields(); font.pixelSize: Ui.small; onClicked: { bar.commitCurrent(); const s = papers.attemptSummary(papers.activeAttempt); papers.finishAttempt(papers.activeAttempt); bar.timerRunning = false; bar.toast("Attempt finished: " + s.scored + "/" + s.available + " (" + Math.round(s.percent) + "%)") } }
-            Button { text: "Detect questions"; font.pixelSize: Ui.small; onClicked: papers.detectQuestions(bar.paperId) }
-            Button { text: "Add from lasso"; font.pixelSize: Ui.small; enabled: canvas.hasSelection; onClicked: { const pages = library.pages(info.sectionId); const idx = pages.findIndex(p => p.id === bar.pageId); papers.addQuestion(bar.paperId, "Q" + (qs.count + 1), Math.max(0, idx), canvas.selectionBounds(), 0); canvas.selectNone() }
+            LButton { visible: papers.activeAttempt > 0; text: bar.timerRunning ? "Pause" : "Resume"; font.pixelSize: Ui.small; onClicked: bar.timerRunning = !bar.timerRunning }
+            LButton { visible: papers.activeAttempt > 0; text: "Finish"; onPressed: bar.harvestFields(); font.pixelSize: Ui.small; onClicked: { bar.commitCurrent(); const s = papers.attemptSummary(papers.activeAttempt); papers.finishAttempt(papers.activeAttempt); bar.timerRunning = false; bar.toast("Attempt finished: " + s.scored + "/" + s.available + " (" + Math.round(s.percent) + "%)") } }
+            LButton { text: "Detect questions"; font.pixelSize: Ui.small; onClicked: papers.detectQuestions(bar.paperId) }
+            LButton { text: "Add from lasso"; font.pixelSize: Ui.small; enabled: canvas.hasSelection; onClicked: { const pages = library.pages(info.sectionId); const idx = pages.findIndex(p => p.id === bar.pageId); papers.addQuestion(bar.paperId, "Q" + (qs.count + 1), Math.max(0, idx), canvas.selectionBounds(), 0); canvas.selectNone() }
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Lasso the question's area on the page first" }
         }
         RowLayout {
@@ -131,12 +131,12 @@ Rectangle {
             }
             // editing the current question
             Text { visible: bar.current !== null; text: bar.current ? bar.current.label : ""; color: pal.text; font.pixelSize: Ui.small + 1; font.weight: Font.DemiBold }
-            TextField { id: scored; visible: bar.current !== null; Layout.preferredWidth: 46; placeholderText: "got"; font.pixelSize: Ui.small + 1; validator: IntValidator { bottom: 0; top: 99 }
+            LField { id: scored; visible: bar.current !== null; Layout.preferredWidth: 46; placeholderText: "got"; font.pixelSize: Ui.small + 1; validator: IntValidator { bottom: 0; top: 99 }
                         onEditingFinished: if (bar.current) { bar.setAnswer(bar.current.id, { scored: text.length ? Number(text) : undefined }); bar.commitCurrent() } }
             Text { visible: bar.current !== null; text: "/"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1 }
-            TextField { id: avail; visible: bar.current !== null; Layout.preferredWidth: 46; placeholderText: "of"; font.pixelSize: Ui.small + 1; validator: IntValidator { bottom: 0; top: 99 }
+            LField { id: avail; visible: bar.current !== null; Layout.preferredWidth: 46; placeholderText: "of"; font.pixelSize: Ui.small + 1; validator: IntValidator { bottom: 0; top: 99 }
                         onEditingFinished: if (bar.current && Number(text) !== bar.current.marks) papers.setQuestion(bar.current.id, bar.current.label, Number(text), bar.current.topics) }
-            TextField { id: topics; visible: bar.current !== null; Layout.preferredWidth: 170; placeholderText: "topics, comma separated"; font.pixelSize: Ui.small + 1
+            LField { id: topics; visible: bar.current !== null; Layout.preferredWidth: 170; placeholderText: "topics, comma separated"; font.pixelSize: Ui.small + 1
                         onEditingFinished: if (bar.current && text !== bar.current.topics) papers.setQuestion(bar.current.id, bar.current.label, bar.current.marks, text) }
             ComboBox { id: err; visible: bar.current !== null && papers.activeAttempt > 0; Layout.preferredWidth: 140; font.pixelSize: Ui.small + 1
                        model: ["", "careless", "did not know", "ran out of time", "misread"]

@@ -60,7 +60,7 @@ Popup {
     }
     exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 90; easing.type: Easing.InCubic } }
 
-    background: Rectangle { radius: Ui.radiusLg; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
 
     component Tile: Rectangle {
         id: tile

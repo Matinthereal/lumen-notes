@@ -15,7 +15,9 @@ Popup {
     dim: false
     padding: 6
     width: 260
-    background: Rectangle { radius: Ui.radiusLg; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
 
     // Open under the control that asked for it, flipped above when there is no room, and always
     // fully on screen. Positioned after opening, because a popup does not know its own height until

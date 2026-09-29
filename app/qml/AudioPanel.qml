@@ -68,12 +68,16 @@ Item {
         TapHandler { id: touchTap; acceptedDevices: PointerDevice.TouchScreen; enabled: panel.touchAllowed; onTapped: guard.tapped(); onLongPressed: guard.longPressed() }
         TapHandler { id: otherTap; acceptedDevices: PointerDevice.Mouse | PointerDevice.Stylus | PointerDevice.TouchPad; longPressThreshold: touchTap.longPressThreshold; onTapped: guard.tapped(); onLongPressed: guard.longPressed() }
     }
+    // A floating capsule like the other bars (ADR mynotes-003); while recording, its edge is red.
     Rectangle {
-        anchors.fill: parent
-        color: audio.recording ? Qt.alpha(Ui.danger, 0.12) : pal.window
-        Rectangle { anchors.top: parent.top; width: parent.width; height: audio.recording ? 3 : 1; color: audio.recording ? Ui.danger : Qt.alpha(pal.text, 0.14) }
+        anchors { fill: parent; leftMargin: 12; rightMargin: 12; topMargin: 4; bottomMargin: 8 }
+        radius: height / 2
+        color: audio.recording ? Qt.tint(Ui.chrome, Qt.alpha(Ui.danger, 0.1)) : Ui.chrome
+        border.width: audio.recording ? 2 : 1
+        border.color: audio.recording ? Ui.danger : Ui.hair
+        Elevation { level: 1 }
         Flickable {
-            anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+            anchors { fill: parent; leftMargin: 14; rightMargin: 14 }
             contentWidth: audioRow.implicitWidth
             contentHeight: height
             flickableDirection: Flickable.HorizontalFlick
@@ -209,7 +213,7 @@ Item {
                 ToolTip.visible: speedHover.hovered; ToolTip.delay: 600; ToolTip.text: "Playback speed"
                 HoverHandler { id: speedHover }
             }
-            Slider {
+            LSlider {
                 id: scrub
                 visible: panel.currentRecordingId > 0 && !audio.recording
                 Layout.fillWidth: true

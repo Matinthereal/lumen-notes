@@ -145,6 +145,8 @@ private slots:
         QVERIFY(lib.seedDefaults()); QVERIFY(!lib.seedDefaults());
         const QVariantList nbs = lib.notebooks(); QCOMPARE(nbs.size(), 1);
         QCOMPARE(nbs[0].toMap().value("name").toString(), QStringLiteral("My notebook"));
+        QCOMPARE(nbs[0].toMap().value("pageCount").toInt(), 1);          // the welcome page
+        QVERIFY(nbs[0].toMap().value("modified").toLongLong() > 0);
         const qint64 maths = nbs[0].toMap().value("id").toLongLong();
         const QVariantList secs = lib.sections(maths); QCOMPARE(secs.size(), 1);
         QCOMPARE(lib.page(lib.pages(secs[0].toMap().value("id").toLongLong())[0].toMap().value("id").toLongLong()).value("sizeMode").toString(), QStringLiteral("typed"));
@@ -159,6 +161,10 @@ private slots:
         QCOMPARE(lib.page(p2).value("title").toString(), QStringLiteral("Integration"));
         const qint64 p1 = lib.pages(pure1)[0].toMap().value("id").toLongLong();
         QCOMPARE(lib.nextPageId(p1, 1), p2); QCOMPARE(lib.nextPageId(p2, 1), 0ll);
+        QCOMPARE(lib.notebooks()[0].toMap().value("lastPageId").toLongLong(), p1);   // none opened yet: the first
+        lib.touchPage(p2);
+        QCOMPARE(lib.notebooks()[0].toMap().value("lastPageId").toLongLong(), p2);   // then the one opened last
+        QCOMPARE(lib.notebooks()[0].toMap().value("pageCount").toInt(), 2);
         lib.movePage(p2, 0); QCOMPARE(lib.pages(pure1)[0].toMap().value("id").toLongLong(), p2);
         lib.remove("page", p2); QCOMPARE(lib.pages(pure1).size(), 1);
         lib.restore("page", p2); QCOMPARE(lib.pages(pure1).size(), 2);

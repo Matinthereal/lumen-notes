@@ -55,14 +55,15 @@ Rectangle {
         property string label: ""
         property bool on: false
         signal chosen()
-        implicitWidth: choiceText.implicitWidth + 26; implicitHeight: Ui.target
-        radius: Ui.radiusSm
-        color: on ? pal.highlight : (choiceTap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : "transparent")
-        border.color: on ? "transparent" : Qt.alpha(pal.text, Ui.borderAlpha); border.width: on ? 0 : 1
+        implicitWidth: choiceText.implicitWidth + 32; implicitHeight: Ui.target
+        radius: height / 2
+        color: on ? Ui.accentSoft : (choiceTap.pressed ? Qt.alpha(pal.text, 0.14) : Qt.alpha(pal.text, 0.06))
+        Behavior on color { ColorAnimation { duration: Ui.quick } }
         Accessible.role: Accessible.RadioButton
         Accessible.name: label
         Text { id: choiceText; anchors.centerIn: parent; text: parent.label; font.pixelSize: Ui.text
-               color: parent.on ? Ui.onAccent(pal.highlight) : pal.windowText }
+               font.weight: parent.on ? Font.DemiBold : Font.Medium
+               color: parent.on ? pal.highlight : pal.windowText }
         TapHandler { id: choiceTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: parent.chosen() }
     }
 
@@ -74,8 +75,9 @@ Rectangle {
             id: col
             anchors { fill: parent; margins: 28 }
             spacing: 12
-            Text { text: "Lumen"; color: pal.windowText; font.pixelSize: Ui.px(26); font.weight: Font.DemiBold }
-            Text { text: (mobile ? "This tablet has " : "This computer has ") + page.found + ", so Lumen has set itself up this way:"
+            Text { text: "Lumen"; color: pal.windowText; font.pixelSize: Ui.px(30); font.family: Ui.titleFont; font.weight: Font.Medium }
+            Text { text: page.found.length ? (mobile ? "This tablet has " : "This computer has ") + page.found + ", so Lumen has set itself up this way:"
+                                           : "Lumen has set itself up this way:"
                    color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
             component SetupRow: RowLayout { spacing: 8; Layout.fillWidth: true }
@@ -127,7 +129,7 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
                 Text { text: mobile ? "" : "Press F1 to see this again."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; Layout.fillWidth: true }
-                Button { objectName: "onboardingStart"; text: "Start"; implicitHeight: Ui.target; onClicked: page.start() }
+                LButton { objectName: "onboardingStart"; text: "Start"; primary: true; implicitHeight: Ui.target; onClicked: page.start() }
             }
         }
     }

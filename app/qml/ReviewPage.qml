@@ -42,9 +42,9 @@ Rectangle {
         anchors { fill: parent; margins: 28 }
         spacing: 16
         RowLayout {
-            Text { text: "Review"; color: pal.windowText; font.pixelSize: Ui.px(22); font.weight: Font.DemiBold }
+            Text { text: "Review"; color: pal.windowText; font.pixelSize: Ui.title; font.family: Ui.titleFont; font.weight: Font.Medium }
             Text { text: cards.dueCount + " due · " + cards.reviewedToday + " done today"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(13); Layout.fillWidth: true }
-            Button { text: Ui.keys("Close (Esc)"); onClicked: page.closed() }
+            LButton { text: Ui.keys("Close (Esc)"); onClicked: page.closed() }
         }
         Rectangle {
             visible: page.current !== null
@@ -67,7 +67,7 @@ Rectangle {
                     textFormat: Text.MarkdownText; color: pal.text; font.pixelSize: Ui.px(18); wrapMode: Text.Wrap
                 }
                 Item { Layout.fillHeight: true }
-                Button { visible: !page.flipped; text: "Show answer (Space)"; Layout.alignment: Qt.AlignHCenter; onClicked: page.flipped = true }
+                LButton { visible: !page.flipped; text: "Show answer (Space)"; Layout.alignment: Qt.AlignHCenter; onClicked: page.flipped = true }
                 RowLayout {
                     visible: page.flipped
                     Layout.alignment: Qt.AlignHCenter

@@ -57,7 +57,7 @@ Rectangle {
         RowLayout {
             Text { text: "Claude"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
             Text { text: claude.available ? claude.version : (claude.reason || "checking…"); color: claude.available ? Qt.alpha(pal.windowText, Ui.mutedAlpha) : Ui.danger; font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.fillWidth: true }
-            Switch { id: onlineSwitch; text: "Online"; font.pixelSize: Ui.small; checked: claude.online; onToggled: claude.online = checked
+            LSwitch { id: onlineSwitch; text: "Online"; font.pixelSize: Ui.small; checked: claude.online; onToggled: claude.online = checked
                      Connections { target: claude; function onStatusChanged() { onlineSwitch.checked = claude.online } }
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Allow web search and fetch (e.g. to pull an exam spec). Off = only your notes are sent." }
         }
@@ -78,13 +78,13 @@ Rectangle {
             ColumnLayout {
                 Text { text: "Turn a recording into structured notes on a new page in this section."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 ComboBox { id: recPick; Layout.fillWidth: true; model: recModel; textRole: "title"; font.pixelSize: Ui.small + 1 }
-                Button { text: "Draft notes"; enabled: recModel.count > 0 && recPick.currentIndex >= 0 && !claude.busy; onClicked: claude.prepareLectureNotes(recModel.get(recPick.currentIndex).id, ai.pageId) }
+                LButton { text: "Draft notes"; enabled: recModel.count > 0 && recPick.currentIndex >= 0 && !claude.busy; onClicked: claude.prepareLectureNotes(recModel.get(recPick.currentIndex).id, ai.pageId) }
             }
             // Cards
             ColumnLayout {
-                Button { text: "Generate cards from this page"; enabled: !claude.busy; onClicked: claude.prepareFlashcards(ai.pageId, ai.recordingId) }
+                LButton { text: "Generate cards from this page"; enabled: !claude.busy; onClicked: claude.prepareFlashcards(ai.pageId, ai.recordingId) }
                 Text { visible: proposedCards.count === 0; text: "Proposed cards appear here for you to tick, edit and add."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Button {
+                LButton {
                     visible: proposedCards.count > 0
                     text: { let n = 0; for (let i = 0; i < proposedCards.count; ++i) if (proposedCards.get(i).keep) ++n; return "Add " + n + " cards" }
                     onClicked: { const list = []; for (let i = 0; i < proposedCards.count; ++i) { const c = proposedCards.get(i); if (c.keep) list.push({ kind: c.kind, front: c.front, back: c.back, tags: c.tag ? [c.tag] : [] }) }
@@ -94,13 +94,13 @@ Rectangle {
             // Explain
             ColumnLayout {
                 Text { text: !canvas ? "" : canvas.hasTextSelection ? "Explain the selected PDF text." : (canvas.hasSelection ? "Explain the lasso'd ink — a picture of it will be sent to Claude." : "Select text (tool 5) or lasso some ink (tool 4) first."); color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Button { text: "Explain selection"; enabled: !!canvas && (canvas.hasTextSelection || canvas.hasSelection) && !claude.busy
+                LButton { text: "Explain selection"; enabled: !!canvas && (canvas.hasTextSelection || canvas.hasSelection) && !claude.busy
                          onClicked: { if (canvas.hasTextSelection) claude.prepareExplain(canvas.selectedText(), ai.pageId, ""); else claude.prepareExplain("", ai.pageId, canvas.renderSelectionToPng()) } }
             }
             // Ask
             ColumnLayout {
-                TextField { id: askField; Layout.fillWidth: true; placeholderText: "Ask your notes…"; font.pixelSize: Ui.text; onAccepted: if (text.trim().length) claude.prepareAsk(text.trim()) }
-                Button { text: "Ask"; enabled: askField.text.trim().length > 0 && !claude.busy; onClicked: claude.prepareAsk(askField.text.trim()) }
+                LField { id: askField; Layout.fillWidth: true; placeholderText: "Ask your notes…"; font.pixelSize: Ui.text; onAccepted: if (text.trim().length) claude.prepareAsk(text.trim()) }
+                LButton { text: "Ask"; enabled: askField.text.trim().length > 0 && !claude.busy; onClicked: claude.prepareAsk(askField.text.trim()) }
             }
             // Log
             ListView {
@@ -172,8 +172,8 @@ Rectangle {
                 spacing: 6
                 RowLayout {
                     Text { text: "This will be sent to Claude (" + ai.pendingPrompt.length + " chars" + (claude.online ? ", web on" : "") + "):"; color: pal.text; font.pixelSize: Ui.small + 1; Layout.fillWidth: true }
-                    Button { text: claude.busy ? "Working…" : "Send"; enabled: !claude.busy; onClicked: claude.send(ai.pendingFeature, ai.pendingPrompt, ai.pendingMeta) }
-                    Button { text: "Cancel"; enabled: !claude.busy; onClicked: ai.pendingFeature = "" }
+                    LButton { text: claude.busy ? "Working…" : "Send"; enabled: !claude.busy; onClicked: claude.send(ai.pendingFeature, ai.pendingPrompt, ai.pendingMeta) }
+                    LButton { text: "Cancel"; enabled: !claude.busy; onClicked: ai.pendingFeature = "" }
                 }
                 ScrollView { Layout.fillWidth: true; Layout.fillHeight: true; TextArea { readOnly: true; text: ai.pendingPrompt; font.pixelSize: Ui.small; font.family: "monospace"; wrapMode: TextEdit.Wrap; background: null } }
             }

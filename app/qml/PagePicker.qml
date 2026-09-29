@@ -19,7 +19,9 @@ Popup {
     x: parent ? (parent.width - width) / 2 : 0
     y: 80
     padding: 10
-    background: Rectangle { radius: Ui.radiusLg; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
     onOpened: { field.text = ""; field.forceActiveFocus(); refresh() }
 
     property var rows: []
@@ -36,7 +38,7 @@ Popup {
         anchors.fill: parent
         spacing: 8
         Text { text: picker.title; color: pal.windowText; font.pixelSize: Ui.text + 1; font.weight: Font.DemiBold; Layout.leftMargin: 4 }
-        TextField {
+        LField {
             id: field
             Layout.fillWidth: true
             implicitHeight: Ui.target

@@ -2203,6 +2203,68 @@ int uitest::run(QQuickWindow *win, QObject *root)
         spin(150);
     }
 
+    // ---- 9b. The library: a cover for every notebook, a tap carries on where that notebook was
+    // left, and a notebook made from its card is on the shelf and starts with a page.
+    {
+        ensurePage();
+        QVariantList listed;
+        if (library) QMetaObject::invokeMethod(library, "notebooks", Q_RETURN_ARG(QVariantList, listed));
+        const int books = listed.size();
+        root->setProperty("libraryVisible", true);
+        waitFor([&] { return !findAll(win, QStringLiteral("notebookCover")).isEmpty(); }, 3000);
+        spin(300);
+        const auto covers = findAll(win, QStringLiteral("notebookCover"));
+        r.check("the library shows a cover for every notebook", covers.size() == books,
+                QStringLiteral("covers=%1 notebooks=%2").arg(covers.size()).arg(books));
+        QQuickItem *withPages = nullptr;
+        for (QQuickItem *c : covers)
+            if (c->property("modelData").toMap().value("lastPageId").toLongLong() > 0 && c->isVisible()) { withPages = c; break; }
+        if (withPages) {
+            const qint64 want = withPages->property("modelData").toMap().value("lastPageId").toLongLong();
+            tap(win, withPages);
+            waitFor([&] { return currentPage() == want; }, 2000);
+            r.check("a tap on a cover opens that notebook's last page", currentPage() == want,
+                    QStringLiteral("want=%1 got=%2").arg(want).arg(currentPage()));
+            r.check("the library closes when it opens a page", !root->property("libraryVisible").toBool());
+        }
+
+        root->setProperty("libraryVisible", true);
+        spin(200);
+        QQuickItem *newCover = findOne(win, QStringLiteral("libraryNewCover"));
+        if (newCover) tap(win, newCover);
+        QObject *sheet = root->findChild<QObject *>(QStringLiteral("notebookSheet"));
+        waitFor([&] { return sheet && sheet->property("opened").toBool(); }, 2000);
+        r.check("the new-notebook card asks for a name", sheet && sheet->property("opened").toBool());
+        if (QObject *name = root->findChild<QObject *>(QStringLiteral("notebookName"))) name->setProperty("text", QStringLiteral("Uitest shelf"));
+        spin(50);
+        if (QQuickItem *done = findOne(win, QStringLiteral("notebookSheetDone"))) tap(win, done);
+        waitFor([&] { return findAll(win, QStringLiteral("notebookCover")).size() == books + 1; }, 2000);
+        QQuickItem *made = nullptr;
+        for (QQuickItem *c : findAll(win, QStringLiteral("notebookCover")))
+            if (c->property("modelData").toMap().value("name").toString() == QLatin1String("Uitest shelf")) made = c;
+        r.check("a new notebook is on the shelf", made != nullptr);
+        if (made) {
+            const qint64 nb = made->property("modelData").toMap().value("id").toLongLong();
+            spin(300);                  // the sheet's exit
+            tap(win, made);
+            spin(300);
+            if (QQuickItem *ink = findOne(win, QStringLiteral("chooseHandwritten")); ink && ink->isVisible()) tap(win, ink);
+            waitFor([&] { return !root->property("libraryVisible").toBool(); }, 2000);
+            QVariantMap info;
+            if (library) QMetaObject::invokeMethod(library, "page", Q_RETURN_ARG(QVariantMap, info), Q_ARG(qlonglong, currentPage()));
+            r.check("an empty notebook's cover starts its first page", info.value("notebookId").toLongLong() == nb && !root->property("libraryVisible").toBool(),
+                    QStringLiteral("page=%1 notebook=%2 want=%3 libraryUp=%4").arg(currentPage()).arg(info.value("notebookId").toLongLong()).arg(nb)
+                        .arg(root->property("libraryVisible").toBool()));
+            QMetaObject::invokeMethod(root, "closePage");
+            spin(100);
+            if (library) QMetaObject::invokeMethod(library, "remove", Q_ARG(QString, QStringLiteral("notebook")), Q_ARG(qlonglong, nb));
+            spin(100);
+        }
+        root->setProperty("libraryVisible", false);
+        spin(150);
+        ensurePage();
+    }
+
     // ---- 10. The trash: what you deleted is still there, and Restore brings it back.
     {
         ensurePage();
@@ -2756,7 +2818,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
                         pressEscape(win);
                         for (QWindow *w : QGuiApplication::topLevelWindows())
                             if (w != win && w->isVisible()) w->close();          // a file dialog must not block the sweep
-                        for (const char *overlay : {"reviewVisible", "settingsVisible", "dashboardVisible", "trashVisible", "browserVisible", "keysVisible", "onboardingVisible"})
+                        for (const char *overlay : {"reviewVisible", "settingsVisible", "dashboardVisible", "trashVisible", "browserVisible", "libraryVisible", "keysVisible", "onboardingVisible"})
                             if (root->property(overlay).toBool()) root->setProperty(overlay, false);
                         spin(40);
                         if (g_qmlComplaints.size() > before)

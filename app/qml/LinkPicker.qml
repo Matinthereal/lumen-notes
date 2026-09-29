@@ -21,7 +21,9 @@ Popup {
     closePolicy: Popup.NoAutoClose
     padding: 6
     width: 340
-    background: Rectangle { radius: Ui.radiusLg; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
 
     readonly property var candidates: visible ? library.linkCandidates(query, excludePageId, 6) : []
     readonly property bool offerNew: query.trim().length > 0 && !candidates.some(c => c.title.toLowerCase() === query.trim().toLowerCase())

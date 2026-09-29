@@ -157,6 +157,12 @@ target_compile_definitions(lumen_core PUBLIC
 # ---- lumen: the executable + its QML module ---------------------------------------------------
 qt_add_executable(lumen main.cpp)
 qt_add_resources(lumen "appicon" PREFIX "/icons" BASE "${CMAKE_SOURCE_DIR}/packaging" FILES "${CMAKE_SOURCE_DIR}/packaging/lumen-notes.svg")
+# Lumen's typefaces (ADR mynotes-003, packaging/make-ui-fonts.sh): Figtree for the interface,
+# Newsreader for titles. SIL OFL 1.1; the licences sit beside them.
+qt_add_resources(lumen "uifonts" PREFIX "/fonts" BASE "${CMAKE_SOURCE_DIR}/packaging/fonts" FILES
+    "${CMAKE_SOURCE_DIR}/packaging/fonts/Figtree-Regular.ttf" "${CMAKE_SOURCE_DIR}/packaging/fonts/Figtree-Medium.ttf"
+    "${CMAKE_SOURCE_DIR}/packaging/fonts/Figtree-SemiBold.ttf" "${CMAKE_SOURCE_DIR}/packaging/fonts/Figtree-Bold.ttf"
+    "${CMAKE_SOURCE_DIR}/packaging/fonts/Newsreader-Medium.ttf")
 set_source_files_properties(qml/Ui.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(lumen
     URI Lumen
@@ -174,6 +180,16 @@ qt_add_qml_module(lumen
         qml/Toolbar.qml
         qml/Sidebar.qml
         qml/Icon.qml
+        qml/Elevation.qml
+        qml/Card.qml
+        qml/PopIn.qml
+        qml/PopOut.qml
+        qml/LButton.qml
+        qml/LSwitch.qml
+        qml/LSlider.qml
+        qml/LField.qml
+        qml/PenPopover.qml
+        qml/LibraryPage.qml
         qml/Keyboard.qml
         qml/ImageLayer.qml
         qml/ShapeLayer.qml
@@ -215,6 +231,7 @@ qt_add_qml_module(lumen
         src/ui/uitest.h src/ui/uitest.cpp
         src/ui/splitbinder.h src/ui/splitbinder.cpp
         src/ui/platform.h src/ui/platform.cpp
+        src/ui/theme.h src/ui/theme.cpp
         src/text/documentformatter.h src/text/documentformatter.cpp
 )
 target_include_directories(lumen PRIVATE src src/input src/canvas src/text)

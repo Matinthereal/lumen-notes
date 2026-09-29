@@ -55,8 +55,8 @@ Rectangle {
         spacing: 6
         RowLayout {
             Text { text: "Handwriting"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
-            Button { text: "Read now"; font.pixelSize: Ui.small; enabled: ocr.ready || ocr.status.length === 0; onClicked: ocr.recognizeNow(panel.pageId) }
-            Button {
+            LButton { text: "Read now"; font.pixelSize: Ui.small; enabled: ocr.ready || ocr.status.length === 0; onClicked: ocr.recognizeNow(panel.pageId) }
+            LButton {
                 text: "Insert as text"; font.pixelSize: Ui.small
                 enabled: panel.lineList.length > 0
                 ToolTip.visible: hovered; ToolTip.delay: 600
@@ -86,7 +86,7 @@ Rectangle {
                 RowLayout {
                     anchors { fill: parent; margins: 5 }
                     Rectangle { implicitWidth: 6; implicitHeight: 6; radius: 3; color: modelData.corrected ? pal.highlight : (modelData.confidence >= 0.8 ? Ui.good : modelData.confidence >= 0.6 ? Ui.warning : Ui.danger) }
-                    TextField {
+                    LField {
                         id: field
                         Layout.fillWidth: true
                         // Driven, not bound: the binding dies on the first correction typed here.

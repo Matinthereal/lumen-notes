@@ -17,7 +17,9 @@ Popup {
     x: (parent.width - width) / 2
     y: 80
     padding: 0
-    background: Rectangle { radius: 12; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
     onOpened: { field.text = ""; filter = ""; tag = ""; allTags = library.tags(); field.forceActiveFocus(); run("") }
 
     ListModel { id: results }
@@ -56,7 +58,7 @@ Popup {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        TextField {
+        LField {
             id: field
             Layout.fillWidth: true
             Layout.margins: 10

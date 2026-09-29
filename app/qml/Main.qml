@@ -33,6 +33,7 @@ Window {
     property bool trashVisible: false
     property bool keysVisible: false
     property bool browserVisible: false
+    property bool libraryVisible: false
     onBrowserVisibleChanged: if (!browserVisible) browserTag = ""
     property bool onboardingVisible: library.setting("onboarded", "0") !== "1"
     // Which hand writes: a left-hander covers the left of the screen, so the rail, the page arrows
@@ -45,11 +46,21 @@ Window {
 
     SystemPalette { id: pal }
     color: pal.window
+    // The desk under a lamp, behind everything: a touch lighter at the top (ADR mynotes-003).
+    Rectangle {
+        anchors.fill: parent
+        z: -100
+        gradient: Gradient {
+            GradientStop { position: 0; color: Qt.lighter(pal.window, Ui.dark ? 1.35 : 1.035) }
+            GradientStop { position: 0.55; color: pal.window }
+        }
+    }
     Binding { target: Ui; property: "tablet"; value: root.tablet }
     Binding { target: Ui; property: "leftHanded"; value: root.leftHanded }
     Binding { target: Ui; property: "dark"; value: (0.299 * pal.window.r + 0.587 * pal.window.g + 0.114 * pal.window.b) < 0.5 }
 
     function applySavedSettings() {
+        Ui.reduceMotion = library.setting("ui.reduceMotion", "0") === "1"
         canvas.pressureCeiling = Number(library.setting("pen.ceiling", "0.85"))
         canvas.smoothing = Number(library.setting("pen.smoothing", "0"))
         const pm = Number(library.setting("pen.predictionMs", "16.7")); canvas.predictionMs = pm; canvas.predictionEnabled = pm > 0
@@ -385,7 +396,7 @@ Window {
             handwriting: root.usesInk
             visible: !root.presenting
             Layout.fillHeight: true
-            Layout.preferredWidth: root.presenting ? 0 : Ui.rail
+            Layout.preferredWidth: root.presenting ? 0 : Ui.rail + 16
             leftPanel: root.leftPanel
             rightPanel: root.rightPanel
             tablet: root.tablet
@@ -393,6 +404,7 @@ Window {
             onRightPanelChanged: root.rightPanel = rightPanel
             onSearchRequested: search.open()
             onBrowserRequested: if (root.currentPageId) root.browserVisible = true
+            onLibraryRequested: root.libraryVisible = !root.libraryVisible
             onSplitRequested: if (root.currentPageId) root.toggleSplit()
             splitOpen: root.splitPageId > 0
             onTrashRequested: root.trashVisible = true
@@ -423,9 +435,17 @@ Window {
             // the side panel while input there still went to them, so you saw paper you could not write on.
             clip: true
 
+            // The window's lamp-lit desk shows through; an endless page is paper edge to edge.
             Rectangle { id: desk; anchors.fill: parent
-                        color: root.currentPageId === 0 ? pal.window
-                             : (canvas.infinite ? canvas.paperColor : (Ui.dark ? Qt.darker(pal.window, 1.35) : Qt.darker(pal.window, 1.08))) }
+                        color: canvas.infinite && root.currentPageId > 0 ? canvas.paperColor : "transparent" }
+            // The page's soft shadow on the desk; the canvas draws the paper itself, over it.
+            Item {
+                visible: root.currentPageId > 0 && !root.pageTyped && !canvas.infinite && !root.presenting
+                x: canvas.x + canvas.pan.x; y: canvas.y + canvas.pan.y
+                width: canvas.pageSize.width * canvas.zoom; height: canvas.pageSize.height * canvas.zoom
+                property real radius: 2
+                Elevation { level: 0 }
+            }
             InkCanvas {
                 id: canvas
                 objectName: "inkCanvas"
@@ -559,6 +579,9 @@ Window {
                 width: Ui.rightPanel
                 sourceComponent: rightPanelComponent
                 z: 5
+                transform: Translate { id: rightSlide }
+                onVisibleChanged: if (visible) rightIn.restart()
+                PanelIn { id: rightIn; panel: rightOverlay; slide: rightSlide; offset: root.leftHanded ? -48 : 48 }
             }
             Loader {
                 id: leftOverlay
@@ -571,6 +594,20 @@ Window {
                 width: Ui.panel
                 sourceComponent: leftPanelComponent
                 z: 5
+                transform: Translate { id: leftSlide }
+                onVisibleChanged: if (visible) leftIn.restart()
+                PanelIn { id: leftIn; panel: leftOverlay; slide: leftSlide; offset: root.leftHanded ? 48 : -48 }
+            }
+            // A drawer arrives from its own edge and settles (ADR mynotes-003): a short slide with a
+            // fade, not the whole width, so it never sweeps across the rail. Reduce motion: the fade.
+            component PanelIn: ParallelAnimation {
+                property Item panel
+                property Translate slide
+                property real offset
+                NumberAnimation { target: slide; property: "x"; from: Ui.reduceMotion ? 0 : offset; to: 0
+                                  duration: Ui.ms(300); easing.type: Easing.BezierSpline; easing.bezierCurve: Ui.emphasized }
+                NumberAnimation { target: panel; property: "opacity"; from: 0; to: 1
+                                  duration: Ui.ms(200); easing.type: Easing.BezierSpline; easing.bezierCurve: Ui.standard }
             }
 
             // Touch page navigation: big translucent arrows at the bottom corners and a counter.
@@ -616,7 +653,8 @@ Window {
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: paperBar.visible ? paperBar.height + 16 : 10 }
                 id: pageChip
                 width: counter.implicitWidth + 22; height: Ui.target - 10; radius: height / 2; z: 6
-                color: Qt.alpha(pal.window, 0.85); border.color: Qt.alpha(pal.text, 0.18); border.width: 1
+                color: Ui.chrome; border.color: Ui.hair; border.width: 1
+                Elevation { level: 1 }
                 Text { id: counter; anchors.centerIn: parent; text: (page.pageIndex + 1) + " / " + page.pageList.length; color: pal.text; font.pixelSize: Ui.small + 1 }
                 TapHandler { onTapped: root.askNewPage(pageChip) }
                 ToolTip.visible: ch.hovered; ToolTip.delay: 600; ToolTip.text: "Page " + (page.pageIndex + 1) + " of " + page.pageList.length + " — tap for a new page after this one"
@@ -900,7 +938,7 @@ Window {
 
                     Text {
                         text: "No page open"
-                        color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold
+                        color: pal.windowText; font.pixelSize: Ui.title; font.family: Ui.titleFont; font.weight: Font.Medium
                         Layout.alignment: Qt.AlignHCenter
                     }
                     Text {
@@ -923,7 +961,7 @@ Window {
                                       label: parent.typedFirst ? "Handwritten page" : "Typed page"
                                       icon: parent.typedFirst ? "draw-freehand" : "input-keyboard"
                                       onClicked: root.newPageAnywhere(parent.typedFirst ? library.inkPageSize() : "typed") }
-                        EmptyAction { objectName: "emptyNotebooks"; label: "Notebooks"; icon: "folder"; onClicked: { root.leftPanel = "notebooks" } }
+                        EmptyAction { objectName: "emptyNotebooks"; label: "Notebooks"; icon: "view-library"; onClicked: root.libraryVisible = true }
                     }
                     Text {
                         visible: emptyState.starred.length > 0
@@ -1081,11 +1119,18 @@ Window {
                 objectName: "chrome"
                 property var undoFn: null
                 property string actionLabel: "Undo"
-                function show(message, fn, label) { toastText.text = message; undoFn = fn; actionLabel = label || "Undo"; visible = true; toastTimer.restart() }
+                // Rises in over 300 ms and sinks away in 200 (ADR mynotes-003); visible only while it shows.
+                property bool shown: false
+                function show(message, fn, label) { toastText.text = message; undoFn = fn; actionLabel = label || "Undo"; shown = true; toastTimer.restart() }
                 anchors { horizontalCenter: parent.horizontalCenter; bottom: audioBar.top; bottomMargin: 14 }
-                width: Math.min(page.width - 40, toastRow.implicitWidth + 28); height: Ui.target + 2; radius: 10
-                color: pal.text; visible: false; z: 20
-                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toastBar.visible = false; else restart() }
+                width: Math.min(page.width - 40, toastRow.implicitWidth + 30); height: Ui.target + 6; radius: height / 2
+                color: pal.text; z: 20
+                visible: opacity > 0
+                opacity: shown ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: toastBar.shown ? Ui.ms(300) : Ui.ms(200); easing.type: toastBar.shown ? Easing.OutCubic : Easing.InCubic } }
+                transform: Translate { y: toastBar.shown || Ui.reduceMotion ? 0 : 16; Behavior on y { NumberAnimation { duration: Ui.ms(300); easing.type: Easing.OutCubic } } }
+                Elevation { level: 2 }
+                Timer { id: toastTimer; interval: 8000; onTriggered: if (!toastHover.hovered && !undoTap.pressed) toastBar.shown = false; else restart() }
                 HoverHandler { id: toastHover }
                 RowLayout { id: toastRow; anchors.centerIn: parent; spacing: 16
                     Text { id: toastText; objectName: "toastText"; color: pal.base; font.pixelSize: Ui.text; elide: Text.ElideMiddle; Layout.maximumWidth: page.width - 200 }
@@ -1093,9 +1138,9 @@ Window {
                         objectName: "toastUndo"
                         visible: toastBar.undoFn !== null
                         implicitWidth: undoLabel.implicitWidth + 24; implicitHeight: Ui.target - 6
-                        radius: 8; color: Qt.alpha(pal.base, undoTap.pressed ? 0.35 : 0.16)
-                        Text { id: undoLabel; anchors.centerIn: parent; text: toastBar.actionLabel; color: pal.base; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
-                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toastBar.undoFn) toastBar.undoFn(); toastBar.visible = false } }
+                        radius: height / 2; color: Qt.alpha(pal.highlight, undoTap.pressed ? 0.42 : 0.26)
+                        Text { id: undoLabel; anchors.centerIn: parent; text: toastBar.actionLabel; color: Ui.dark ? "#2442B0" : "#C3D1FB"; font.pixelSize: Ui.text; font.weight: Font.DemiBold }
+                        TapHandler { id: undoTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: { if (toastBar.undoFn) toastBar.undoFn(); toastBar.shown = false } }
                     }
                 }
             }
@@ -1243,6 +1288,7 @@ Window {
     }
     DashboardPage { visible: root.dashboardVisible; anchors.fill: safe; subject: root.dashboardSubject; z: 30; onClosed: root.dashboardVisible = false }
     SettingsPage {
+        id: settingsPage
         visible: root.settingsVisible; anchors.fill: safe; canvas: canvas; z: 30
         onClosed: { root.settingsVisible = false; root.keyboardMode = library.setting("keyboard.mode", "tablet"); root.refreshNotesMode() }
         onHandChanged: (left) => root.leftHanded = left
@@ -1299,6 +1345,21 @@ Window {
         })
         onPresent: (pageId) => { root.browserVisible = false; root.openPage(pageId); root.startPresenting() }
     }
+    LibraryPage {
+        id: libraryPage
+        visible: root.libraryVisible; anchors.fill: safe; z: 30
+        onClosed: root.libraryVisible = false
+        onOpenPage: (pageId) => { root.libraryVisible = false; root.openPage(pageId) }
+        onStartNotebook: (sectionId, from) => root.askNewPage(from, sectionId, -1, function() { root.libraryVisible = false })
+        onSearchRequested: search.open()
+        onExportNotebook: (notebookId) => root.exportNotebook(notebookId)
+        onDeleteNotebook: (notebookId, name) => {
+            const open = library.page(root.currentPageId)
+            library.remove("notebook", notebookId)
+            if (open.notebookId === notebookId) root.closePage()
+            toastBar.show("notebook “" + name + "” deleted", function() { library.restore("notebook", notebookId) })
+        }
+    }
     HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: safe; z: 40
@@ -1308,7 +1369,7 @@ Window {
 
     // ================================================================ shortcuts (Goodnotes-shaped)
     // While a full-screen surface is up, the page behind it is not what the keys mean.
-    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || keysVisible || presenting || newPageChooser.visible
+    readonly property bool overlayUp: reviewVisible || settingsVisible || dashboardVisible || onboardingVisible || trashVisible || browserVisible || libraryVisible || keysVisible || presenting || newPageChooser.visible
     // Keys that mean something only to the ink canvas must never fire while you are typing.
     readonly property bool pageKeys: !overlayUp && !keys.focusIsText
     readonly property bool inkKeys: pageKeys && !pageTyped
@@ -1389,6 +1450,7 @@ Window {
         if (root.settingsVisible) { root.settingsVisible = false; return }
         if (root.dashboardVisible) { root.dashboardVisible = false; return }
         if (root.browserVisible) { root.browserVisible = false; return }
+        if (root.libraryVisible) { root.libraryVisible = false; return }
         if (root.trashVisible) { root.trashVisible = false; return }
         if (root.keysVisible) { root.keysVisible = false; return }
         canvas.selectNone(); if (root.tablet) { root.leftPanel = ""; root.rightPanel = "" }
@@ -1406,6 +1468,7 @@ Window {
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }
+    Shortcut { enabled: !root.overlayUp || root.libraryVisible; sequence: "Ctrl+O"; onActivated: root.libraryVisible = !root.libraryVisible }
     Shortcut { enabled: !root.overlayUp && audio.recording && helpers; sequence: "Ctrl+Shift+M"; onActivated: { audio.addMark(audio.recordingId, audio.nowMs()); toastBar.show("Marked", null) } }
     Shortcut { enabled: root.pageKeys; sequence: "Ctrl+B"; onActivated: if (root.currentPageId) { const on = !library.isStarred(root.currentPageId); library.setStarred(root.currentPageId, on); toastBar.show(on ? "Page starred" : "Star removed", null) } }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: root.trashVisible = !root.trashVisible }

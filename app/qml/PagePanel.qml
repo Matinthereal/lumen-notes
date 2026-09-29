@@ -137,7 +137,7 @@ Rectangle {
                     }
                 }
             }
-            TextField {
+            LField {
                 id: tagField
                 objectName: "tagField"
                 visible: panel.pageId > 0

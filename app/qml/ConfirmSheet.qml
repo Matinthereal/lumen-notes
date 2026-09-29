@@ -21,7 +21,9 @@ Popup {
     focus: true                                    // so Escape closes it
     padding: 18
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { radius: 14; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
 
     function ask(t, b, label, fn) { title = t; body = b; confirmLabel = label || "Delete"; onConfirmed = fn; open() }
 

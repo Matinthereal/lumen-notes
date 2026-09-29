@@ -67,6 +67,7 @@ Item {
         case "folder-documents": return "M 3.5 18.5 L 3.5 6 L 9 6 L 11 8.5 L 20.5 8.5 L 20.5 18.5 Z M 8 12 L 16 12 M 8 15.5 L 13 15.5"
         case "text-x-generic":  return "M 6 3.5 L 14 3.5 L 19 8.5 L 19 20.5 L 6 20.5 Z M 14 3.5 L 14 8.5 L 19 8.5 M 9 13 L 16 13 M 9 16.5 L 14 16.5"
         // ---- rail
+        case "view-library":    return "M 4 4.5 L 8 4.5 L 8 20 L 4 20 Z M 10 7 L 14 7 L 14 20 L 10 20 Z M 15.6 7.4 L 19.3 6.4 L 22 19 L 18.3 20 Z"
         case "view-sidetree":   return "M 3.5 5 L 20.5 5 L 20.5 19 L 3.5 19 Z M 10 5 L 10 19 M 13 9 L 18 9 M 13 13 L 17 13"
         case "edit-find":       return "M 11 4 A 6.5 6.5 0 1 1 10.9 4 M 15.6 15.6 L 20 20"
         case "view-preview":    return "M 3.5 4.5 L 10.5 4.5 L 10.5 11 L 3.5 11 Z M 13.5 4.5 L 20.5 4.5 L 20.5 11 L 13.5 11 Z M 3.5 13.5 L 10.5 13.5 L 10.5 20 L 3.5 20 Z M 13.5 13.5 L 20.5 13.5 L 20.5 20 L 13.5 20 Z"

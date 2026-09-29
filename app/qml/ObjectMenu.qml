@@ -25,11 +25,9 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     padding: 10
-    background: Rectangle {
-        radius: Ui.radiusLg
-        color: pal.window
-        border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1
-    }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
 
     readonly property var outlines: ["#1A1A1A", "#F2F2F2", "#E0403C", "#1F6FEB", "#12855B", "#B04A12", "#7A3DB8", "#C9A227"]
     readonly property var fills: ["", "#F6C9C7", "#CFE0FA", "#CFEBDD", "#F6E7C1", "#E3D7F5", "#DDE2E8"]

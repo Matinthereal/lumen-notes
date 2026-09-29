@@ -37,6 +37,7 @@
 #include "ui/splitbinder.h"
 #include "ui/holdtips.h"
 #include "ui/platform.h"
+#include "ui/theme.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -79,13 +80,17 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QGuiApplication app(argc, argv);
-#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
-    {   // Controls with no size of their own take this: the tablet body size (Ui.qml's 13 × 1.25).
+    // Lumen's typefaces (ADR mynotes-003): Figtree for the interface, Newsreader for titles.
+    for (const char *face : {"Figtree-Regular", "Figtree-Medium", "Figtree-SemiBold", "Figtree-Bold", "Newsreader-Medium"})
+        QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/%1.ttf").arg(QLatin1String(face)));
+    {
         QFont font = QGuiApplication::font();
-        font.setPixelSize(16);
+        font.setFamilies({QStringLiteral("Figtree")});
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+        font.setPixelSize(16);   // controls with no size of their own: the tablet body size (Ui.qml's 13 × 1.25)
+#endif
         QGuiApplication::setFont(font);
     }
-#endif
 #ifdef Q_OS_ANDROID
     // Android's fonts lack most of the symbols the interface draws with (☐ ▾ ⇥ ★ …); a subset of
     // DejaVu Sans (packaging/make-symbol-font.sh) carries them.
@@ -109,6 +114,7 @@ int main(int argc, char *argv[])
     library.tidyAutomaticTitles();
     library.purgeDeleted(30);
     library.seedDefaults();
+    Theme theme(library);
 
     if (args.contains(QStringLiteral("--backup"))) {
         const backup::Result r = backup::run(paths::dataDir(), library.setting("backup.dir", paths::backupDir()), library.setting("backup.keep", "7").toInt());
@@ -197,6 +203,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("keys"), &keys);
     engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
     engine.rootContext()->setContextProperty(QStringLiteral("platform"), &platform);
+    engine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
     // Phones and tablets have no Python helpers, so their features are hidden rather than failing;
     // LUMEN_MOBILE_UI=1 shows that interface on a desktop, for testing it here.
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
@@ -221,6 +228,8 @@ int main(int argc, char *argv[])
     engine.loadFromModule("Lumen", "Main");
     if (engine.rootObjects().isEmpty())
         return 1;
+    if (args.contains(QStringLiteral("--uitest")))
+        if (QObject *ui = engine.singletonInstance<QObject *>("Lumen", "Ui")) ui->setProperty("instant", true);
 
     if (auto *win = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst())) {
         // Mesa gives the window an alpha channel even though the format above asks for none, so a

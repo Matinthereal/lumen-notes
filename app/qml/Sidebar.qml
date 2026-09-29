@@ -23,7 +23,11 @@ Rectangle {
     signal newPageAsked(var sectionId, int afterIndex, Item from)
 
     SystemPalette { id: pal }
-    color: pal.window
+    // Docked beside the page it is part of the desk; floating over it in tablet mode, a card.
+    color: Ui.tablet ? pal.base : "transparent"
+    radius: Ui.tablet ? Ui.radiusLg : 0
+    border.width: Ui.tablet ? 1 : 0; border.color: Ui.hair
+    Elevation { visible: Ui.tablet; level: 2 }
     ListModel { id: rows }
 
     function rebuild() {
@@ -131,7 +135,7 @@ Rectangle {
         objectName: "chrome"
         property var row: null
         parent: Overlay.overlay; x: (parent.width - width) / 2; y: 140; width: 360; padding: 14; modal: true
-        background: Rectangle { radius: 12; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha) }
+        background: Card {}
         property bool removeIfCancelled: false
         function begin(r, isNew) { row = r; removeIfCancelled = isNew === true; field.text = r.name; open(); field.forceActiveFocus(); field.selectAll() }
         function apply() { if (renamer.row) library.rename(renamer.row.kind, renamer.row.id, field.text); removeIfCancelled = false; renamer.close() }
@@ -139,10 +143,10 @@ Rectangle {
         onClosed: if (removeIfCancelled && renamer.row) { library.remove(renamer.row.kind, renamer.row.id); removeIfCancelled = false }
         ColumnLayout { anchors.fill: parent; spacing: 10
             Text { text: "Rename " + (renamer.row ? renamer.row.kind : ""); color: pal.windowText; font.pixelSize: Ui.text + 1; font.weight: Font.DemiBold }
-            TextField { id: field; Layout.fillWidth: true; font.pixelSize: Ui.text + 1; onAccepted: renamer.apply() }
+            LField { id: field; Layout.fillWidth: true; font.pixelSize: Ui.text + 1; onAccepted: renamer.apply() }
             RowLayout { Item { Layout.fillWidth: true }
-                        Button { text: "Cancel"; onClicked: renamer.cancel() }
-                        Button { text: renamer.removeIfCancelled ? "Create" : "Rename"; onClicked: renamer.apply() } }
+                        LButton { text: "Cancel"; onClicked: renamer.cancel() }
+                        LButton { text: renamer.removeIfCancelled ? "Create" : "Rename"; onClicked: renamer.apply() } }
         }
     }
 
@@ -151,7 +155,7 @@ Rectangle {
         spacing: 0
         RowLayout {
             Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 10; Layout.topMargin: 14; Layout.bottomMargin: 8
-            Text { text: "Notebooks"; color: pal.windowText; font.pixelSize: Ui.text + 5; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Text { text: "Notebooks"; color: pal.windowText; font.pixelSize: Ui.text + 8; font.family: Ui.titleFont; font.weight: Font.Medium; Layout.fillWidth: true }
             Rectangle {
                 objectName: "importNotebook"
                 implicitWidth: Ui.target - 6; implicitHeight: Ui.target - 6; radius: 8; color: importHover.hovered ? Qt.alpha(pal.text, 0.1) : "transparent"
@@ -205,19 +209,18 @@ Rectangle {
                 // notebook: a soft card header; section/page: flat rows
                 Rectangle {
                     anchors { fill: parent; leftMargin: 8; rightMargin: 8; topMargin: row.kind === "notebook" ? 6 : 0 }
-                    radius: 8
+                    radius: Ui.radius                  // nested in the drawer card: 22 − 8
                     color: rowTap.pressed ? Qt.alpha(pal.text, 0.12)
-                         : row.current ? Qt.alpha(pal.highlight, 0.18)
+                         : row.current ? Ui.accentSoft
                          : (row.kind === "notebook" ? Qt.alpha(pal.text, 0.05) : (rowHover.hovered ? Qt.alpha(pal.text, 0.05) : "transparent"))
                 }
                 // guide line under a notebook for its sections/pages
-                Rectangle { visible: row.kind !== "notebook"; x: 22; width: 2; height: parent.height; color: Qt.alpha(row.colour, 0.35) }
-                Rectangle { visible: row.current; x: 8; width: 3; height: parent.height - 8; y: 4; radius: 1.5; color: pal.highlight }
+                Rectangle { visible: row.kind !== "notebook"; x: 22; width: 2; height: parent.height; color: Qt.alpha(row.colour, 0.25) }
 
                 RowLayout {
                     anchors { fill: parent; leftMargin: row.kind === "notebook" ? 16 : 34 + (row.level - 1) * 14; rightMargin: 12; topMargin: row.kind === "notebook" ? 6 : 0 }
                     spacing: 8
-                    Rectangle { visible: row.kind === "notebook"; implicitWidth: 5; implicitHeight: parent.height - 14; radius: 2.5; color: row.colour }
+                    Rectangle { visible: row.kind === "notebook"; implicitWidth: 12; implicitHeight: 12; radius: 6; color: row.colour }
                     Text { visible: row.kind === "notebook"; text: row.expanded ? "▾" : "▸"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; Layout.preferredWidth: 10 }
                     Icon { visible: row.kind === "section"; name: "" + (row.secKind === "slides" ? "view-presentation" : row.secKind === "paper" ? "document-edit-verify" : "folder"); implicitWidth: Ui.icon - 4; implicitHeight: Ui.icon - 4; opacity: 0.6 }
                     Rectangle {

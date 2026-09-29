@@ -16,7 +16,9 @@ Popup {
     dim: false
     padding: 12
     width: grid.implicitWidth + 2 * padding
-    background: Rectangle { radius: Ui.radiusLg; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
 
     // Columns are hues, rows run light to dark; the first column is white → black.
     readonly property var colours: [
@@ -90,7 +92,7 @@ Popup {
                 color: /^#?[0-9a-fA-F]{6}$/.test(hex.text) ? (hex.text[0] === "#" ? hex.text : "#" + hex.text) : "transparent"
                 border.width: 1; border.color: Qt.alpha(pal.text, 0.18)
             }
-            TextField {
+            LField {
                 id: hex
                 objectName: "colourHex"
                 Layout.fillWidth: true
@@ -101,7 +103,7 @@ Popup {
                 validator: RegularExpressionValidator { regularExpression: /^#?[0-9a-fA-F]{0,6}$/ }
                 onAccepted: if (/^#?[0-9a-fA-F]{6}$/.test(text)) picker.pick(text[0] === "#" ? text : "#" + text)
             }
-            Button {
+            LButton {
                 text: "Use"
                 implicitHeight: Ui.target
                 enabled: /^#?[0-9a-fA-F]{6}$/.test(hex.text)

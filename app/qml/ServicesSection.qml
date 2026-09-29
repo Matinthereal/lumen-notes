@@ -80,15 +80,15 @@ ColumnLayout {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                TextField {
+                LField {
                     id: command
                     Layout.fillWidth: true
                     readOnly: true; selectByMouse: true
                     text: section.installCommand
                     font.family: "monospace"; font.pixelSize: Ui.small
                 }
-                Button { text: "Copy"; onClicked: { command.selectAll(); command.copy(); command.deselect(); section.toast("Command copied") } }
-                Button { objectName: "checkAgain"; text: "Check again"; onClicked: { for (const w of workers) if (w.status === "not installed") w.check(); section.toast("Checking the helpers again") } }
+                LButton { text: "Copy"; onClicked: { command.selectAll(); command.copy(); command.deselect(); section.toast("Command copied") } }
+                LButton { objectName: "checkAgain"; text: "Check again"; onClicked: { for (const w of workers) if (w.status === "not installed") w.check(); section.toast("Checking the helpers again") } }
             }
         }
     }
@@ -130,7 +130,7 @@ ColumnLayout {
                     }
                 }
                 StatusPill { status: rowItem.modelData.status }
-                Button {
+                LButton {
                     objectName: "serviceRestart"
                     text: rowItem.modelData.status === "not installed" ? "Check again" : "Restart"
                     enabled: rowItem.modelData.status !== "starting"

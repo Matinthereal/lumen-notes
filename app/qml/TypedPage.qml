@@ -137,8 +137,8 @@ Item {
         signal clicked()
         objectName: "formatButton"
         implicitWidth: Math.max(Ui.target - 6, lbl.implicitWidth + 16); implicitHeight: Ui.target - 6
-        radius: 8
-        color: on ? Qt.alpha(pal.highlight, 0.28)
+        radius: height / 2
+        color: on ? Ui.accentSoft
              : (tap.pressed ? Qt.alpha(pal.text, Ui.pressAlpha) : (hover.hovered ? Qt.alpha(pal.text, Ui.hoverAlpha) : "transparent"))
         Accessible.role: Accessible.Button
         Accessible.name: tip
@@ -166,12 +166,13 @@ Item {
         anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 12 }
         width: Math.min(parent.width - 24 - 2 * typed.sideInset, bar.implicitWidth + 16)
         height: Ui.target + 4
-        radius: Ui.radiusLg
-        color: pal.window
-        border.color: Qt.alpha(pal.text, 0.16)
-        clip: true
+        radius: height / 2                      // the same floating capsule as the pen toolbar
+        color: Ui.chrome
+        border.color: Ui.hair
+        Elevation { level: 1 }
         Flickable {
             anchors.fill: parent; anchors.margins: 8
+            clip: true
             contentWidth: bar.implicitWidth; contentHeight: height
             flickableDirection: Flickable.HorizontalFlick
             boundsBehavior: Flickable.StopAtBounds
@@ -229,9 +230,9 @@ Item {
                 y: 8
                 width: Math.min(parent.width - 32, 860)
                 height: Math.max(area.implicitHeight + 96 + (linkedFrom.visible ? linkedFrom.implicitHeight + 40 : 0), scroller.height - 40)
-                radius: 10
+                radius: Ui.radiusPaper
                 color: pal.base
-                border.color: Qt.alpha(pal.text, 0.10)
+                Elevation { level: 0 }
 
                 TextArea {
                     id: area

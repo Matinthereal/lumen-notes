@@ -64,7 +64,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Text { text: "Recently deleted"; color: pal.windowText; font.pixelSize: Ui.title; font.weight: Font.DemiBold }
+            Text { text: "Recently deleted"; color: pal.windowText; font.pixelSize: Ui.title; font.family: Ui.titleFont; font.weight: Font.Medium }
             Text { text: page.rows.length + (page.rows.length === 1 ? " item" : " items") + " · kept for 30 days"
                    color: Qt.alpha(pal.windowText, 0.6); font.pixelSize: Ui.small; Layout.leftMargin: 8 }
             Item { Layout.fillWidth: true }

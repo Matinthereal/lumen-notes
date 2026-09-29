@@ -20,7 +20,9 @@ Popup {
     modal: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    background: Rectangle { radius: 10; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1 }
+    background: Card {}
+    enter: PopIn {}
+    exit: PopOut {}
     onLatexChanged: { field.text = latex; answer = ""; answerLatex = ""; solveError = "" }
     property string answer: ""
     property string answerLatex: ""
@@ -41,7 +43,7 @@ Popup {
         anchors.fill: parent
         spacing: 8
         Text { text: "Handwritten maths → LaTeX"; color: pal.windowText; font.pixelSize: Ui.px(13); font.weight: Font.DemiBold }
-        TextField { id: field; Layout.fillWidth: true; font.family: "monospace"; font.pixelSize: Ui.px(13); text: pop.latex }
+        LField { id: field; Layout.fillWidth: true; font.family: "monospace"; font.pixelSize: Ui.px(13); text: pop.latex }
         Image {
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(120, implicitHeight)
             fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignLeft
@@ -57,21 +59,21 @@ Popup {
                 font.pixelSize: Ui.px(15); font.weight: pop.answer.length ? Font.DemiBold : Font.Normal
                 elide: Text.ElideRight; Layout.fillWidth: true
             }
-            Button {
+            LButton {
                 visible: pop.answer.length > 0
                 text: "Write the answer"
                 onClicked: { pop.insertAnswer(pop.answer, pop.anchorRect); pop.close() }
             }
         }
         RowLayout {
-            Button { visible: helpers; text: "Work it out"; enabled: field.text.trim().length > 0 && !maths.busy
+            LButton { visible: helpers; text: "Work it out"; enabled: field.text.trim().length > 0 && !maths.busy
                      onClicked: { pop.awaitingAnswer = true; maths.solve(field.text.trim(), []) }
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Evaluate it, or solve it for its unknown — offline, in sympy" }
-            Button { text: "Insert"; enabled: field.text.trim().length > 0; onClicked: { pop.insert(field.text.trim(), pop.anchorRect); pop.close() } }
-            Button { visible: helpers; text: claude.busy ? "Asking Claude…" : "Improve with Claude"; enabled: claude.available && !claude.busy; onClicked: pop.improve(pop.png, field.text)
+            LButton { text: "Insert"; enabled: field.text.trim().length > 0; onClicked: { pop.insert(field.text.trim(), pop.anchorRect); pop.close() } }
+            LButton { visible: helpers; text: claude.busy ? "Asking Claude…" : "Improve with Claude"; enabled: claude.available && !claude.busy; onClicked: pop.improve(pop.png, field.text)
                      ToolTip.visible: hovered; ToolTip.delay: 600; ToolTip.text: "Sends the picture of the selection to Claude (Read tool) — only when you press this" }
             Item { Layout.fillWidth: true }
-            Button { text: "Cancel"; onClicked: pop.close() }
+            LButton { text: "Cancel"; onClicked: pop.close() }
         }
     }
 }

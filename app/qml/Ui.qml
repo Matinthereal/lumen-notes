@@ -53,10 +53,22 @@ QtObject {
     readonly property int hitMargin: tablet ? 10 : 6      // PointerHandler.margin for small controls
     readonly property int scrollbar: tablet ? 12 : 8      // 6 px is 0.9 mm at this screen's 165 PPI
 
-    // ---- shape: three radii, not fourteen
-    readonly property int radiusSm: 6
-    readonly property int radius: 10
-    readonly property int radiusLg: 14
+    // ---- type faces (ADR mynotes-003): Figtree is the application font; Newsreader sets titles
+    readonly property string titleFont: "Newsreader"
+
+    // ---- shape: five radii, always nested — a corner inside a card is the card's minus the gap
+    readonly property int radiusPaper: 6
+    readonly property int radiusSm: 10
+    readonly property int radius: 14
+    readonly property int radiusLg: 22
+
+    // ---- Paper & Lamp surfaces, from the palette Theme sets (theme.cpp)
+    property SystemPalette pal: SystemPalette {}
+    readonly property color chrome: Qt.alpha(pal.base, dark ? 0.9 : 0.86)   // frosted bars
+    readonly property color hair: Qt.alpha(pal.text, 0.10)
+    readonly property color accentSoft: Qt.alpha(pal.highlight, dark ? 0.18 : 0.13)
+    readonly property color lamp: dark ? "#F0B25A" : "#E3962B"
+    readonly property color shadow: dark ? "#000000" : "#3C2814"
 
     // ---- state layers (Material's numbers) and lines that must be seen (WCAG 1.4.11 asks 3:1)
     readonly property real hoverAlpha: 0.08
@@ -76,7 +88,14 @@ QtObject {
     readonly property color warning: dark ? "#FE8019" : "#AF3A03"
     readonly property color good: dark ? "#B8BB26" : "#79740E"
 
-    // ---- motion: nothing here may ever sit between the pen and the ink
-    readonly property int quick: 120
-    readonly property int slow: 220
+    // ---- motion: nothing here may ever sit between the pen and the ink. Structure moves on
+    // Material's curves; only presses and tool changes spring. Reduce motion: every one a quick fade.
+    property bool reduceMotion: false
+    property bool instant: false          // --uitest: it checks what happens, not how it moves
+    function ms(n) { return instant ? 0 : reduceMotion ? Math.min(n, 90) : n }
+    readonly property int quick: ms(120)
+    readonly property int slow: ms(220)
+    readonly property var standard: [0.2, 0, 0, 1, 1, 1]
+    readonly property var emphasized: [0.05, 0.7, 0.1, 1, 1, 1]
+    readonly property var accelerate: [0.3, 0, 0.8, 0.15, 1, 1]
 }
