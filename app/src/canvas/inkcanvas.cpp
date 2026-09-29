@@ -376,7 +376,7 @@ bool InkCanvas::tabletSample(const TabletSample &s)
         update();
         return false;
     }
-    showSystemCursor(false);
+    if (inside) showSystemCursor(false);
 
     const bool tipDown = s.buttons & Qt::LeftButton;
     switch (s.kind) {

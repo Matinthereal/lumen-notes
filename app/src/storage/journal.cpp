@@ -9,18 +9,23 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
 Q_LOGGING_CATEGORY(lcJournal, "lumen.journal")
 
 // Force the write above out of the OS cache and onto disk before the caller is told it landed:
-// fdatasync on Linux, FlushFileBuffers (via the CRT fd → Win32 HANDLE) on Windows.
+// fdatasync on Linux, FlushFileBuffers (via the CRT fd → Win32 HANDLE) on Windows, F_FULLFSYNC
+// on Apple systems, whose fsync stops at the drive's own cache and which have no fdatasync.
 static bool syncToDisk(QFile &f)
 {
 #ifdef Q_OS_WIN
     HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(int(f.handle())));
     return h != INVALID_HANDLE_VALUE && FlushFileBuffers(h);
+#elif defined(Q_OS_DARWIN)
+    const int fd = int(f.handle());
+    return ::fcntl(fd, F_FULLFSYNC) == 0 || ::fsync(fd) == 0;
 #else
     return ::fdatasync(int(f.handle())) == 0;
 #endif

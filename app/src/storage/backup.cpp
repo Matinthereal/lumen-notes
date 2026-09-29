@@ -72,6 +72,7 @@ bool writeTarEntry(QIODevice &out, const QString &archiveName, const QString &so
         name = name.mid(cut + 1);
     }
     const qint64 size = in.size();
+    if (size >= (qint64(1) << 33)) { *error = QStringLiteral("%1 is too big for a tar backup (8 GB)").arg(archiveName); return false; }
     QByteArray header(512, '\0');
     auto field = [&header](int at, const QByteArray &value) { header.replace(at, value.size(), value); };
     auto octal = [&field](int at, int width, qint64 value) { field(at, QByteArray::number(value, 8).rightJustified(width - 1, '0')); };
@@ -118,6 +119,7 @@ bool writeTar(const QString &dataDir, const QString &tarPath, QString *error)
         quoted.replace(QLatin1Char('\''), QStringLiteral("''"));
         if (!db.open(dataDir + "/lumen.db") || !db.exec(QStringLiteral("VACUUM INTO '%1'").arg(quoted))) {
             *error = QStringLiteral("cannot snapshot the database: %1").arg(db.lastError());
+            QFile::remove(snapshot);        // a half-written one (a full disk, say)
             return false;
         }
     }
