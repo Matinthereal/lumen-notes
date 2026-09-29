@@ -91,7 +91,7 @@ Rectangle {
                     implicitWidth: closeLabel.implicitWidth + 26; implicitHeight: Ui.target
                     radius: 9; color: closeTap.pressed ? Qt.alpha(pal.text, 0.16) : "transparent"
                     border.color: Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1
-                    Text { id: closeLabel; anchors.centerIn: parent; text: "Close (Esc)"; color: pal.windowText; font.pixelSize: Ui.text }
+                    Text { id: closeLabel; anchors.centerIn: parent; text: Ui.keys("Close (Esc)"); color: pal.windowText; font.pixelSize: Ui.text }
                     TapHandler { id: closeTap; gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: page.closed() }
                 }
             }

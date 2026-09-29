@@ -565,7 +565,8 @@ Window {
                 visible: root.tablet && root.leftPanel.length > 0; active: visible
                 anchors { left: root.leftHanded ? undefined : parent.left; right: root.leftHanded ? parent.right : undefined
                           top: parent.top; bottom: parent.bottom; margins: 8
-                          topMargin: toolbar.visible ? toolbar.height + 22 : 8     // on a narrow screen the toolbar spans it
+                          // On a narrow screen the page's toolbar (pen or typing) spans the drawer's corner.
+                          topMargin: (toolbar.visible || root.pageTyped) ? toolbar.height + 22 : 8
                           bottomMargin: audioBar.height + 12 + Ui.keyboardInset }
                 width: Ui.panel
                 sourceComponent: leftPanelComponent
@@ -824,7 +825,7 @@ Window {
                           bottom: audioBar.top; margins: 8 }
                 visible: root.showStats
                 text: canvas.stats + "  ·  touch ignored " + canvas.touchIgnored + "  ·  zoom " + Math.round(canvas.zoom * 100) + "%"
-                color: pal.text; font.pixelSize: 12; font.family: "monospace"
+                color: pal.text; font.pixelSize: Ui.px(12); font.family: "monospace"
             }
 
             // In split view the left side can be closed too; the right-hand page then takes over.
@@ -1044,7 +1045,7 @@ Window {
                     PresentButton { objectName: "presentNext"; icon: "go-next"; tip: "Next slide (→ or space)"
                                     enabledLook: root.presentIndex < root.presentPages.length - 1; onClicked: root.presentStep(1) }
                     Rectangle { implicitWidth: 1; implicitHeight: Ui.target - 16; color: Qt.alpha(pal.text, Ui.hairline) }
-                    PresentButton { objectName: "presentExit"; icon: "window-close"; tip: "Leave presentation (Esc)"; onClicked: root.stopPresenting() }
+                    PresentButton { objectName: "presentExit"; icon: "window-close"; tip: Ui.keys("Leave presentation (Esc)"); onClicked: root.stopPresenting() }
                 }
             }
 

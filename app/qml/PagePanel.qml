@@ -86,7 +86,7 @@ Rectangle {
             width: parent.width - 24
             spacing: 4
 
-            Text { text: "This page"; color: pal.windowText; font.pixelSize: 14; font.weight: Font.DemiBold }
+            Text { text: "This page"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold }
             Hint { visible: panel.pageId === 0; text: "Open a page to see its tags and what links to it." }
 
             Caption { visible: panel.pageId > 0; text: "Outline" }

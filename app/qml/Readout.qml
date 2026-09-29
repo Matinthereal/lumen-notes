@@ -24,7 +24,7 @@ Rectangle {
             id: pillText
             anchors.centerIn: parent
             text: parent.label
-            font.pixelSize: 12
+            font.pixelSize: Ui.px(12)
             font.letterSpacing: 0.6
             color: parent.on ? pal.highlightedText : pal.windowText
         }
@@ -34,16 +34,16 @@ Rectangle {
         property string label
         property string value
         Layout.fillWidth: true
-        Text { text: parent.label; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 13; Layout.preferredWidth: 96 }
+        Text { text: parent.label; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(13); Layout.preferredWidth: 96 }
         Text {
-            text: parent.value; color: pal.windowText; font.pixelSize: 13
+            text: parent.value; color: pal.windowText; font.pixelSize: Ui.px(13)
             font.family: "monospace"; Layout.fillWidth: true; elide: Text.ElideRight
         }
     }
 
     component Section: Text {
         color: pal.mid
-        font.pixelSize: 11
+        font.pixelSize: Ui.px(11)
         font.letterSpacing: 1.2
         font.capitalization: Font.AllUppercase
         Layout.topMargin: 10
@@ -53,12 +53,12 @@ Rectangle {
         anchors { fill: parent; margins: 18 }
         spacing: 6
 
-        Text { text: "Pen probe"; font.pixelSize: 22; font.weight: Font.DemiBold; color: pal.windowText }
+        Text { text: "Pen probe"; font.pixelSize: Ui.px(22); font.weight: Font.DemiBold; color: pal.windowText }
         Text {
             text: probe.deviceName.length ? probe.deviceName : "no pen seen yet — bring the pen near the screen"
-            color: pal.windowText; font.pixelSize: 13; wrapMode: Text.Wrap; Layout.fillWidth: true
+            color: pal.windowText; font.pixelSize: Ui.px(13); wrapMode: Text.Wrap; Layout.fillWidth: true
         }
-        Text { text: probe.capabilities; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 12; font.family: "monospace"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+        Text { text: probe.capabilities; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(12); font.family: "monospace"; wrapMode: Text.Wrap; Layout.fillWidth: true }
 
         RowLayout {
             spacing: 6
@@ -117,6 +117,6 @@ Rectangle {
         Item { Layout.fillHeight: true }
 
         Button { text: "Clear ink"; onClicked: probe.clear() }
-        Text { text: "log: " + probe.logPath; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 11; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+        Text { text: "log: " + probe.logPath; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(11); wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
     }
 }

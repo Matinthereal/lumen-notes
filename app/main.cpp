@@ -79,6 +79,13 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QGuiApplication app(argc, argv);
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    {   // Controls with no size of their own take this: the tablet body size (Ui.qml's 13 × 1.25).
+        QFont font = QGuiApplication::font();
+        font.setPixelSize(16);
+        QGuiApplication::setFont(font);
+    }
+#endif
 #ifdef Q_OS_ANDROID
     // Android's fonts lack most of the symbols the interface draws with (☐ ▾ ⇥ ★ …); a subset of
     // DejaVu Sans (packaging/make-symbol-font.sh) carries them.

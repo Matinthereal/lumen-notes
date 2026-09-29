@@ -24,7 +24,7 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 6
         RowLayout {
-            Text { text: "Flashcards"; color: pal.windowText; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Text { text: "Flashcards"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
             Button { text: "Review " + (cards.dueCount ? "(" + cards.dueCount + ")" : ""); font.pixelSize: Ui.small; onClicked: panel.review() }
         }
         RowLayout {

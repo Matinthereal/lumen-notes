@@ -61,7 +61,7 @@ Popup {
             Layout.fillWidth: true
             Layout.margins: 10
             placeholderText: "Search notes, handwriting, transcripts and PDFs…"
-            font.pixelSize: 16
+            font.pixelSize: Ui.px(16)
             background: Rectangle { radius: 8; color: pal.base; border.color: Qt.alpha(pal.text, 0.18) }
             leftPadding: 12; topPadding: 10; bottomPadding: 10
             onTextChanged: pal_.run(text)

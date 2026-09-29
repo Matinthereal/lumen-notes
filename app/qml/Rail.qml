@@ -45,7 +45,7 @@ Rectangle {
             visible: btn.badge.length > 0
             anchors { right: parent.right; top: parent.top; margins: 4 }
             width: Math.max(16, bt.implicitWidth + 8); height: 16; radius: 8; color: pal.highlight
-            Text { id: bt; anchors.centerIn: parent; text: btn.badge; color: pal.highlightedText; font.pixelSize: 10; font.weight: Font.DemiBold }
+            Text { id: bt; anchors.centerIn: parent; text: btn.badge; color: pal.highlightedText; font.pixelSize: Ui.px(10); font.weight: Font.DemiBold }
         }
         HoverHandler { id: h }
         TapHandler { id: railPress; onTapped: btn.clicked() }

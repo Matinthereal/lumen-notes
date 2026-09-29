@@ -321,7 +321,7 @@ Item {
                     color: notes.ink
                     linkColor: "#1C5FB8"
                     wrapMode: Text.Wrap
-                    font.pixelSize: 20
+                    font.pixelSize: Ui.px(20)
                     lineHeight: 1.15
                     onLinkActivated: (link) => link.startsWith("lumen://") ? notes.pageLinkActivated(link) : Qt.openUrlExternally(link)
                 }
@@ -330,7 +330,7 @@ Item {
                     x: notes.pad; y: notes.band + 6
                     text: "Tap to write"
                     color: Qt.alpha(notes.ink, 0.45)
-                    font.pixelSize: 20; font.italic: true
+                    font.pixelSize: Ui.px(20); font.italic: true
                 }
                 TextArea {
                     id: editor
@@ -338,7 +338,7 @@ Item {
                     visible: note.editing
                     x: notes.pad - leftPadding; y: notes.band + 6 - topPadding; width: parent.width - 2 * notes.pad + leftPadding + rightPadding
                     wrapMode: TextEdit.Wrap
-                    font.pixelSize: 20
+                    font.pixelSize: Ui.px(20)
                     color: notes.ink
                     selectionColor: Qt.alpha(pal.highlight, 0.45)
                     selectedTextColor: notes.ink

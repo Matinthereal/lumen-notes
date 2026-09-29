@@ -14,6 +14,9 @@ QtObject {
 
     readonly property real k: tablet ? 1.25 : 1.0
     readonly property int base: {
+        // A phone or tablet's application font is set to the tablet body size in main.cpp; the
+        // scale below starts from the desktop one, or tablets would scale twice.
+        if (Qt.platform.os === "android" || Qt.platform.os === "ios") return 13
         // The KDE user's font size is the one setting they expect an app to honour. Guarded so a
         // platform that does not expose it cannot throw.
         const f = (typeof Application !== "undefined" && Application.font) ? Application.font : null
@@ -24,6 +27,15 @@ QtObject {
     readonly property int text: Math.round(base * k)
     readonly property int small: Math.round((base - 1) * k)
     readonly property int title: Math.round(base * 1.7 * k)   // one size for every full-screen heading
+    // A size a screen chose for itself, scaled like the rest for touch: without this those stayed
+    // desktop-small on a tablet (11 px at arm's length).
+    function px(n) { return Math.round(n * k) }
+    // Shortcut hints are for a keyboard: an iPad's says ⌘ ⌥ ⇧, and Android's tablets usually have none.
+    function keys(text) {
+        if (Qt.platform.os === "ios") return text.replace(/Ctrl\+/g, "⌘").replace(/Alt\+/g, "⌥").replace(/Shift\+/g, "⇧")
+        if (Qt.platform.os === "android") return text.replace(/\s*·?\s*(review )?\(?(Esc|Ctrl\+[^\s)]*|F\d+)\)?/g, "").replace(/\s+—\s*$/, "")
+        return text
+    }
 
     // ---- targets and rhythm
     readonly property int target: Math.round(46 * k)      // Apple 44 pt · Windows 44 epx · Material 48 dp

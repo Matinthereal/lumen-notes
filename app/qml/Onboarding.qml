@@ -74,7 +74,7 @@ Rectangle {
             id: col
             anchors { fill: parent; margins: 28 }
             spacing: 12
-            Text { text: "Lumen"; color: pal.windowText; font.pixelSize: 26; font.weight: Font.DemiBold }
+            Text { text: "Lumen"; color: pal.windowText; font.pixelSize: Ui.px(26); font.weight: Font.DemiBold }
             Text { text: (mobile ? "This tablet has " : "This computer has ") + page.found + ", so Lumen has set itself up this way:"
                    color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
 

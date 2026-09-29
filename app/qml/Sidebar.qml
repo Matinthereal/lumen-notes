@@ -234,7 +234,7 @@ Rectangle {
                         }
                         Text {
                             anchors { right: parent.right; bottom: parent.bottom; margins: 2 }
-                            text: row.pageNo; color: "#5C6B7A"; font.pixelSize: 9; font.family: "monospace"
+                            text: row.pageNo; color: "#5C6B7A"; font.pixelSize: Ui.px(9); font.family: "monospace"
                         }
                     }
                     Text {

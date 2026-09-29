@@ -155,7 +155,7 @@ Rectangle {
                 onClicked: browser.newPageAsked(browserNewPage, browser.tag)
             }
             BarButton { visible: !browser.picking && pages.count > 0; label: "Present"; onClicked: browser.present(browser.currentPageId || pages.get(0).pid) }
-            BarButton { label: "Close (Esc)"; onClicked: browser.closed() }
+            BarButton { label: Ui.keys("Close (Esc)"); onClicked: browser.closed() }
         }
 
         // Tags: narrow the pad to one subject across every notebook.
@@ -227,7 +227,7 @@ Rectangle {
                             visible: cell.chosen
                             anchors { right: parent.right; top: parent.top; margins: 4 }
                             width: 22; height: 22; radius: 11; color: pal.highlight
-                            Text { anchors.centerIn: parent; text: "✓"; color: pal.highlightedText; font.pixelSize: 13 }
+                            Text { anchors.centerIn: parent; text: "✓"; color: pal.highlightedText; font.pixelSize: Ui.px(13) }
                         }
                     }
                     Text {

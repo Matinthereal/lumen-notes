@@ -40,8 +40,8 @@ Popup {
     ColumnLayout {
         anchors.fill: parent
         spacing: 8
-        Text { text: "Handwritten maths → LaTeX"; color: pal.windowText; font.pixelSize: 13; font.weight: Font.DemiBold }
-        TextField { id: field; Layout.fillWidth: true; font.family: "monospace"; font.pixelSize: 13; text: pop.latex }
+        Text { text: "Handwritten maths → LaTeX"; color: pal.windowText; font.pixelSize: Ui.px(13); font.weight: Font.DemiBold }
+        TextField { id: field; Layout.fillWidth: true; font.family: "monospace"; font.pixelSize: Ui.px(13); text: pop.latex }
         Image {
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(120, implicitHeight)
             fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignLeft
@@ -50,11 +50,11 @@ Popup {
         }
         RowLayout {
             visible: pop.answer.length > 0 || pop.solveError.length > 0
-            Text { text: pop.answer.length ? "=" : "·"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 15 }
+            Text { text: pop.answer.length ? "=" : "·"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(15) }
             Text {
                 text: pop.answer.length ? pop.answer : pop.solveError
                 color: pop.answer.length ? pal.windowText : Ui.warning
-                font.pixelSize: 15; font.weight: pop.answer.length ? Font.DemiBold : Font.Normal
+                font.pixelSize: Ui.px(15); font.weight: pop.answer.length ? Font.DemiBold : Font.Normal
                 elide: Text.ElideRight; Layout.fillWidth: true
             }
             Button {

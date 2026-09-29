@@ -55,7 +55,7 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 8
         RowLayout {
-            Text { text: "Claude"; color: pal.windowText; font.pixelSize: 15; font.weight: Font.DemiBold }
+            Text { text: "Claude"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
             Text { text: claude.available ? claude.version : (claude.reason || "checking…"); color: claude.available ? Qt.alpha(pal.windowText, Ui.mutedAlpha) : Ui.danger; font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.fillWidth: true }
             Switch { id: onlineSwitch; text: "Online"; font.pixelSize: Ui.small; checked: claude.online; onToggled: claude.online = checked
                      Connections { target: claude; function onStatusChanged() { onlineSwitch.checked = claude.online } }

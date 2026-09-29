@@ -29,7 +29,7 @@ ToolTip {
     Timer { id: linger; interval: 1500; onTriggered: tip.close() }
     Connections {
         target: holdTips
-        function onShown(text, rect) { linger.stop(); tip.text = text; tip.anchorRect = rect; tip.open() }
+        function onShown(text, rect) { linger.stop(); tip.text = Ui.keys(text); tip.anchorRect = rect; tip.open() }
         function onReleased() { linger.restart() }
     }
 }

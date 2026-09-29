@@ -41,7 +41,7 @@ Rectangle {
         background: Rectangle { radius: 10; color: pal.window; border.color: Qt.alpha(pal.text, Ui.borderAlpha) }
         ColumnLayout {
             anchors.fill: parent; spacing: 8
-            Text { text: "New past paper"; color: pal.windowText; font.pixelSize: 15; font.weight: Font.DemiBold }
+            Text { text: "New past paper"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
             ComboBox { id: subj; Layout.fillWidth: true; model: library.notebooks().map(n => n.name); font.pixelSize: Ui.text }
             RowLayout {
                 TextField { id: year; Layout.preferredWidth: 90; placeholderText: "Year"; text: String(new Date().getFullYear() - 1); font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 } }
@@ -67,7 +67,7 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 6
         RowLayout {
-            Text { text: "Past papers"; color: pal.windowText; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Text { text: "Past papers"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
             Button { text: "Import pair"; font.pixelSize: Ui.small; onClicked: paperDlg.open() }
         }
         ListView {
@@ -88,7 +88,7 @@ Rectangle {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 1
                         Text { text: label; color: pal.windowText; font.pixelSize: kind === "subject" ? 13 : 12; font.weight: kind === "paper" ? Font.Normal : Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { visible: kind === "paper"; text: sub; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { visible: kind === "paper"; text: sub; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(10); elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     Rectangle {
                         visible: kind === "subject"; implicitWidth: 88; implicitHeight: Ui.target - 10; radius: height / 2

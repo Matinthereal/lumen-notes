@@ -739,6 +739,21 @@ bool Library::seedDefaults()
     const qint64 page = createPage(section, QString(), QStringLiteral("typed"));
     rename(QStringLiteral("page"), page, QStringLiteral("Welcome"));
     Database::Query t(m_db, "INSERT INTO text_block(page_id, x, y, w, markdown, sort) VALUES (?, 0, 0, 794, ?, 0)");
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+    // A tablet's first page talks about fingers and the pen, not a keyboard it may not have.
+    t.bind(1, page).bind(2, QStringLiteral(
+        "# Welcome to Lumen\n\n"
+        "This is a **typed page**. Tap anywhere to start typing; it saves as you go.\n\n"
+        "## The basics\n\n"
+        "- The bar at the top makes **headings**, **lists** and **to-dos**\n"
+        "- **+** makes a new page, handwritten or typed\n"
+        "- A finger scrolls the page and two zoom it; only the pen writes\n"
+        "- Hold any button to see what it does\n\n"
+        "## Things to try\n\n"
+        "- [ ] Rename this page: open the notebooks on the left and hold it\n"
+        "- [ ] Make a handwritten page and write on it with the pen\n"
+        "- [ ] Hold a notebook and import a PDF, then write on the slides\n"));
+#else
     t.bind(1, page).bind(2, QStringLiteral(
         "# Welcome to Lumen\n\n"
         "This is a **typed page**. Click anywhere and start typing; it saves as you go.\n\n"
@@ -751,6 +766,7 @@ bool Library::seedDefaults()
         "- [ ] Rename this page: hold it (or right-click it) in the sidebar\n"
         "- [ ] Make a handwritten page if you have a pen or touchscreen\n"
         "- [ ] Import a PDF and write on it\n"));
+#endif
     t.run();
     const qint64 block = m_db.lastInsertId();
     Database::Query md(m_db, "SELECT markdown FROM text_block WHERE id=?"); md.bind(1, block);

@@ -54,7 +54,7 @@ Rectangle {
         anchors { fill: parent; margins: 10 }
         spacing: 6
         RowLayout {
-            Text { text: "Handwriting"; color: pal.windowText; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
+            Text { text: "Handwriting"; color: pal.windowText; font.pixelSize: Ui.px(14); font.weight: Font.DemiBold; Layout.fillWidth: true }
             Button { text: "Read now"; font.pixelSize: Ui.small; enabled: ocr.ready || ocr.status.length === 0; onClicked: ocr.recognizeNow(panel.pageId) }
             Button {
                 text: "Insert as text"; font.pixelSize: Ui.small
