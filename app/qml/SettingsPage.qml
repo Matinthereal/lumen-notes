@@ -124,7 +124,7 @@ Rectangle {
                 RowL { Lbl { text: "Eraser size (px)" } LSlider { from: 6; to: 40; stepSize: 1; value: Number(library.setting("pen.eraserRadius", "12")); Layout.preferredWidth: 220; onMoved: { canvas.eraserRadius = value; page.save("pen.eraserRadius", value) } } }
 
                 Section { text: "Pages" }
-                RowL { Lbl { text: "Default style for new pages" } ComboBox { model: ["dotted", "grid", "lined", "cornell", "plain"]; currentIndex: model.indexOf(library.setting("page.style", "dotted")); onActivated: page.save("page.style", currentText) } }
+                RowL { Lbl { text: "Default style for new pages" } LCombo { model: ["dotted", "grid", "lined", "cornell", "plain"]; currentIndex: model.indexOf(library.setting("page.style", "dotted")); onActivated: page.save("page.style", currentText) } }
                 RowL { Lbl { text: "Paper colour for new pages" }
                        Repeater { model: [["Charcoal", "#22262B"], ["White", "#FFFFFF"], ["Cream", "#F6F1E4"], ["Cool grey", "#EDEFF2"]]
                                   delegate: LButton { required property var modelData; text: modelData[0]; font.pixelSize: Ui.px(11)
@@ -162,13 +162,13 @@ Rectangle {
                 }
 
                 Section { visible: helpers; text: "Transcription" }
-                RowL { visible: helpers; Lbl { text: "Live model" } ComboBox { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }
-                RowL { visible: helpers; Lbl { text: "Re-pass model" } ComboBox { model: ["small.en", "medium.en", "large-v3-turbo", "large-v3"]; currentIndex: model.indexOf(library.setting("audio.repassModel", "large-v3-turbo")); onActivated: page.save("audio.repassModel", currentText) } }
+                RowL { visible: helpers; Lbl { text: "Live model" } LCombo { model: ["tiny.en", "base.en", "small.en", "medium.en"]; currentIndex: model.indexOf(library.setting("audio.liveModel", "small.en")); onActivated: page.save("audio.liveModel", currentText) } }
+                RowL { visible: helpers; Lbl { text: "Re-pass model" } LCombo { model: ["small.en", "medium.en", "large-v3-turbo", "large-v3"]; currentIndex: model.indexOf(library.setting("audio.repassModel", "large-v3-turbo")); onActivated: page.save("audio.repassModel", currentText) } }
                 RowL { visible: helpers; Lbl { text: "Backend" } Text { text: audio.backend; color: pal.text; font.pixelSize: Ui.px(13) } LButton { text: "Benchmark on the latest recording"; font.pixelSize: Ui.px(11); onClicked: { const rs = audio.recordings(library.page(Number(library.setting("lastPage", "0"))).sectionId || 0); if (rs.length) audio.runBenchmark(rs[0].id); else page.toast("Record something in this section first") } } }
                 Connections { target: audio; function onBenchmarkDone(r) { let s = "Chosen: " + r.chosen + ". "; for (const x of r.results) s += x.backend + (x.available ? " " + x.realtime_factor + "× realtime" : " unavailable (" + (x.reason || "") + ")") + "; "; page.toast(s) } }
 
                 Section { visible: page.mode !== "typed" && helpers; text: "Handwriting" }
-                RowL { visible: page.mode !== "typed" && helpers; Lbl { text: "OCR model" } ComboBox { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(11) } }
+                RowL { visible: page.mode !== "typed" && helpers; Lbl { text: "OCR model" } LCombo { Layout.preferredWidth: 320; model: ["microsoft/trocr-small-handwritten", "microsoft/trocr-base-handwritten"]; currentIndex: model.indexOf(library.setting("ocr.model", "microsoft/trocr-small-handwritten")); onActivated: page.save("ocr.model", currentText) } Text { text: "takes effect after restart"; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(11) } }
 
                 Section { text: "Backups" }
                 RowL { visible: !mobile; Lbl { text: "Folder" } LField { id: backupPath; Layout.fillWidth: true; text: library.setting("backup.dir", ""); placeholderText: "~/Backups/lumen"; font.pixelSize: Ui.px(12); onEditingFinished: page.save("backup.dir", text) } LButton { text: "Choose…"; font.pixelSize: Ui.px(11); onClicked: folderDlg.open() } }

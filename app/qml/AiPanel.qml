@@ -77,7 +77,7 @@ Rectangle {
             // Notes
             ColumnLayout {
                 Text { text: "Turn a recording into structured notes on a new page in this section."; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                ComboBox { id: recPick; Layout.fillWidth: true; model: recModel; textRole: "title"; font.pixelSize: Ui.small + 1 }
+                LCombo { id: recPick; Layout.fillWidth: true; model: recModel; textRole: "title"; font.pixelSize: Ui.small + 1 }
                 LButton { text: "Draft notes"; enabled: recModel.count > 0 && recPick.currentIndex >= 0 && !claude.busy; onClicked: claude.prepareLectureNotes(recModel.get(recPick.currentIndex).id, ai.pageId) }
             }
             // Cards

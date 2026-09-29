@@ -138,7 +138,7 @@ Rectangle {
                         onEditingFinished: if (bar.current && Number(text) !== bar.current.marks) papers.setQuestion(bar.current.id, bar.current.label, Number(text), bar.current.topics) }
             LField { id: topics; visible: bar.current !== null; Layout.preferredWidth: 170; placeholderText: "topics, comma separated"; font.pixelSize: Ui.small + 1
                         onEditingFinished: if (bar.current && text !== bar.current.topics) papers.setQuestion(bar.current.id, bar.current.label, bar.current.marks, text) }
-            ComboBox { id: err; visible: bar.current !== null && papers.activeAttempt > 0; Layout.preferredWidth: 140; font.pixelSize: Ui.small + 1
+            LCombo { id: err; visible: bar.current !== null && papers.activeAttempt > 0; Layout.preferredWidth: 140; font.pixelSize: Ui.small + 1
                        model: ["", "careless", "did not know", "ran out of time", "misread"]
                        onActivated: if (bar.current) { bar.setAnswer(bar.current.id, { error: currentText }); bar.commitCurrent() } }
             Text { visible: bar.current !== null && papers.activeAttempt > 0; text: bar.fmt(bar.qSeconds); color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small + 1; font.family: "monospace" }

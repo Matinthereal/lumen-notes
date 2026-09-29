@@ -2053,7 +2053,7 @@ int uitest::run(QQuickWindow *win, QObject *root)
             const auto isRed = [](QRgb p) { return qRed(p) > 170 && qGreen(p) < 110 && qBlue(p) < 110; };
             QMetaObject::invokeMethod(canvas, "fitPage");
             canvas->setProperty("tool", QStringLiteral("pen"));
-            canvas->setProperty("penColor", QColor(QStringLiteral("#E5383B")));
+            QMetaObject::invokeMethod(root, "choosePenColour", Q_ARG(QVariant, QStringLiteral("#E5383B")));   // as the toolbar does
             canvas->setProperty("penWidth", 4.0);
             spin(300);
             const QSizeF sheet = canvas->property("pageSize").toSizeF();
@@ -2263,6 +2263,25 @@ int uitest::run(QQuickWindow *win, QObject *root)
         root->setProperty("libraryVisible", false);
         spin(150);
         ensurePage();
+    }
+
+    // ---- 9c. The pen you pick is kept for this kind of paper, and the page draws with it.
+    if (auto *canvas = win->findChild<InkCanvas *>(QStringLiteral("inkCanvas"))) {
+        ensurePage();
+        const bool dark = root->property("inkOnDark").toBool();
+        const QString key = dark ? QStringLiteral("pen.colour.dark") : QStringLiteral("pen.colour.light");
+        QMetaObject::invokeMethod(root, "choosePenColour", Q_ARG(QVariant, QStringLiteral("#2f7a6b")));
+        spin(50);
+        QString saved;
+        if (library) QMetaObject::invokeMethod(library, "setting", Q_RETURN_ARG(QString, saved), Q_ARG(QString, key), Q_ARG(QString, QString()));
+        r.check("a chosen pen colour is saved for this kind of paper", saved.compare(QLatin1String("#2f7a6b"), Qt::CaseInsensitive) == 0, saved);
+        r.check("and the page draws with it", canvas->property("penColor").value<QColor>() == QColor(QStringLiteral("#2f7a6b")),
+                canvas->property("penColor").value<QColor>().name());
+        canvas->setProperty("penWidth", 3.0);
+        spin(50);
+        QString width;
+        if (library) QMetaObject::invokeMethod(library, "setting", Q_RETURN_ARG(QString, width), Q_ARG(QString, QStringLiteral("pen.width")), Q_ARG(QString, QString()));
+        r.check("the pen's width is kept too", width == QLatin1String("3"), width);
     }
 
     // ---- 10. The trash: what you deleted is still there, and Restore brings it back.

@@ -42,7 +42,7 @@ Rectangle {
         ColumnLayout {
             anchors.fill: parent; spacing: 8
             Text { text: "New past paper"; color: pal.windowText; font.pixelSize: Ui.px(15); font.weight: Font.DemiBold }
-            ComboBox { id: subj; Layout.fillWidth: true; model: library.notebooks().map(n => n.name); font.pixelSize: Ui.text }
+            LCombo { id: subj; Layout.fillWidth: true; model: library.notebooks().map(n => n.name); font.pixelSize: Ui.text }
             RowLayout {
                 LField { id: year; Layout.preferredWidth: 90; placeholderText: "Year"; text: String(new Date().getFullYear() - 1); font.pixelSize: Ui.text; validator: IntValidator { bottom: 1990; top: 2100 } }
                 LField { id: nameField; Layout.fillWidth: true; placeholderText: "Paper (e.g. Paper 2)"; font.pixelSize: Ui.text }

@@ -16,6 +16,7 @@ Rectangle {
     signal pictureRequested()
     signal presetsChanged()
     signal paperChosen(string colour)
+    signal penColourChosen(string colour)     // Main keeps it, per kind of paper, across launches
     signal styleChosen(string style)
     signal shapeKindChosen(string kind)
     signal toast(string message)
@@ -183,7 +184,7 @@ Rectangle {
                         const p = fav.preset
                         if (!p) { favHold.triggered(); return }        // an empty slot takes the pen you are holding
                         if (p.tool === "highlighter") { canvas.highlighterColor = p.colour; canvas.tool = "highlighter"; return }
-                        canvas.penColor = p.colour; canvas.penWidth = p.width
+                        bar.penColourChosen(p.colour); canvas.penWidth = p.width
                         if (p.style) canvas.penStyle = p.style
                         canvas.brush = p.brush || "ink"          // favourites from before the pencil were ink
                         canvas.tool = "pen"
@@ -227,7 +228,7 @@ Rectangle {
     function useColour(c) {
         if (canvas.hasSelection) { canvas.restyleSelection(c, 1.0); return }   // recolour what the lasso caught
         if (canvas.tool === "highlighter") canvas.highlighterColor = c
-        else { canvas.penColor = c; if (canvas.tool !== "pen") canvas.tool = "pen" }
+        else { bar.penColourChosen(c); if (canvas.tool !== "pen") canvas.tool = "pen" }
     }
     function showPalette() { penPopover.openFrom(penButton) }
     PenPopover {

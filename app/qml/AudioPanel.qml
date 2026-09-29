@@ -156,7 +156,7 @@ Item {
                 GuardedTap { onTapped: panel.testMic() }
                 ToolTip.visible: mh.hovered; ToolTip.delay: 600; ToolTip.text: "Show the microphone level for eight seconds"
             }
-            ComboBox {
+            LCombo {
                 id: sourcePick
                 visible: !audio.recording && (panel.expanded || panel.busy)
                 Layout.preferredWidth: 300; implicitHeight: Ui.target - 6
@@ -181,7 +181,7 @@ Item {
             }
             Text { visible: !audio.recording && !audio.transcribing && !audio.preparing && audio.status.length > 0; text: audio.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.small; elide: Text.ElideRight; Layout.maximumWidth: 240 }
             Rectangle { visible: recordingsModel.count > 0 && !audio.recording; implicitWidth: 1; implicitHeight: Ui.target - 12; color: Qt.alpha(pal.text, 0.14) }
-            ComboBox {
+            LCombo {
                 id: recPick
                 visible: recordingsModel.count > 0 && !audio.recording
                 Layout.preferredWidth: 200; implicitHeight: Ui.target - 6

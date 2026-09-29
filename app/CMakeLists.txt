@@ -190,6 +190,7 @@ qt_add_qml_module(lumen
         qml/LField.qml
         qml/PenPopover.qml
         qml/LibraryPage.qml
+        qml/LCombo.qml
         qml/Keyboard.qml
         qml/ImageLayer.qml
         qml/ShapeLayer.qml

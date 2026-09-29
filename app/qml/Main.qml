@@ -26,6 +26,24 @@ Window {
         const c = Qt.color(root.paperColour)
         return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) < 0.45
     }
+    // The pen you chose last, kept for dark paper and for light paper apart, so ink stays visible
+    // on both and survives a restart. A PDF page is its own paper, and a PDF is light: the white
+    // pen that dark paper suggests was invisible on one.
+    readonly property bool inkOnDark: root.paperIsDark && !canvas.hasBackground
+    property string penOnDark: library.setting("pen.colour.dark", "#F2F2F2")
+    property string penOnLight: library.setting("pen.colour.light", "#1A1A1A")
+    property bool penRestored: false
+    function choosePenColour(c) {
+        const colour = String(c)
+        if (root.inkOnDark) { root.penOnDark = colour; library.setSetting("pen.colour.dark", colour) }
+        else { root.penOnLight = colour; library.setSetting("pen.colour.light", colour) }
+    }
+    // Width and highlighter colour are kept as they change; styleChanged covers every pen setting.
+    function rememberPen() {
+        const w = String(canvas.penWidth), h = canvas.highlighterColor.toString()
+        if (library.setting("pen.width", "") !== w) library.setSetting("pen.width", w)
+        if (library.setting("highlighter.colour", "") !== h) library.setSetting("highlighter.colour", h)
+    }
     property bool reviewVisible: false
     property bool dashboardVisible: false
     property string dashboardSubject: ""
@@ -72,6 +90,9 @@ Window {
         canvas.inkEdges = library.setting("pen.edges", "classic")
         canvas.steadyInk = library.setting("pen.steady", "0") === "1"
         canvas.brush = library.setting("pen.brush", "ink")
+        canvas.penWidth = Number(library.setting("pen.width", String(canvas.penWidth)))
+        canvas.highlighterColor = library.setting("highlighter.colour", canvas.highlighterColor.toString())
+        penRestored = true            // only now may changes be saved: restoring must not overwrite
         if (mobile || library.setting("tablet.forced", "") === "1") tabletMode.tablet = true
     }
     Component.onCompleted: applySavedSettings()
@@ -464,7 +485,8 @@ Window {
                 paperColor: root.paperColour
                 dotColor: Qt.alpha(root.paperIsDark ? "#FFFFFF" : "#000000", 0.18)
                 frameColor: Qt.alpha(root.paperIsDark ? "#FFFFFF" : "#000000", 0.55)   // the page's edge is load-bearing: WCAG 1.4.11 asks 3:1
-                penColor: root.paperIsDark ? "#F2F2F2" : "#1A1A1A"
+                penColor: root.inkOnDark ? root.penOnDark : root.penOnLight
+                onStyleChanged: if (root.penRestored) root.rememberPen()
                 accentColor: pal.highlight
                 Component.onCompleted: fitPage()
                 onViewChanged: rerender.restart()
@@ -676,6 +698,7 @@ Window {
                 opacity: canvas.inking ? 0 : 1
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 enabled: visible && opacity > 0.5
+                onPenColourChosen: (c) => root.choosePenColour(c)
                 onExportRequested: root.exportPdf("section")
                 onPresentRequested: root.startPresenting()
                 onExportPageRequested: root.exportPdf("page")
