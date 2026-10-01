@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QStandardPaths>
 
 // The request is one line of JSON: {"files": [urls], "token": "…"}; the answer is "ok\n".
@@ -44,19 +45,24 @@ bool SingleInstance::handOver(const QList<QUrl> &files, const QString &activatio
 
 bool SingleInstance::listen()
 {
-    if (m_server.listen(m_name)) return true;
-    if (m_server.serverError() != QAbstractSocket::AddressInUseError) {
-        qWarning("lumen: cannot listen on %s: %s", qPrintable(m_name), qPrintable(m_server.errorString()));
-        return true;          // no guard is better than no Lumen
-    }
-    // The socket file is there. Only remove it when nothing answers on it: removing a live one
-    // (two launches at once) would leave that Lumen unreachable.
+    // One launch at a time from here to the end. Without the lock, two launches that both find a
+    // socket left by a crash both see nobody answer, and the second removes the socket the first
+    // has just started listening on. A lock left by a crash is taken over: QLockFile checks its pid.
+    QLockFile lock(m_name + QStringLiteral(".lock"));
+    const bool locked = lock.tryLock(5000);
     QLocalSocket probe;
     probe.connectToServer(m_name);
-    if (probe.waitForConnected(500)) return false;
-    QLocalServer::removeServer(m_name);
-    if (!m_server.listen(m_name)) qWarning("lumen: cannot listen on %s: %s", qPrintable(m_name), qPrintable(m_server.errorString()));
-    return true;
+    if (probe.waitForConnected(500)) return false;      // the launch that held the lock before us
+    probe.abort();
+    if (m_server.listen(m_name)) return true;
+    // The socket file is there and nothing answers on it. Without the lock it may still belong to
+    // a launch about to listen, so it is only removed under the lock.
+    if (m_server.serverError() == QAbstractSocket::AddressInUseError && locked) {
+        QLocalServer::removeServer(m_name);
+        if (m_server.listen(m_name)) return true;
+    }
+    qWarning("lumen: cannot listen on %s: %s", qPrintable(m_name), qPrintable(m_server.errorString()));
+    return true;          // no guard is better than no Lumen
 }
 
 void SingleInstance::read(QLocalSocket *socket)

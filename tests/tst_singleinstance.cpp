@@ -7,6 +7,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <atomic>
+#include <memory>
 #include <thread>
 #include "storage/database.h"
 #include "ui/singleinstance.h"
@@ -80,10 +81,56 @@ private slots:
         QCOMPARE(handed.load(), 1);
     }
 
+    // A launch that finds a Lumen listening leaves its socket alone, so later launches still reach it.
+    void liveSocketIsKept()
+    {
+        QTemporaryDir library;
+        SingleInstance first(library.path());
+        QVERIFY(first.listen());
+        SingleInstance second(library.path());
+        QVERIFY(!second.listen());
+        QSignalSpy spy(&first, &SingleInstance::handedOver);
+        std::atomic<int> handed{-1};
+        std::thread later([&] { SingleInstance again(library.path()); handed = again.handOver({}) ? 1 : 0; });
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 5000);
+        later.join();
+        QCOMPARE(handed.load(), 1);
+    }
+
+    // Two launches at the same moment after a crash: one replaces the socket, the other finds it
+    // listening. Before the lock both could see nobody answer, and the second removed the first's.
+    void staleSocketGoesToOneOfTwoLaunches()
+    {
+        QTemporaryDir library;
+        const QString socket = SingleInstance(library.path()).serverName();
+        { QFile stale(socket); QVERIFY(stale.open(QIODevice::WriteOnly)); }
+        std::atomic<int> listening{0}, done{0};
+        std::atomic<bool> leave{false};
+        auto launch = [&] {
+            SingleInstance instance(library.path());
+            if (instance.listen()) ++listening;
+            ++done;
+            while (!leave) QThread::msleep(10);         // the winner keeps listening until both have tried
+        };
+        std::unique_ptr<QThread> a(QThread::create(launch)), b(QThread::create(launch));
+        a->start();
+        b->start();
+        QTRY_COMPARE_WITH_TIMEOUT(done.load(), 2, 15000);
+        const int winners = listening.load();
+        leave = true;
+        QVERIFY(a->wait(5000));
+        QVERIFY(b->wait(5000));
+        QCOMPARE(winners, 1);
+    }
+
     // The real app, offscreen: started with a PDF it imports it, and "Open with Lumen" on another
-    // PDF while it runs gives that one to the same window and exits.
+    // PDF while it runs gives that one to the same window and exits. The running one is a plain
+    // launch: a --screenshot or --smoke run stays out of the single-instance guard.
     void openWithLumen()
     {
+#ifdef Q_OS_WIN
+        QSKIP("waits for the socket file, and a Windows pipe has none");
+#endif
         QTemporaryDir data, files;
         const QString first = files.filePath("first handout.pdf"), second = files.filePath("second handout.pdf");
         writePdf(first, "First");
@@ -95,7 +142,7 @@ private slots:
         QProcess running;
         running.setProcessEnvironment(env);
         running.setProcessChannelMode(QProcess::ForwardedChannels);
-        running.start(LUMEN_APP, {"--screenshot", data.filePath("shot.png"), "--shot-delay", "15000", first});
+        running.start(LUMEN_APP, {first});
         QVERIFY(running.waitForStarted());
         const QString socket = SingleInstance(data.path()).serverName();
         QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(socket), 30000);
@@ -108,15 +155,51 @@ private slots:
         QCOMPARE(opener.exitStatus(), QProcess::NormalExit);
         QCOMPARE(opener.exitCode(), 0);
         QVERIFY2(took.elapsed() < 10000, "the second launch should hand over and leave, not run");
-        QVERIFY(running.waitForFinished(60000));
-        QCOMPARE(running.exitCode(), 0);
+        const auto stop = [&] {
+            running.terminate();
+            if (!running.waitForFinished(10000)) running.kill();
+            running.waitForFinished(5000);
+            QFile::remove(socket);                      // ended by a signal, it never tidied its own
+        };
+        // The imports need the PDF helper, which CI does not install (its ctest line leaves out pdf and papers too).
+        if (qEnvironmentVariableIsSet("CI")) { stop(); QSKIP("no PDF helper on CI: the hand-over is checked, the import is not"); }
+        // The window stays open, so read its library while it runs. It has answered the opener, so
+        // the schema is there.
         Database db;
         QVERIFY(db.open(data.filePath("lumen.db")));
-        QStringList sections;
-        Database::Query q(db, "SELECT name FROM section WHERE deleted_at IS NULL");
-        while (q.step()) sections << q.text(0);
-        QVERIFY2(sections.contains("first handout"), qPrintable(sections.join(", ")));
-        QVERIFY2(sections.contains("second handout"), qPrintable(sections.join(", ")));
+        auto sections = [&db] {
+            QStringList names;
+            Database::Query q(db, "SELECT name FROM section WHERE deleted_at IS NULL");
+            while (q.step()) names << q.text(0);
+            return names;
+        };
+        QTRY_VERIFY2_WITH_TIMEOUT(sections().contains("first handout") && sections().contains("second handout"),
+                                  qPrintable(sections().join(", ")), 60000);
+        stop();
+    }
+
+    // A test or diagnostic run beside an open Lumen runs on its own instead of handing over and
+    // exiting, and does not take the socket either.
+    void diagnosticRunsStayOutOfTheGuard()
+    {
+        QTemporaryDir data;
+        SingleInstance open(data.path());
+        QVERIFY(open.listen());
+        QSignalSpy spy(&open, &SingleInstance::handedOver);
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_QPA_PLATFORM", "offscreen");
+        env.insert("LUMEN_DATA_DIR", data.path());
+        env.insert("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent");
+        QProcess smoke;
+        smoke.setProcessEnvironment(env);
+        smoke.setProcessChannelMode(QProcess::ForwardedChannels);
+        smoke.start(LUMEN_APP, {"--smoke"});
+        QVERIFY(smoke.waitForFinished(60000));          // not spinning our event loop: a hand-over would wait, then show below
+        QCOMPARE(smoke.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(smoke.exitCode(), 0);
+        QTest::qWait(200);
+        QCOMPARE(spy.count(), 0);
+        QVERIFY2(QFileInfo::exists(data.filePath("lumen.db")), "the smoke run should have opened the library itself");
     }
 };
 QTEST_MAIN(TstSingleInstance)

@@ -19,7 +19,8 @@ public:
     // activation token, so the compositor lets it come forward), and this process should exit.
     bool handOver(const QList<QUrl> &files, const QString &activationToken = {}, int timeoutMs = 3000);
     // Become the running Lumen for this library. False only when another one answers on the
-    // socket (two launches at once): hand over to it instead.
+    // socket (two launches at once): hand over to it instead. Launches take turns through a lock
+    // file beside the socket, so a socket left by a crash is replaced by exactly one of them.
     bool listen();
     QString serverName() const { return m_name; }
 

@@ -113,9 +113,13 @@ int main(int argc, char *argv[])
 #ifdef LUMEN_SINGLE_INSTANCE
     // One window per library. "Open with Lumen" on a PDF (Exec=lumen %U) while Lumen is open hands
     // the file to that window and ends here; the nightly `lumen --backup` runs beside it as before.
+    // So do the test and diagnostic runs: handed over, `lumen --smoke` would exit 0 having run nothing.
     const QList<QUrl> handedFiles = SingleInstance::filesIn(args);
     SingleInstance instance(paths::dataDir());
-    if (!args.contains(QStringLiteral("--backup"))) {
+    bool runsBeside = false;
+    for (const char *flag : {"--backup", "--smoke", "--uitest", "--screenshot", "--probe"})
+        if (args.contains(QLatin1String(flag))) runsBeside = true;
+    if (!runsBeside) {
         const QString token = qEnvironmentVariable("XDG_ACTIVATION_TOKEN");
         if (instance.handOver(handedFiles, token)) return 0;
         if (!instance.listen() && instance.handOver(handedFiles, token)) return 0;   // two launches at once
