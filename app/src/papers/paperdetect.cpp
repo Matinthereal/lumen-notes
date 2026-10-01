@@ -26,6 +26,11 @@ QList<int> rightOf(const Page &page, int from)
     return out;
 }
 
+bool isDigits(const QString &s)
+{
+    return !s.isEmpty() && std::all_of(s.cbegin(), s.cend(), [](QChar c) { return c.isDigit(); });
+}
+
 int romanValue(const QString &s)
 {
     static const QStringList numerals{"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"};
@@ -70,10 +75,18 @@ QList<Candidate> candidates(const QList<Page> &pages)
             // The label's pieces, then the longest run of them that reads as one label.
             QList<int> tokens{s};
             double right = box.right();
-            for (const int j : rightOf(page, s)) {
-                const Word &w = page.words.at(j);
-                if (w.box.left() - right > 40 || !piece.match(w.text).hasMatch()) break;
-                tokens << j;
+            const QList<int> row = rightOf(page, s);
+            for (int r = 0; r < row.size(); ++r) {
+                const Word &w = page.words.at(row.at(r));
+                const double gap = w.box.left() - right;
+                if (gap > 40 || !piece.match(w.text).hasMatch()) break;
+                // A lone digit after a number or a dot is the next box of an AQA label only while the
+                // boxes keep their pitch. The first word of the question's own text ("3 people",
+                // "3 men") is followed by an ordinary word space, much tighter than the gap before it.
+                const QChar before = page.words.at(tokens.last()).text.back();
+                if (isDigits(w.text) && (before.isDigit() || before == u'.') && r + 1 < row.size()
+                    && page.words.at(row.at(r + 1)).box.left() - w.box.right() < gap * 0.6) break;
+                tokens << row.at(r);
                 right = w.box.right();
             }
             QRegularExpressionMatch best;
@@ -286,7 +299,28 @@ QList<Question> detect(const QList<Page> &pages)
     return kept;
 }
 
-int yearFromCover(const QString &text) { return firstYear(datedYear(), text); }
+// A date on a cover is the exam's unless it dates the specification: "first teaching from
+// September 2015" and the like come before the exam date and name a different year. When several
+// dates remain, one in an exam series (not September, say) wins.
+int yearFromCover(const QString &text)
+{
+    static const QRegularExpression spec(R"((?:first\s+(?:teaching|assessments?|examinations?|awards?)|specifications?)\b[^.\d]{0,30}$)",
+                                         QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression specAfter(R"(^\W{0,3}(?:first\s+(?:teaching|assessments?|examinations?|awards?)|specification))",
+                                              QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression series(R"(^(?:jan|may|jun|oct|nov|summer|autumn|winter))", QRegularExpression::CaseInsensitiveOption);
+    int fallback = 0;
+    for (auto it = datedYear().globalMatch(text); it.hasNext();) {
+        const auto m = it.next();
+        const int y = plausible(m.captured(1).toInt());
+        if (!y) continue;
+        if (spec.match(text.mid(std::max<qsizetype>(0, m.capturedStart() - 60), std::min<qsizetype>(60, m.capturedStart()))).hasMatch()
+            || specAfter.match(text.mid(m.capturedEnd(), 30)).hasMatch()) continue;
+        if (series.match(m.captured(0)).hasMatch()) return y;
+        if (!fallback) fallback = y;
+    }
+    return fallback;
+}
 
 int yearFromName(const QString &fileName)
 {

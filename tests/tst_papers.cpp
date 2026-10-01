@@ -136,6 +136,57 @@ private slots:
         QCOMPARE(marksOf(qs), (QList<int>{1, 4, 3, 3, 9, 5, 12}));
     }
 
+    // The first word of a question's text can be a lone digit ("3 people"); it is not a box of the
+    // label before it.
+    void bodyDigitIsNotPartOfLabel()
+    {
+        Sheet s;
+        s.page().word(90.7, 90, "0", 8.2, 20.6).word(114.2, 90, "4", 8.2, 20.6).word(135.5, 90, ".", 4.1, 20.6).word(152.6, 90, "2", 8.2, 20.6)
+            .row(190, 90, {"3", "people", "share", "a", "van."})
+            .word(644.2, 130, "[1", 13).word(661.4, 130, "mark]", 48)
+            .word(90.7, 300, "0", 8.2, 20.6).word(114.2, 300, "4", 8.2, 20.6).word(135.5, 300, ".", 4.1, 20.6).word(152.6, 300, "3", 8.2, 20.6)
+            .row(190, 300, {"Find", "the", "speed."})
+            .word(644.2, 340, "[2", 13).word(661.4, 340, "marks]", 48);
+        s.page().word(90.7, 90, "0", 8.2, 20.6).word(114.2, 90, "4", 8.2, 20.6).word(135.5, 90, ".", 4.1, 20.6).word(152.6, 90, "4", 8.2, 20.6)
+            .row(190, 90, {"Explain", "why."})
+            .word(644.2, 130, "[3", 13).word(661.4, 130, "marks]", 48);
+        QCOMPARE(labelsOf(paperdetect::detect(s.pages)), (QStringList{"04.2", "04.3", "04.4"}));
+
+        // Edexcel with a bare number: "5" then text that starts "3 men".
+        Sheet e;
+        e.page().row(56.6, 80, {"4"}).row(81.2, 80, {"A", "car", "stops."}).row(661.3, 120, {"(2)"})
+            .row(56.6, 300, {"5"}).row(81.2, 300, {"3", "men", "share", "a", "van."}).row(661.3, 340, {"(3)"})
+            .row(56.6, 500, {"6"}).row(81.2, 500, {"Find", "x."}).row(661.3, 540, {"(4)"});
+        QCOMPARE(labelsOf(paperdetect::detect(e.pages)), (QStringList{"4", "5", "6"}));
+        QCOMPARE(marksOf(paperdetect::detect(e.pages)), (QList<int>{2, 3, 4}));
+
+        // And with the dot Edexcel usually prints: "5." then "3 men" is not part 5.3.
+        Sheet d;
+        d.page().row(56.6, 80, {"4."}).row(81.2, 80, {"A", "car", "stops."}).row(661.3, 120, {"(2)"})
+            .row(56.6, 300, {"5."}).row(81.2, 300, {"3", "men", "share", "a", "van."}).row(661.3, 340, {"(3)"})
+            .row(56.6, 500, {"6."}).row(81.2, 500, {"Find", "x."}).row(661.3, 540, {"(4)"});
+        QCOMPARE(labelsOf(paperdetect::detect(d.pages)), (QStringList{"4", "5", "6"}));
+    }
+
+    // A real two-digit part still joins: boxes "1 0" after "1 2 . 9", in a two-digit question.
+    void twoDigitAqaPartsStillJoin()
+    {
+        Sheet s;
+        const auto box = [&s](double y, const QStringList &digits) {
+            double x = 90.7;
+            for (const QString &d : digits) {
+                s.word(x, y, d, d == "." ? 4.1 : 8.2, 20.6);
+                x += d == "." ? 17.1 : 23.5;
+            }
+        };
+        s.page();
+        box(90, {"1", "2", ".", "8"}); s.row(210, 90, {"Read", "it."}).word(652.3, 130, "[1", 13).word(669.4, 130, "mark]", 40);
+        box(250, {"1", "2", ".", "9"}); s.row(210, 250, {"Read", "it."}).word(652.3, 290, "[2", 13).word(669.4, 290, "marks]", 48);
+        box(450, {"1", "2", ".", "1", "0"}); s.row(240, 450, {"Read", "it."}).word(644.2, 490, "[3", 13).word(661.4, 490, "marks]", 48);
+        QCOMPARE(labelsOf(paperdetect::detect(s.pages)), (QStringList{"12.8", "12.9", "12.10"}));
+        QCOMPARE(marksOf(paperdetect::detect(s.pages)), (QList<int>{1, 2, 3}));
+    }
+
     // "(i)" is a roman numeral, except straight after "(h)", where it is the next letter.
     void letterIAfterH()
     {
@@ -164,6 +215,12 @@ private slots:
         QCOMPARE(paperdetect::yearFromCover("Monday 12 June 2023 – Afternoon"), 2023);
         QCOMPARE(paperdetect::yearFromCover("Summer 2019"), 2019);
         QCOMPARE(paperdetect::yearFromCover("*Jun167407201* M/IB/Jun16/E4 7407/2"), 0);     // AQA's codes are not a year
+        QCOMPARE(paperdetect::yearFromCover("For first teaching in September 2015 Thursday 9 June 2016 Afternoon"), 2016);
+        QCOMPARE(paperdetect::yearFromCover("Specification first assessment September 2017 Paper 1 Tuesday 14 May 2019"), 2019);
+        QCOMPARE(paperdetect::yearFromCover("First examination June 2017 Summer 2019"), 2019);
+        QCOMPARE(paperdetect::yearFromCover("Specification September 2015"), 0);
+        QCOMPARE(paperdetect::yearFromCover("Thursday 9 September 2021 Resit"), 2021);
+        QCOMPARE(paperdetect::yearFromCover("Resit September 2021 Thursday 9 June 2022"), 2022);
         QCOMPARE(paperdetect::yearFromCover("© OCR 2023 [601/4911/5] Time allowed: 2 hours 30 minutes"), 0);
     }
 
