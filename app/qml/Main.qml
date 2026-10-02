@@ -1392,13 +1392,23 @@ Window {
         }
     }
     // ---- A newer release (update/updater.h). The banner floats over whatever is open, clear of
-    // the audio bar and on the side away from the rail.
+    // the audio bar. Over a page it keeps to the free-hand side, as the page arrows do: the other
+    // bottom corner is under the writing hand, where a palm would press Update. Hidden while the
+    // pen is down, not dimmed: a visible "chrome" item is a hole the pen cannot draw through.
     UpdateBanner {
         z: 35
-        visible: updater.offered && !root.onboardingVisible && !root.probeMode && !root.presenting
-        width: Math.min(implicitWidth, safe.width - 32)
-        x: root.leftHanded ? safe.x + 16 : safe.x + safe.width - width - 16
-        y: safe.y + safe.height - height - Ui.target - 34
+        readonly property bool overFullPage: root.settingsVisible || root.libraryVisible || root.browserVisible || root.trashVisible
+                                             || root.keysVisible || root.dashboardVisible || root.reviewVisible
+        readonly property bool atRight: overFullPage || root.leftHanded
+        // In tablet mode the notebooks drawer opens over that same edge of the page: stand beside
+        // it, and above the page counter that is then underneath.
+        readonly property real drawer: !overFullPage && leftOverlay.visible ? leftOverlay.width + 8 : 0
+        readonly property real areaX: overFullPage ? safe.x : safe.x + page.x + (root.leftHanded ? 0 : drawer)
+        readonly property real areaWidth: overFullPage ? safe.width : page.width - drawer
+        visible: updater.offered && !root.onboardingVisible && !root.probeMode && !root.presenting && (overFullPage || !canvas.inking)
+        width: Math.max(0, Math.min(implicitWidth, areaWidth - 32))
+        x: atRight ? areaX + areaWidth - width - 16 : areaX + 16
+        y: safe.y + safe.height - height - Ui.target - 34 - (drawer > 0 ? Ui.target : 0)
         onNotesRequested: whatsNew.open()
     }
     WhatsNewSheet {

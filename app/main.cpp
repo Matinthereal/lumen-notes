@@ -53,7 +53,9 @@
 #include <QLoggingCategory>
 #include <QDir>
 #include <QFileInfo>
+#if QT_CONFIG(process)
 #include <QProcess>
+#endif
 #include <cstdio>
 #ifdef Q_OS_UNIX
 #include <csignal>
@@ -350,17 +352,27 @@ int main(int argc, char *argv[])
 
     // Once the window is up and settled; with no feed (above) this asks nothing.
     QTimer::singleShot(1500, &updater, &Updater::checkOnLaunch);
-    // The updated AppImage, or the Windows installer: start it and leave.
+    // The updated AppImage, or the Windows installer: start it and leave. The installer is started
+    // here, while a refused UAC prompt can still be said in the banner; it waits for Lumen to go.
+    // The AppImage is started at the very end, once every page is saved: started here, it would be
+    // a second Lumen on this library while this one is still writing. iOS has no processes to
+    // start, and never asks.
+    QString restartProgram;
+    QStringList restartArguments;
+#if QT_CONFIG(process)
     QObject::connect(&updater, &Updater::restartRequested, &app, [&](const QString &program, const QStringList &arguments) {
-#ifdef LUMEN_SINGLE_INSTANCE
-        instance.close();       // or the Lumen started here would hand over to this one and exit
+#ifdef Q_OS_WIN
+        if (!QProcess::startDetached(program, arguments)) { updater.launchFailed(); return; }
+#else
+        restartProgram = program;
+        restartArguments = arguments;
 #endif
-        if (QProcess::startDetached(program, arguments)) { QCoreApplication::quit(); return; }
-        qWarning("update: cannot start %s", qPrintable(program));
 #ifdef LUMEN_SINGLE_INSTANCE
-        instance.listen();
+        instance.close();       // or the Lumen started next would hand over to this one and exit
 #endif
+        QCoreApplication::quit();
     });
+#endif
 
     if (args.contains(QStringLiteral("--smoke")))
         QTimer::singleShot(2500, &app, &QCoreApplication::quit);
@@ -444,5 +456,9 @@ int main(int argc, char *argv[])
     latexWorker.stop();
     pdfWorker.stop();
     pingWorker.stop();
+#if QT_CONFIG(process)
+    if (!restartProgram.isEmpty() && !QProcess::startDetached(restartProgram, restartArguments))
+        qWarning("update: cannot start %s", qPrintable(restartProgram));
+#endif
     return rc;
 }

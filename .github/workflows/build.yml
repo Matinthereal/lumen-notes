@@ -23,6 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Lumen's updater compares the release's tag with the version built in. A tag ahead of
+      # CMakeLists.txt would have every updated Lumen offer the same release again each day.
+      - name: The tag is the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^project(lumen VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "::error::tag $GITHUB_REF_NAME, but CMakeLists.txt says $version"; exit 1; }
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -130,9 +138,9 @@ jobs:
         run: windeployqt --qmldir app\qml "${{ github.workspace }}\install\lumen.exe"
 
       - name: Build installer
-        shell: cmd
         run: |
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DLumenInstallDir="${{ github.workspace }}\install" packaging\windows\lumen.iss
+          $version = (Select-String -Path CMakeLists.txt -Pattern '^project\(lumen VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DLumenInstallDir=${{ github.workspace }}\install" "/DMyAppVersion=$version" packaging\windows\lumen.iss
 
       - uses: actions/upload-artifact@v4
         with:

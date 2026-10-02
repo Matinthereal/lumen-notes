@@ -157,7 +157,8 @@ sends. When there is a newer one, a small banner says so: *What's new* shows the
 how Lumen was installed: the Linux AppImage downloads the new one, checks it against the checksum
 GitHub publishes and replaces itself, then offers a restart; on Windows it downloads and runs the
 installer; an Android tablet is handed the new `.apk`; anywhere else it opens the release page.
-Settings › Updates has *Check for updates* and the switch that turns the daily check off.
+Settings › Updates has *Check for updates*, which also offers a version you skipped, and the
+switch that turns the daily check off.
 
 ## Where things live
 

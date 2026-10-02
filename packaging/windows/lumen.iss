@@ -8,7 +8,11 @@
 #endif
 
 #define MyAppName "Lumen"
+; CI passes /DMyAppVersion from CMakeLists.txt's project(lumen VERSION ...), so the installer's
+; name, which Lumen's updater looks for, cannot fall behind the release.
+#ifndef MyAppVersion
 #define MyAppVersion "0.2.0"
+#endif
 #define MyAppExeName "lumen.exe"
 #define MyAppPublisher "Lumen"
 

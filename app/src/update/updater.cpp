@@ -1,5 +1,6 @@
 #include "updater.h"
 #include "storage/library.h"
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -9,6 +10,7 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSslSocket>
 #include <QSysInfo>
@@ -31,13 +33,31 @@ Host Host::detect()
 #else
     host.os = QStringLiteral("other");
 #endif
-    // A release carries one AppImage, for x86-64.
-    if (QSysInfo::buildCpuArchitecture() == QLatin1String("x86_64")) host.appImage = qEnvironmentVariable("APPIMAGE");
     host.feed = QUrl(QStringLiteral("https://api.github.com/repos/Matinthereal/lumen-notes/releases/latest"));
     const QString feed = qEnvironmentVariable("LUMEN_UPDATE_URL");
     if (!feed.isEmpty()) host.feed = QUrl::fromUserInput(feed, QDir::currentPath());
+    // A release carries one AppImage, for x86-64.
+    if (QSysInfo::buildCpuArchitecture() == QLatin1String("x86_64")) {
+        const QString image = qEnvironmentVariable("APPIMAGE");
+        host.appImage = feed.isEmpty() ? ownAppImage(image, qEnvironmentVariable("APPDIR"), QCoreApplication::applicationFilePath()) : image;
+    }
     host.downloadDir = QDir::tempPath();
     return host;
+}
+
+QString ownAppImage(const QString &appImage, const QString &appDir, const QString &program)
+{
+    if (appImage.isEmpty() || appDir.isEmpty()) return {};
+    const QString mount = QFileInfo(appDir).canonicalFilePath(), running = QFileInfo(program).canonicalFilePath();
+    return !mount.isEmpty() && running.startsWith(mount + QLatin1Char('/')) ? appImage : QString();
+}
+
+QString withoutPictures(QString markdown)
+{
+    // "![alt](url)" and "![alt][ref]", then the tag GitHub's editor writes for a resized picture.
+    static const QRegularExpression inlined(QStringLiteral(R"(!\[([^\]]*)\](\([^)]*\)|\[[^\]]*\]))"));
+    static const QRegularExpression tag(QStringLiteral("<img\\b[^>]*>"), QRegularExpression::CaseInsensitiveOption);
+    return markdown.replace(inlined, QStringLiteral("\\1")).remove(tag);
 }
 
 Release parseRelease(const QByteArray &json)
@@ -49,7 +69,7 @@ Release parseRelease(const QByteArray &json)
     if (tag.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) tag.remove(0, 1);
     if (QVersionNumber::fromString(tag).isNull()) return r;
     r.version = tag;
-    r.notes = o.value("body").toString();
+    r.notes = withoutPictures(o.value("body").toString());
     r.page = QUrl(o.value("html_url").toString());
     for (const QJsonValue &v : o.value("assets").toArray()) {
         const QJsonObject a = v.toObject();
@@ -116,10 +136,27 @@ QByteArray sha256Of(const QString &path)
     return hash.result().toHex();
 }
 
+QString checkFailure(const QUrl &feed, bool tlsAvailable, int httpStatus)
+{
+    // Qt for Android can come without a TLS backend; then no https request can be made at all.
+    if (feed.scheme() == QLatin1String("https") && !tlsAvailable)
+        return QStringLiteral("This build of Lumen cannot make a secure connection. New releases are on its GitHub page.");
+    if (httpStatus == 403 || httpStatus == 429) return QStringLiteral("GitHub is turning requests away just now. Try again in an hour.");
+    if (httpStatus >= 400) return QStringLiteral("GitHub answered with an error (%1). Try again later.").arg(httpStatus);
+    return QStringLiteral("Could not reach GitHub. Are you online?");
+}
+
 }
 
 Updater::Updater(Library &lib, update::Host host, QObject *parent)
-    : QObject(parent), m_lib(lib), m_host(std::move(host)), m_install(update::installFor(m_host)) {}
+    : QObject(parent), m_lib(lib), m_host(std::move(host)), m_install(update::installFor(m_host))
+{
+    // The installer the last update ran is still in the temp folder, and nothing else clears it.
+    if (m_install == update::Install::WindowsSetup) {
+        QDir dir(m_host.downloadDir);
+        for (const QString &old : dir.entryList({QStringLiteral("Lumen-Setup-*.exe")}, QDir::Files)) dir.remove(old);
+    }
+}
 
 Updater::~Updater()
 {
@@ -161,6 +198,8 @@ void Updater::check() { fetch(true); }
 void Updater::fetch(bool manual)
 {
     // An install under way, or one waiting for its restart, is not to be forgotten for a check.
+    // Asking by hand brings the Restart banner back if Later put it away.
+    if (m_stage == QLatin1String("ready") && manual && !m_offered) { m_offered = true; emit changed(); }
     if (m_reply || m_stage == QLatin1String("downloading") || m_stage == QLatin1String("ready")) return;
     if (m_host.feed.isEmpty()) {
         if (manual) set({}, QStringLiteral("Updates are not checked during a test run."));
@@ -183,13 +222,7 @@ void Updater::checked(QNetworkReply *reply, bool manual)
     const QString before = m_status;
     if (reply->error() != QNetworkReply::NoError) {
         const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        // Qt for Android can come without a TLS backend; then no https request can be made at all.
-        const QString why = m_host.feed.scheme() == QLatin1String("https") && !QSslSocket::supportsSsl()
-                                ? QStringLiteral("This build of Lumen cannot make a secure connection. New releases are on its GitHub page.")
-                          : http == 403 || http == 429 ? QStringLiteral("GitHub is turning requests away just now. Try again in an hour.")
-                          : http >= 400 ? QStringLiteral("GitHub answered with an error (%1). Try again later.").arg(http)
-                          : QStringLiteral("Could not reach GitHub. Are you online?");
-        set({}, manual ? why : before);
+        set({}, manual ? update::checkFailure(m_host.feed, QSslSocket::supportsSsl(), http) : before);
         return;
     }
     const update::Release found = update::parseRelease(reply->readAll());
@@ -219,14 +252,17 @@ void Updater::skip()
 {
     if (!available()) return;
     m_lib.setSetting("update.skipped", m_release.version);
-    later();
+    m_offered = false;
+    // Said in Settings too, where the toast with Undo is out of sight behind the page and Check
+    // for updates is what brings the version back.
+    set(m_stage, QStringLiteral("Lumen %1 will not be offered again.").arg(m_release.version));
 }
 
 void Updater::unskip()
 {
     m_lib.setSetting("update.skipped", "");
     m_offered = available();
-    emit changed();
+    set(m_stage, available() ? QStringLiteral("Lumen %1 is available.").arg(m_release.version) : m_status);
 }
 
 void Updater::openReleasePage()
@@ -333,6 +369,11 @@ void Updater::cancel()
     m_file->cancelWriting();
     m_file.reset();
     set({}, QStringLiteral("Lumen %1 is available.").arg(m_release.version));
+}
+
+void Updater::launchFailed()
+{
+    if (m_stage == QLatin1String("ready")) fail(QStringLiteral("The installer could not be started. Nothing was changed."));
 }
 
 void Updater::restart()

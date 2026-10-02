@@ -15,7 +15,8 @@ class QNetworkReply;
 class QSaveFile;
 
 // Finding out about a newer Lumen and getting it. The only thing sent is one GET to GitHub for the
-// newest release; nothing about the library or the machine goes with it.
+// newest release; nothing about the library or the machine goes with it. Pictures in the release
+// notes are left out, because showing them would fetch them from wherever they are kept.
 namespace update {
 
 struct Asset {
@@ -27,7 +28,7 @@ struct Asset {
 
 struct Release {
     QString version;         // "0.3.0", without the tag's "v"; empty when the answer was not a release
-    QString notes;           // the release's text, markdown
+    QString notes;           // the release's text, markdown, without its pictures
     QUrl page;
     QList<Asset> assets;
     bool valid() const { return !version.isEmpty(); }
@@ -44,13 +45,20 @@ enum class Install {
 struct Host {
     QString version;         // the running one
     QString os;              // android | ios | windows | linux | other
-    QString appImage;        // $APPIMAGE, when Lumen runs from one
+    QString appImage;        // $APPIMAGE, when Lumen runs from it (ownAppImage)
     QUrl feed;               // empty: never ask (test runs)
     QString downloadDir;     // where the Windows installer is put
-    static Host detect();    // LUMEN_UPDATE_URL replaces the feed, for tests and screenshots
+    // LUMEN_UPDATE_URL replaces the feed, for tests and screenshots; with it, $APPIMAGE is taken at
+    // its word, so the swap can be run on a stand-in file.
+    static Host detect();
 };
 
 Release parseRelease(const QByteArray &json);
+// Markdown with its pictures taken out: "![alt](url)" leaves its alt text, an <img> tag nothing.
+QString withoutPictures(QString markdown);
+// $APPIMAGE is inherited by everything an AppImage starts, a terminal's shell included, so it is
+// only ours when this program runs from that image's mount ($APPDIR). Empty when it is not.
+QString ownAppImage(const QString &appImage, const QString &appDir, const QString &program);
 // "v0.3.0" against "0.2.0". A tag that is no version, or carries a suffix ("-rc1"), is never newer.
 bool isNewer(const QString &tag, const QString &running);
 Install installFor(const Host &host);
@@ -58,6 +66,8 @@ Install installFor(const Host &host);
 std::optional<Asset> assetFor(const Release &release, Install install);
 bool checkDue(qint64 lastCheckSecs, qint64 nowSecs);        // the automatic check: once a day
 QByteArray sha256Of(const QString &path);                   // hex; empty when the file cannot be read
+// What a check asked for by hand says when it fails. httpStatus is 0 when GitHub was never reached.
+QString checkFailure(const QUrl &feed, bool tlsAvailable, int httpStatus);
 
 }
 
@@ -96,13 +106,16 @@ public:
     // when it fails, and nothing about a version that was skipped.
     void checkOnLaunch();
     Q_INVOKABLE void check();          // on demand: always asks, always says what came of it
-    Q_INVOKABLE void later();          // put the banner away until the next automatic check
-    Q_INVOKABLE void skip();           // and never mention this version again
+    Q_INVOKABLE void later();          // put the banner away until the next check
+    Q_INVOKABLE void skip();           // and never mention this version again, unless asked
     Q_INVOKABLE void unskip();
     Q_INVOKABLE void install();
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void restart();
     Q_INVOKABLE void openReleasePage();
+    // What restartRequested named could not be started (a refused UAC prompt, say): the banner
+    // says so and offers the download again, instead of waiting for an installer that never came.
+    void launchFailed();
 
 signals:
     void changed();

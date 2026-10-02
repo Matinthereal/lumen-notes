@@ -2305,6 +2305,30 @@ int uitest::run(QQuickWindow *win, QObject *root)
         }
         shot(win, QStringLiteral("update-banner"));
 
+        // On a handwritten page it keeps out of the corner the writing hand rests in, and out of
+        // the pen's way: a banner left up is a patch of page that cannot be written on.
+        ensurePage();
+        spin(300);
+        QQuickItem *area = findOne(win, QStringLiteral("pageArea"));
+        QQuickItem *banner = said ? said->parentItem()->parentItem() : nullptr;
+        if (area && banner) {
+            const qreal bannerMid = banner->mapToScene(QPointF(banner->width() / 2, 0)).x();
+            const qreal areaMid = area->mapToScene(QPointF(area->width() / 2, 0)).x();
+            r.check("over a handwritten page the banner is on the free-hand side",
+                    bannerUp() && (root->property("leftHanded").toBool() ? bannerMid > areaMid : bannerMid < areaMid),
+                    QStringLiteral("banner %1, page %2").arg(bannerMid).arg(areaMid));
+            const QPointF from = area->mapToScene(QPointF(area->width() / 2, area->height() / 2));
+            penAt(win, QEvent::TabletPress, from, Qt::LeftButton);
+            for (int i = 1; i <= 4; ++i) { penAt(win, QEvent::TabletMove, from + QPointF(6 * i, 0), Qt::LeftButton); spin(16); }
+            r.check("and hides while the pen is writing", !bannerUp() && updater->offered());
+            penAt(win, QEvent::TabletRelease, from + QPointF(24, 0), Qt::NoButton);
+            penAway(win);
+            r.check("and comes back when the pen lifts", bannerUp());
+            shot(win, QStringLiteral("update-banner-ink"));
+        } else {
+            r.check("found the page area and the banner", false);
+        }
+
         r.check("What's new opens the notes", press("updateNotes") && sheetUp());
         QQuickItem *notes = findOne(win, QStringLiteral("whatsNewNotes"));
         r.check("and they are the release's own", notes && notes->property("text").toString().contains(QLatin1String("worth having")));
@@ -2328,7 +2352,10 @@ int uitest::run(QQuickWindow *win, QObject *root)
         updater->checkOnLaunch();
         waitFor([&] { return updater->stage().isEmpty(); }, 3000);
         spin(150);
-        r.check("a skipped version is not offered at the next launch", updater->available() && !bannerUp());
+        // lastCheck moving on is what shows the launch check ran: skip() alone already hides the banner.
+        r.check("a skipped version is not offered at the next launch",
+                updater->available() && !bannerUp() && setting(QStringLiteral("update.lastCheck")) != QLatin1String("0"),
+                setting(QStringLiteral("update.lastCheck")));
 
         // Settings › Updates: asking by hand says what it found, and the daily check has a switch.
         root->setProperty("settingsVisible", true);

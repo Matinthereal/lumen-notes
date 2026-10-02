@@ -39,6 +39,24 @@ private slots:
         QCOMPARE(files, (QList<QUrl>{QUrl::fromLocalFile(pdf), QUrl::fromLocalFile(book)}));
     }
 
+    // Restarting into an updated Lumen: once this one has stopped listening, the next launch must
+    // become the running Lumen, not hand over to one that is on its way out.
+    void aClosedGuardIsNotHandedTo()
+    {
+        QTemporaryDir library;
+        SingleInstance leaving(library.path());
+        QVERIFY(leaving.listen());
+        leaving.close();
+        SingleInstance next(library.path());
+        QVERIFY(!next.handOver({}, {}, 500));
+        QVERIFY(next.listen());
+        SingleInstance third(library.path());
+        std::atomic<int> handed{-1};
+        std::thread launch([&] { handed = third.handOver({}, {}, 2000) ? 1 : 0; });
+        QTRY_COMPARE_WITH_TIMEOUT(handed.load(), 1, 5000);     // and it is the one later launches find
+        launch.join();
+    }
+
     // A second launch on the same library hands its files (and the launcher's activation token) to
     // the first and is told to exit; a launch on another library is not.
     void secondLaunchHandsOver()

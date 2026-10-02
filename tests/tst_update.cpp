@@ -149,6 +149,53 @@ private slots:
         host.os = "android"; host.appImage = image; QCOMPARE(update::installFor(host), Install::AndroidApk);
     }
 
+    // $APPIMAGE reaches every program an AppImage starts. Only the Lumen running from that image's
+    // mount may replace the file; one started from another AppImage's terminal must leave it alone.
+    void anInheritedAppImageIsNotOurs()
+    {
+        QTemporaryDir dir;
+        const QString image = dir.path() + "/Other.AppImage", mount = dir.path() + "/mount", elsewhere = dir.path() + "/usr/bin";
+        QVERIFY(QDir().mkpath(mount + "/usr/bin") && QDir().mkpath(elsewhere));
+        writeFile(image, "another program");
+        writeFile(mount + "/usr/bin/lumen", "x");
+        writeFile(elsewhere + "/lumen", "x");
+        QCOMPARE(update::ownAppImage(image, mount, mount + "/usr/bin/lumen"), image);
+        QCOMPARE(update::ownAppImage(image, mount + "/", mount + "/usr/bin/../bin/lumen"), image);
+        QCOMPARE(update::ownAppImage(image, mount, elsewhere + "/lumen"), QString());      // cmake --install, from that terminal
+        QCOMPARE(update::ownAppImage(image, QString(), mount + "/usr/bin/lumen"), QString());
+        QCOMPARE(update::ownAppImage(image, dir.path() + "/unmounted", elsewhere + "/lumen"), QString());
+        QCOMPARE(update::ownAppImage(image, dir.path() + "/mou", mount + "/usr/bin/lumen"), QString());    // a prefix is not a parent
+        QCOMPARE(update::ownAppImage(QString(), mount, mount + "/usr/bin/lumen"), QString());
+    }
+
+    // Showing a picture would fetch it, and the release check is the only request Lumen makes.
+    void notesComeWithoutTheirPictures()
+    {
+        QCOMPARE(update::withoutPictures("See ![the new sheet](https://example.invalid/a.png) here"), QStringLiteral("See the new sheet here"));
+        QCOMPARE(update::withoutPictures("![](https://example.invalid/a.png \"title\")"), QString());
+        QCOMPARE(update::withoutPictures("![shot][one]\n\n[one]: https://example.invalid/a.png"), QStringLiteral("shot\n\n[one]: https://example.invalid/a.png"));
+        QCOMPARE(update::withoutPictures("a <img src=\"https://example.invalid/a.png\" width=\"400\"> b <IMG SRC='x'/> c"), QStringLiteral("a  b  c"));
+        QCOMPARE(update::withoutPictures("[![build](https://example.invalid/badge.svg)](https://example.invalid/ci)"), QStringLiteral("[build](https://example.invalid/ci)"));
+        const QString plain = QStringLiteral("## New\n- **Updates.** [the guide](https://example.invalid/guide) and `![not code]`");
+        QCOMPARE(update::withoutPictures(plain), plain);
+        const update::Release r = update::parseRelease("{\"tag_name\": \"v0.3.0\", \"body\": \"New: ![shot](https://example.invalid/a.png)\"}");
+        QCOMPARE(r.notes, QStringLiteral("New: shot"));
+    }
+
+    void whatAFailedCheckSays()
+    {
+        const QUrl github("https://api.github.com/repos/Matinthereal/lumen-notes/releases/latest");
+        QCOMPARE(update::checkFailure(github, true, 0), QStringLiteral("Could not reach GitHub. Are you online?"));
+        QCOMPARE(update::checkFailure(github, true, 403), QStringLiteral("GitHub is turning requests away just now. Try again in an hour."));
+        QCOMPARE(update::checkFailure(github, true, 429), QStringLiteral("GitHub is turning requests away just now. Try again in an hour."));
+        QCOMPARE(update::checkFailure(github, true, 500), QStringLiteral("GitHub answered with an error (500). Try again later."));
+        // No TLS backend: nothing was ever sent, whatever else is the matter.
+        const QString noTls = QStringLiteral("This build of Lumen cannot make a secure connection. New releases are on its GitHub page.");
+        QCOMPARE(update::checkFailure(github, false, 0), noTls);
+        QCOMPARE(update::checkFailure(github, false, 403), noTls);
+        QCOMPARE(update::checkFailure(QUrl("file:///tmp/latest.json"), false, 0), QStringLiteral("Could not reach GitHub. Are you online?"));
+    }
+
     void onceADay()
     {
         const qint64 now = 1790000000;
@@ -252,9 +299,11 @@ private slots:
             u.skip();
             QVERIFY(!u.offered());
             QCOMPARE(b.lib->setting("update.skipped", ""), QStringLiteral("0.3.0"));
+            QCOMPARE(u.status(), QStringLiteral("Lumen 0.3.0 will not be offered again."));
             u.unskip();                                       // the toast's Undo
             QVERIFY(u.offered());
             QCOMPARE(b.lib->setting("update.skipped", ""), QString());
+            QCOMPARE(u.status(), QStringLiteral("Lumen 0.3.0 is available."));
             u.skip();
         }
         b.lib->setSetting("update.lastCheck", "0");
@@ -349,10 +398,58 @@ private slots:
 
         u.check();                                            // a check now must not forget the restart
         QCOMPARE(u.stage(), QStringLiteral("ready"));
+        u.later();                                            // Later on "Restart now" hides the only way to restart
+        QVERIFY(!u.offered());
+        b.lib->setSetting("update.lastCheck", "0");
+        u.checkOnLaunch();
+        QVERIFY(!u.offered());
+        u.check();                                            // asking by hand brings it back
+        QVERIFY(u.offered());
+        QCOMPARE(u.stage(), QStringLiteral("ready"));
+        QCOMPARE(u.status(), QStringLiteral("Lumen 0.3.0 is in place. Restart to use it."));
         u.restart();
         QCOMPARE(restarts.count(), 1);
         QCOMPARE(restarts.first().at(0).toString(), image);
         QCOMPARE(restarts.first().at(1).toStringList(), QStringList());
+    }
+
+    // The stop button on the banner's progress: back to the offer, with nothing changed or left behind.
+    void aStoppedDownloadChangesNothing()
+    {
+        Bench b;
+        const QString image = b.dir.path() + "/apps/Lumen-x86_64.AppImage";
+        QDir().mkpath(b.dir.path() + "/apps");
+        writeFile(image, "the old lumen");
+        b.host.os = "linux";
+        b.host.appImage = image;
+        const QByteArray fresh = QByteArray("the new lumen\n").repeated(40000);
+        const QByteArray sum = QCryptographicHash::hash(fresh, QCryptographicHash::Sha256).toHex();
+        b.publish("v0.3.0", {b.offer("Lumen-x86_64.AppImage", fresh, sum)});
+
+        Updater u(*b.lib, b.host);
+        QSignalSpy restarts(&u, &Updater::restartRequested);
+        u.check();
+        QTRY_VERIFY(u.available());
+        u.later();
+        u.cancel();                                           // not downloading: nothing to stop
+        QVERIFY(!u.offered());
+        u.install();
+        QCOMPARE(u.stage(), QStringLiteral("downloading"));
+        u.cancel();
+        QCOMPARE(u.stage(), QString());
+        QCOMPARE(u.status(), QStringLiteral("Lumen 0.3.0 is available."));
+        QVERIFY(u.available());
+        QTest::qWait(200);                                    // nothing of the stopped download arrives late
+        QCOMPARE(u.stage(), QString());
+        QCOMPARE(readFile(image), QByteArray("the old lumen"));
+        QCOMPARE(QDir(b.dir.path() + "/apps").entryList(QDir::Files | QDir::Hidden), QStringList{"Lumen-x86_64.AppImage"});
+        u.restart();
+        QCOMPARE(restarts.count(), 0);
+
+        u.install();                                          // and Update works again afterwards
+        QTRY_VERIFY(settled(u));
+        QCOMPARE(u.stage(), QStringLiteral("ready"));
+        QCOMPARE(readFile(image), fresh);
     }
 
     void aDownloadThatIsNotTheReleaseIsRefused_data()
@@ -400,9 +497,15 @@ private slots:
         const QByteArray setup = "MZ the installer";
         const QByteArray sum = QCryptographicHash::hash(setup, QCryptographicHash::Sha256).toHex();
         b.publish("v0.3.0", {b.offer("Lumen-Setup-0.3.0.exe", setup, sum)});
+        // The installer an earlier update ran is cleared away; nothing else in the folder is.
+        writeFile(b.host.downloadDir + "/Lumen-Setup-0.2.0.exe", "MZ last time");
+        writeFile(b.host.downloadDir + "/Other-Setup-1.0.exe", "MZ not ours");
         Updater u(*b.lib, b.host);
+        QCOMPARE(QDir(b.host.downloadDir).entryList(QDir::Files), QStringList{"Other-Setup-1.0.exe"});
         QVERIFY(u.installsItself());
         QSignalSpy restarts(&u, &Updater::restartRequested);
+        u.launchFailed();                                     // nothing was started: nothing failed
+        QCOMPARE(u.stage(), QString());
         u.check();
         QTRY_VERIFY(u.available());
         u.install();
@@ -414,9 +517,19 @@ private slots:
         QVERIFY(flags.contains("/SILENT"));
         QVERIFY(flags.contains("/RELAUNCH=1"));
 
+        // A refused UAC prompt: the installer never started. Say so, and let Update be pressed again.
+        QCOMPARE(u.stage(), QStringLiteral("ready"));
+        u.launchFailed();
+        QCOMPARE(u.stage(), QStringLiteral("failed"));
+        QCOMPARE(u.status(), QStringLiteral("The installer could not be started. Nothing was changed."));
+        QVERIFY(u.offered());
+        u.install();                                          // Try again
+        QTRY_COMPARE(restarts.count(), 2);
+        QCOMPARE(u.stage(), QStringLiteral("ready"));
+        QCOMPARE(readFile(program), setup);
+
         // The wrong bytes are never run.
         b.publish("v0.3.1", {b.offer("Lumen-Setup-0.3.1.exe", "MZ something else", sum)});
-        u.cancel();                                           // not downloading: a no-op
         Updater again(*b.lib, b.host);
         QSignalSpy none(&again, &Updater::restartRequested);
         again.check();
