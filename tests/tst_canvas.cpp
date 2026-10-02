@@ -3,8 +3,11 @@
 #include <QSignalSpy>
 #include <QTouchEvent>
 #include <QtTest>
+#include <QTemporaryDir>
+#include <memory>
 #include <QWindow>
 #include "canvas/inkcanvas.h"
+#include "media/picturepixels.h"
 #include "input/stylustilt.h"
 #include "input/tableteventfilter.h"
 
@@ -342,6 +345,107 @@ private slots:
         for (quint64 t = 2000; t < 2400; t += 4) recent.record(t, 0, 0);    // 100 samples, more than it keeps
         QVERIFY(!recent.find(1000, &got));                          // long gone: it keeps only the last few
         QVERIFY(recent.find(2396, &got));
+    }
+    // ---- pictures: what they are drawn from (picturepixels.h). The complaint was "low quality,
+    // pixelated": every picture was drawn from one texture of at most 2560 px, shrunk by the
+    // graphics card between two mipmap levels, however far in or out the page was zoomed.
+
+    // Shrunk, a picture gets a texture with one texel for each screen pixel, on whole pixels.
+    void aShrunkPictureIsCutToTheScreensOwnPixels() {
+        const QRect view(0, 0, 1600, 900);
+        const picturepixels::Sharp s = picturepixels::plan(QSize(1920, 1080), QRectF(300.4, 120.6, 555.8, 312.6), view);
+        QVERIFY(s.valid());
+        QCOMPARE(s.device, QRectF(300, 121, 556, 312));
+        QCOMPARE(s.pixels, QSize(556, 312));
+        QCOMPARE(s.source, QRectF(0, 0, 1920, 1080));
+        QVERIFY(s.whole);
+        // Half off the left of the screen: only what is in view is cut, from the matching pixels.
+        const picturepixels::Sharp part = picturepixels::plan(QSize(1920, 1080), QRectF(-278, 100, 556, 312), view);
+        QCOMPARE(part.device, QRectF(0, 100, 278, 312));
+        QCOMPARE(part.source, QRectF(960, 0, 960, 1080));
+        QVERIFY(!part.whole);
+        QVERIFY(!picturepixels::plan(QSize(1920, 1080), QRectF(2000, 100, 556, 312), view).valid());   // out of view
+    }
+    // Enlarged past what the 2560 px texture holds, the part in view comes from the file's own pixels.
+    void anEnlargedPhotoIsCutFromItsOwnPixels() {
+        const QRect view(0, 0, 1600, 900);
+        const picturepixels::Sharp s = picturepixels::plan(QSize(4000, 3000), QRectF(-2000, -1500, 8000, 6000), view);
+        QVERIFY(s.valid());
+        QCOMPARE(s.source, QRectF(1000, 750, 800, 450));
+        QCOMPARE(s.pixels, QSize(800, 450));
+        QCOMPARE(s.device, QRectF(0, 0, 1600, 900));
+        // A picture the base texture holds every pixel of has nothing sharper to offer.
+        QVERIFY(!picturepixels::plan(QSize(1920, 1080), QRectF(-2000, -1500, 8000, 4500), view).valid());
+    }
+    // One-pixel detail survives the shrink: a 2 px stripe pattern at half size is 1 px stripes, not grey.
+    void shrinkingKeepsFineDetail() {
+        QImage stripes(2000, 40, QImage::Format_RGB32);
+        for (int y = 0; y < stripes.height(); ++y)
+            for (int x = 0; x < stripes.width(); ++x) stripes.setPixel(x, y, (x / 2) % 2 ? qRgb(255, 255, 255) : qRgb(0, 0, 0));
+        const picturepixels::Sharp s = picturepixels::plan(stripes.size(), QRectF(10.3, 5, 1000, 20), QRect(0, 0, 1600, 900));
+        const QImage cut = picturepixels::render(stripes, s);
+        QCOMPARE(cut.size(), QSize(1000, 20));
+        for (int x = 0; x + 1 < cut.width(); ++x)
+            QVERIFY2(std::abs(qGray(cut.pixel(x, 10)) - qGray(cut.pixel(x + 1, 10))) > 250, qPrintable(QString::number(x)));
+    }
+    // The part of a picture that is in view is cut from exactly the pixels a cut of the whole
+    // picture would use there, so nothing shifts when the page is panned.
+    void aCutOfThePartInViewMatchesTheWholeCut() {
+        QImage noise(1920, 1080, QImage::Format_RGB32);
+        quint32 seed = 7;
+        for (int y = 0; y < noise.height(); ++y)
+            for (int x = 0; x < noise.width(); ++x) { seed = seed * 1664525u + 1013904223u; const int v = seed >> 24; noise.setPixel(x, y, qRgb(v, v, v)); }
+        const QRectF device(-33.7, -18.4, 1667.4, 937.9);
+        const picturepixels::Sharp whole = picturepixels::plan(noise.size(), device, QRect(-100, -100, 2000, 1200));
+        const picturepixels::Sharp part = picturepixels::plan(noise.size(), device, QRect(0, 0, 1600, 900));
+        QVERIFY(whole.whole && !part.whole);
+        const QImage a = picturepixels::render(noise, whole), b = picturepixels::render(noise, part);
+        QCOMPARE(b.size(), QSize(1600, 900));
+        const QPoint shift = part.device.topLeft().toPoint() - whole.device.topLeft().toPoint();
+        int worst = 0;
+        for (int y = 0; y < b.height(); y += 7)
+            for (int x = 0; x < b.width(); x += 5) worst = std::max(worst, std::abs(qGray(a.pixel(x + shift.x(), y + shift.y())) - qGray(b.pixel(x, y))));
+        QVERIFY2(worst <= 1, qPrintable(QString::number(worst)));
+    }
+    // The canvas asks for that texture once the view has stopped moving, and again for every zoom.
+    void theCanvasCutsAPictureForTheViewItSettlesOn() {
+        QTemporaryDir dir;
+        const QString photo = dir.filePath("photo.png");
+        QImage big(4000, 3000, QImage::Format_RGB32);
+        big.fill(qRgb(40, 90, 160));
+        QVERIFY(big.save(photo, "PNG", 100));
+        std::unique_ptr<InkCanvas> c(make());
+        c->setZoom(0.5); c->setPan(QPointF(10.2, 20.7));
+        c->setImages({QVariantMap{{"id", 7}, {"path", photo}, {"x", 100.0}, {"y", 50.0}, {"w", 400.0}, {"h", 300.0}}});
+        QTRY_COMPARE_WITH_TIMEOUT(c->pictureTexture(7).value("sharpWidth").toInt(), 200, 8000);
+        QVariantMap t = c->pictureTexture(7);
+        QCOMPARE(t.value("sourceWidth").toInt(), 4000);
+        QCOMPARE(t.value("sharpHeight").toInt(), 150);
+        // 400 page units at half zoom is 200 screen pixels, and it sits on whole ones.
+        const QRectF onScreen(c->toScreen(t.value("sharpRect").toRectF().topLeft()), t.value("sharpRect").toRectF().size() * c->zoom());
+        QVERIFY(qAbs(onScreen.x() - qRound(onScreen.x())) < 1e-6 && qAbs(onScreen.y() - qRound(onScreen.y())) < 1e-6);
+        QCOMPARE(onScreen.size(), QSizeF(200, 150));
+
+        // Panned, the cut stays up (it is still the right size) and settles onto whole pixels again.
+        c->setPan(QPointF(33.6, 47.1));
+        QCOMPARE(c->pictureTexture(7).value("sharpWidth").toInt(), 200);
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(c->toScreen(c->pictureTexture(7).value("sharpRect").toRectF().topLeft()).x() - 84.0) < 1e-6, 4000);
+        QCOMPARE(c->pictureTexture(7).value("sharpWidth").toInt(), 200);
+
+        // Zoomed right in, the old cut goes at once (stretched, it would look worse than no cut)…
+        c->setZoom(16); c->setPan(QPointF(-3000, -2000));
+        QCOMPARE(c->pictureTexture(7).value("sharpWidth").toInt(), 0);
+        // …and the new one holds more of the photo per page unit than the 2560 px texture can.
+        QTRY_VERIFY_WITH_TIMEOUT(c->pictureTexture(7).value("sharpWidth").toInt() > 0, 8000);
+        t = c->pictureTexture(7);
+        QVERIFY2(t.value("sharpWidth").toDouble() / t.value("sharpRect").toRectF().width() > 2560.0 / 400.0 * 1.5,
+                 qPrintable(QString::number(t.value("sharpWidth").toDouble() / t.value("sharpRect").toRectF().width())));
+        QVERIFY(t.value("sharpWidth").toInt() <= 800);          // never more than the view needs
+
+        // Moving the picture moves the cut with it rather than leaving it behind.
+        c->setImages({QVariantMap{{"id", 7}, {"path", photo}, {"x", 180.0}, {"y", 50.0}, {"w", 400.0}, {"h", 300.0}}});
+        QCOMPARE(c->pictureTexture(7).value("sharpWidth").toInt(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(c->pictureTexture(7).value("sharpWidth").toInt() > 0, 8000);
     }
 };
 QTEST_MAIN(TstCanvas)

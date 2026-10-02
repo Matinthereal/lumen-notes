@@ -25,7 +25,7 @@ Rectangle {
             ["Two-finger double-tap", "Undo"],
             ["Ctrl+Z · Ctrl+Shift+Z", "Undo · redo"],
             ["Ctrl+A · Delete", "Select everything · delete the selection"],
-            ["Ctrl+C · Ctrl+X · Ctrl+V", "Copy · cut · paste (a picture on the clipboard lands as a picture)"],
+            ["Ctrl+C · Ctrl+X · Ctrl+V", "Copy · cut · paste — ink, or the picture in hand; a picture or picture file on the clipboard lands as a picture"],
             ["Hold the pen still", "Snap the shape you just drew"]
         ]},
         { title: "Pages", keys: [

@@ -27,6 +27,7 @@ qt_add_library(lumen_core STATIC
     src/ui/lateximageprovider.h    src/ui/lateximageprovider.cpp
     src/text/textblocks.h          src/text/textblocks.cpp
     src/media/images.h             src/media/images.cpp
+    src/media/picturepixels.h      src/media/picturepixels.cpp
     src/media/shapes.h             src/media/shapes.cpp
     src/maths/mathsservice.h       src/maths/mathsservice.cpp
     src/audio/audioservice.h       src/audio/audioservice.cpp

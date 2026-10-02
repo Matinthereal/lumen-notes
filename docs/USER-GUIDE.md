@@ -46,8 +46,9 @@ Hold ⌫ or an arrow to repeat. Settings → Tablet mode chooses when it appears
 
 | Do | How |
 |---|---|
-| Add a picture | Ctrl+Shift+G, the toolbar's picture button, Ctrl+V with an image on the clipboard, or drag files onto the page from the file manager. It lands where you are looking (or where you dropped it), sized to fit, the right way up for a phone photo, and selected |
-| Move or resize a picture | a new picture is selected already; otherwise switch to the lasso (4). Drag it to move, pull any corner to resize (the shape is kept). The bar under it has **Trim**, **Turn**, **Reset**, **Delete** and **Done** — Done gives you back the pen. With a pen in hand you write *over* pictures |
+| Add a picture | the toolbar's picture button (**Choose a file…** or **Paste**), Ctrl+Shift+G, Ctrl+V, or drag it onto the page — files from the file manager, or a picture straight out of a browser (Lumen fetches it, up to 40 MB). Ctrl+V takes a copied picture, a screenshot, or picture files copied in the file manager. It lands where you are looking (or where you dropped it), sized to fit, the right way up for a phone photo, and selected; **Undo** on the toast takes it off again. Pictures are kept exactly as they came and drawn from their own pixels at every zoom. They go on handwritten pages; a typed page says so |
+| Copy, cut or duplicate a picture | select it, then **Copy** in the bar under it, or Ctrl+C / Ctrl+X. Paste it on another page (it keeps its trim, turn and size) or into another program (at the file's full resolution). Double-tap it for **Duplicate** |
+| Move or resize a picture | a new picture is selected already; otherwise switch to the lasso (4). Drag it to move, pull any corner to resize (the shape is kept). The bar under it has **Trim**, **Turn**, **Reset**, **Copy**, **Delete** and **Done** — Done gives you back the pen. With a pen in hand you write *over* pictures |
 | Paper colour | the "paper" pill: white, cream, cool grey or charcoal, per page. The page keeps its own colour, so ink written under one theme stays readable under the other |
 | Page style | the style pill: dotted, lined, squared, **2 mm graph paper**, **isometric**, **music staves**, Cornell, plain |
 | Cross something out | scribble over it with the pen — a real back-and-forth rubs out what it crosses (a zig-zag drawing is left alone) |

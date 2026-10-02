@@ -14,6 +14,7 @@ Rectangle {
     signal presentRequested()
     signal exportPageRequested()
     signal pictureRequested()
+    signal picturePasteRequested()
     signal presetsChanged()
     signal paperChosen(string colour)
     signal penColourChosen(string colour)     // Main keeps it, per kind of paper, across launches
@@ -125,7 +126,12 @@ Rectangle {
             id: shapeButton
             onClicked: { if (canvas.tool === "shape") shapeMenu.openFrom(shapeButton); else canvas.tool = "shape" }
         }
-        IconButton { icon: "insert-image"; tip: "Add a picture (Ctrl+Shift+G) — or drop one on the page"; onClicked: bar.pictureRequested() }
+        IconButton {
+            id: pictureButton
+            objectName: "pictureButton"
+            icon: "insert-image"; tip: Ui.keys("Add a picture: choose a file (Ctrl+Shift+G) or paste one (Ctrl+V) — or drop it on the page")
+            onClicked: pictureMenu.openFrom(pictureButton)
+        }
         Sep {}
 
         // Favourite pens (ADR mynotes-003): a tap takes up a stored pen or highlighter; holding one
@@ -261,6 +267,15 @@ Rectangle {
             { label: "Present this section (F5)", icon: "view-presentation", action: () => bar.presentRequested() },
             { label: "Export this page as PDF", icon: "document-export", action: () => bar.exportPageRequested() },
             { label: "Export this section as PDF", icon: "document-export", action: () => bar.exportRequested() }
+        ]
+    }
+    ActionSheet {
+        id: pictureMenu
+        parent: Overlay.overlay
+        title: "Add a picture"
+        items: [
+            { label: "Choose a file…", icon: "document-open", action: () => bar.pictureRequested() },
+            { label: "Paste", icon: "edit-paste", action: () => bar.picturePasteRequested() }
         ]
     }
     ActionSheet {

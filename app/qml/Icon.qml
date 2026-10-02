@@ -41,6 +41,7 @@ Item {
         case "edit-redo":       return "M 15 7 L 20 11 L 15 15 M 20 11 L 10 11 A 5 5 0 0 0 10 21 L 13 21"
         case "overflow-menu":   return "M 12 5.5 A 1.2 1.2 0 1 1 11.9 5.5 M 12 11.5 A 1.2 1.2 0 1 1 11.9 11.5 M 12 17.5 A 1.2 1.2 0 1 1 11.9 17.5"
         case "edit-delete":     return "M 5 7 L 19 7 M 10 7 L 10 4.5 L 14 4.5 L 14 7 M 6.5 7 L 7.5 20 L 16.5 20 L 17.5 7 M 10 11 L 10 17 M 14 11 L 14 17"
+        case "edit-paste":      return "M 8.5 5 L 6 5 L 6 20 L 18 20 L 18 5 L 15.5 5 M 8.5 3.5 L 15.5 3.5 L 15.5 6.5 L 8.5 6.5 Z M 9 12 L 15 12 M 9 15.5 L 13 15.5"
         case "edit-copy":       return "M 8 8 L 8 4 L 20 4 L 20 16 L 16 16 M 4 8 L 16 8 L 16 20 L 4 20 Z"
         case "list-add":        return "M 12 5 L 12 19 M 5 12 L 19 12"
         // page styles — each shows its own ruling, so the menu reads at a glance

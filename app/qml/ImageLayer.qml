@@ -39,37 +39,124 @@ Item {
     // A new picture lands centred where you are looking (or where it was dropped), whole, on the
     // sheet, and selected, with its actions under it. The tool you had comes back with Done.
     property string toolBefore: "pen"
-    function landed(id, what) {
-        if (!id) return false
-        const im = images.image(id)
+    // `ids` is one id or several. However it arrived — picked, pasted, dropped, duplicated — the
+    // toast takes it straight back off.
+    function landed(ids, what) {
+        const placed = (typeof ids === "number" ? [ids] : Array.from(ids)).filter(id => id > 0)
+        if (!placed.length) return false
         if (!board.infinite) {
             const sheet = board.pageSize
-            const nx = Math.max(0, Math.min(im.x, sheet.width - im.w)), ny = Math.max(0, Math.min(im.y, sheet.height - im.h))
-            if (nx !== im.x || ny !== im.y) images.setGeometry(id, nx, ny, im.w, im.h)
+            for (const id of placed) {
+                const im = images.image(id)
+                const nx = Math.max(0, Math.min(im.x, sheet.width - im.w)), ny = Math.max(0, Math.min(im.y, sheet.height - im.h))
+                if (nx !== im.x || ny !== im.y) images.setGeometry(id, nx, ny, im.w, im.h)
+            }
         }
         if (board.tool !== "lasso") toolBefore = board.tool
         board.tool = "lasso"
-        selectedId = id
-        picLayer.toast(what)
+        selectedId = placed[placed.length - 1]
+        picLayer.toastAction(what, "Undo", function() {
+            const inHand = placed.indexOf(picLayer.selectedId) >= 0
+            for (const id of placed) images.remove(id)
+            if (inHand) picLayer.done()
+        })
         return true
     }
+    // "3 pictures added — 1 file was not a picture": what was left behind is said in the same breath.
+    function counted(n, verb, skipped, tooMany) {
+        let said = n === 1 ? "Picture " + verb : n + " pictures " + verb
+        if (tooMany > 0) said += " — " + images.atOnce + " at a time, " + tooMany + " more to go"
+        else if (skipped > 0) said += " — " + (skipped === 1 ? "1 file was not a picture" : skipped + " files were not pictures")
+        return said
+    }
     function insertFile(url) { insertAt([url], board.viewCentrePage()) }
-    function insertAt(urls, at) {
+    function insertAt(urls, at) { insertSome(urls, at, 0) }
+    function insertSome(urls, at, skipped) {
         if (!pageId) { picLayer.toast("Open a page first"); return }
         const b = box()
-        let placed = 0, last = 0
-        for (const url of urls) {
+        const placed = []
+        const taken = Array.from(urls).slice(0, images.atOnce)
+        for (const url of taken) {
             // More than one at once: each a little below and right of the one before, like a fan of cards.
-            const id = images.place(pageId, url, at.x + placed * 28, at.y + placed * 28, b.width, b.height)
-            if (id) { ++placed; last = id }
+            const id = images.place(pageId, url, at.x + placed.length * 28, at.y + placed.length * 28, b.width, b.height)
+            if (id) placed.push(id)
         }
-        if (placed) landed(last, placed === 1 ? "Picture added" : placed + " pictures added")
+        landed(placed, counted(placed.length, "added", skipped, urls.length - taken.length))
     }
+    // True when the clipboard held a picture (pasted or not), so the caller does not paste ink too.
     function pasteClipboard() {
-        if (!pageId) { picLayer.toast("Open a page first"); return true }   // handled: do not also paste ink
+        if (!pageId) { picLayer.toast("Open a page first"); return true }
         if (!images.clipboardHasImage()) return false
         const at = board.viewCentrePage(), b = box()
-        return landed(images.placeClipboard(pageId, at.x, at.y, b.width, b.height), "Picture pasted")
+        const placed = images.pasteClipboard(pageId, at.x, at.y, b.width, b.height)
+        landed(placed, counted(placed.length, "pasted", 0, images.leftOut()))
+        return true
+    }
+    // The paste you reach without a keyboard says so when there is nothing to paste.
+    function pasteOrSay() { if (!pasteClipboard()) picLayer.toast("There is no picture on the clipboard — copy one first") }
+    function copySelected() {
+        if (!selectedId || !images.copy(selectedId)) return false
+        picLayer.toast("Picture copied")
+        return true
+    }
+    function cutSelected() {
+        if (!selectedId || !images.copy(selectedId)) return false
+        const gone = images.image(selectedId)
+        images.remove(selectedId)
+        selectedId = 0
+        picLayer.toastAction("Picture cut", "Undo", function() { images.restore(gone) })
+        return true
+    }
+    function duplicateSelected() {
+        if (!selectedId) return
+        landed(images.duplicate(selectedId), "Picture duplicated")
+    }
+
+    // ---- dropped on the page. A drag can carry a picture three ways, best first: as files (a file
+    // manager), as the picture's own bytes (some browsers), or as a link to it (most browsers).
+    readonly property var dropFormats: ["image/png", "image/jpeg", "image/webp", "image/tiff", "image/gif", "image/bmp"]
+    // Judged by what is in the file, as a paste is: a download with no ending is a picture, and
+    // words saved as .png are not.
+    function localFiles(urls) { return Array.from(urls).filter(u => /^file:/i.test(u.toString())) }
+    function pictureFiles(urls) { return localFiles(urls).filter(u => images.isPictureFile(u)) }
+    function dropFormat(drag) {
+        const offered = Array.from(drag.formats)
+        return dropFormats.find(f => offered.indexOf(f) >= 0) || ""
+    }
+    // The picture a browser's drag is about: its HTML names it, where the link beside it may be the
+    // page the picture points to. Sites write "//host/picture.png" as often as the full address.
+    function pictureLink(drag) {
+        const urls = drag.hasUrls ? Array.from(drag.urls) : []
+        const web = urls.find(u => /^https?:/i.test(u.toString()))
+        const img = drag.hasHtml ? /<img[^>]+src\s*=\s*["']((?:https?:|data:image\/|\/\/)[^"']+)["']/i.exec(drag.html) : null
+        if (!img) return web ? web.toString() : ""
+        const src = img[1].replace(/&amp;/g, "&")
+        return src.startsWith("//") ? (web && /^http:/i.test(web.toString()) ? "http:" : "https:") + src : src
+    }
+    // Only the first few files are opened to look: this runs as the drag comes in over the page.
+    function carriesPictureData(drag) {
+        return dropFormat(drag).length > 0 || (drag.hasUrls && pictureFiles(localFiles(drag.urls).slice(0, 8)).length > 0)
+    }
+    function carriesPicture(drag) { return carriesPictureData(drag) || pictureLink(drag).length > 0 }
+    function takeDrop(drop, at) {
+        if (!pageId) { picLayer.toast("Open a page first"); return false }
+        const urls = drop.hasUrls ? Array.from(drop.urls) : []
+        const files = pictureFiles(urls)
+        if (files.length) { insertSome(files, at, localFiles(urls).length - files.length); return true }
+        const b = box()
+        const format = dropFormat(drop)
+        if (format.length) {
+            landed(images.placeData(pageId, drop.getDataAsArrayBuffer(format), at.x, at.y, b.width, b.height), "Picture added")
+            return true
+        }
+        const link = pictureLink(drop)
+        if (link.length) {
+            if (!/^data:/i.test(link)) picLayer.toast("Fetching the picture…")
+            images.fetch(pageId, link, at.x, at.y, b.width, b.height, picLayer)
+            return true
+        }
+        picLayer.toast(urls.length ? "Only pictures can be dropped on a page" : "There is no picture in what you dropped")
+        return false
     }
     function done() { selectedId = 0; croppingId = 0; if (board.tool === "lasso") board.tool = toolBefore || "pen" }
     signal toastAction(string message, string actionLabel, var fn)
@@ -131,6 +218,16 @@ Item {
 
     Connections { target: images; function onChanged(pid) { if (pid === picLayer.pageId) picLayer.reload() } }
     Connections { target: images; function onFailed(message) { picLayer.toast(message) } }
+    // A fetch can take twenty seconds, and the page may have been turned by then. The picture is
+    // on the page it was dropped on either way, so it is still announced, and can still be undone.
+    Connections {
+        target: images
+        function onFetched(pid, id, asker) {
+            if (asker !== picLayer) return
+            if (pid === picLayer.pageId) picLayer.landed(id, "Picture added")
+            else picLayer.toastAction("Picture added to the page you dropped it on", "Undo", function() { images.remove(id) })
+        }
+    }
     onPageIdChanged: reload()
     Component.onCompleted: reload()
 
@@ -181,6 +278,9 @@ Item {
         readonly property var pic: picLayer.selectedId > 0 && picLayer.barTick >= 0 ? images.image(picLayer.selectedId) : ({})
         readonly property bool whole: !visible || (pic.cropW >= 1 && pic.cropH >= 1 && (pic.rotation || 0) === 0)
         visible: picLayer.editing && picLayer.selectedId > 0 && picLayer.croppingId === 0 && picLayer.barTick >= 0
+        // Six actions are wider than a phone or a narrow split pane, and Done must never be pushed
+        // off the edge: there, Reset and Copy are left to the picture's options (tap it twice).
+        readonly property bool roomy: picLayer.width >= 6 * (Ui.target + 26) + 5 * 6 + 36
         readonly property real centreX: visible ? (pic.x + pic.w / 2) * picLayer.z0 + picLayer.board.pan.x : 0
         readonly property real bottomY: visible ? (pic.y + pic.h) * picLayer.z0 + picLayer.board.pan.y : 0
         readonly property real topY: visible ? pic.y * picLayer.z0 + picLayer.board.pan.y : 0
@@ -197,7 +297,8 @@ Item {
             spacing: 6
             CropAction { objectName: "picTrim"; label: "Trim"; onClicked: picLayer.startCrop() }
             CropAction { objectName: "picTurn"; label: "Turn"; onClicked: picLayer.rotateSelected() }
-            CropAction { objectName: "picReset"; label: "Reset"; visible: !picBar.whole; onClicked: picLayer.resetSelected() }
+            CropAction { objectName: "picReset"; label: "Reset"; visible: !picBar.whole && picBar.roomy; onClicked: picLayer.resetSelected() }
+            CropAction { objectName: "picCopy"; label: "Copy"; visible: picBar.roomy; onClicked: picLayer.copySelected() }
             CropAction { objectName: "picDelete"; label: "Delete"; onClicked: picLayer.removeSelected() }
             CropAction { objectName: "picDone"; label: "Done"; primary: true; onClicked: picLayer.done() }
         }

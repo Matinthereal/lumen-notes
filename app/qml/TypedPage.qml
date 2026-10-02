@@ -56,6 +56,7 @@ Item {
     }
     property int words: 0
     signal pageLinkActivated(string url)
+    signal toast(string message)
     // save() first: blockId still names the page being left, and its last 700 ms of typing may
     // not have reached the database yet. On a tablet, focus would open the system keyboard over
     // the page (and over any dialog), so there the caret waits for a tap.
@@ -278,6 +279,11 @@ Item {
                             if (e.key === Qt.Key_Escape) { linkPicker.close(); e.accepted = true; return }
                         }
                         const ctrl = e.modifiers & Qt.ControlModifier, shift = e.modifiers & Qt.ShiftModifier, alt = e.modifiers & Qt.AltModifier
+                        // Pictures and nothing else on the clipboard: the editor would paste nothing and say
+                        // nothing, or paste a copied file's address as if it had been typed.
+                        if (ctrl && !shift && e.key === Qt.Key_V && images.clipboardIsOnlyPictures()) {
+                            typed.toast("Pictures go on handwritten pages — this one is typed"); e.accepted = true; return
+                        }
                         if (ctrl && alt && e.key >= Qt.Key_0 && e.key <= Qt.Key_3) { fmt.setHeading(e.key - Qt.Key_0); e.accepted = true; return }
                         if (ctrl && !shift && e.key === Qt.Key_B) { fmt.toggleBold(); e.accepted = true; return }
                         if (ctrl && !shift && e.key === Qt.Key_I) { fmt.toggleItalic(); e.accepted = true; return }

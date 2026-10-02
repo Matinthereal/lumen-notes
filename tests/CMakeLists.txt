@@ -17,6 +17,12 @@ qt_add_executable(tst_storage tst_storage.cpp)
 target_link_libraries(tst_storage PRIVATE lumen_core Qt6::Test)
 add_test(NAME storage COMMAND tst_storage)
 
+# Pictures in and out by the clipboard. It needs a QGuiApplication for the clipboard, nothing else.
+qt_add_executable(tst_images tst_images.cpp)
+target_link_libraries(tst_images PRIVATE lumen_core Qt6::Test)
+add_test(NAME images COMMAND tst_images)
+set_tests_properties(images PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(soak_writer soak_writer.cpp)
 target_link_libraries(soak_writer PRIVATE lumen_core)
 qt_add_executable(tst_soak tst_soak.cpp)

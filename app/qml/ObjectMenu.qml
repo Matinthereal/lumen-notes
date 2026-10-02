@@ -15,6 +15,7 @@ Popup {
     signal fillChosen(string colour)
     signal widthChosen(real width)
     signal duplicateAsked()
+    signal copyAsked()
     signal deleteAsked()
     signal cropAsked()
     signal rotateAsked()
@@ -105,7 +106,7 @@ Popup {
                 property string label: ""
                 property bool danger: false
                 signal clicked()
-                implicitWidth: t.implicitWidth + 22; implicitHeight: Ui.target - 10
+                implicitWidth: t.implicitWidth + 22; implicitHeight: Ui.target
                 radius: Ui.radiusSm
                 color: press.pressed ? Qt.alpha(danger ? Ui.danger : pal.text, Ui.pressAlpha) : "transparent"
                 border.color: danger ? Qt.alpha(Ui.danger, 0.6) : Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1
@@ -116,6 +117,7 @@ Popup {
             MenuAction { visible: menu.subject === "picture"; label: "Turn"; onClicked: menu.rotateAsked() }
             MenuAction { visible: menu.subject === "picture" && (menu.info.cropW < 1 || menu.info.cropH < 1 || (menu.info.rotation || 0) !== 0)
                          label: "Original"; onClicked: { menu.resetAsked(); menu.close() } }
+            MenuAction { visible: menu.subject === "picture"; label: "Copy"; onClicked: { menu.copyAsked(); menu.close() } }
             MenuAction { label: "Duplicate"; onClicked: { menu.duplicateAsked(); menu.close() } }
             MenuAction { label: "Delete"; danger: true; onClicked: { menu.deleteAsked(); menu.close() } }
             Item { Layout.fillWidth: true }
