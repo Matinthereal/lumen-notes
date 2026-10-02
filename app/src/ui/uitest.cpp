@@ -1580,6 +1580,7 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
             r.check("a picture that arrives after the page was turned is still announced",
                     waitFor([&] { return toastSays(QStringLiteral("Picture added to the page you dropped it on")); }, 8000) && list().size() == 1,
                     QStringLiteral("%1 picture(s), toast: %2").arg(list().size()).arg(toast()));
+            spin(350);      // the toast is still rising when its words are set; a tap lands once it is up
             if (QQuickItem *undo = itemWithText(win->contentItem(), QStringLiteral("Undo"))) tap(win, undo);
             spin(300);
             r.check("and its Undo takes it off the page it went to", list().isEmpty(), QStringLiteral("%1 picture(s)").arg(list().size()));

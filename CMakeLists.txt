@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 # SPDX-License-Identifier: GPL-3.0-or-later
-project(lumen VERSION 0.2.0 LANGUAGES CXX
+project(lumen VERSION 0.2.1 LANGUAGES CXX
     DESCRIPTION "Pen, touch and keyboard notes for Qt/QML")
 
 set(CMAKE_CXX_STANDARD 20)
