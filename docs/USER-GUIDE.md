@@ -149,6 +149,16 @@ side), page defaults, **background services** (what each Python helper is doing,
 transcription and OCR models, backups (*Back up now*; nightly at 03:00 on Linux, once a day while
 Lumen is open on Windows), Claude status.
 
+## Updates
+
+Once a day, at launch, Lumen asks GitHub which release is the newest; that one request is all it
+sends. When there is a newer one, a small banner says so: *What's new* shows the release notes
+(and *Skip this version*), *Later* puts the banner away until the next day. *Update* depends on
+how Lumen was installed: the Linux AppImage downloads the new one, checks it against the checksum
+GitHub publishes and replaces itself, then offers a restart; on Windows it downloads and runs the
+installer; an Android tablet is handed the new `.apk`; anywhere else it opens the release page.
+Settings › Updates has *Check for updates* and the switch that turns the daily check off.
+
 ## Where things live
 
 Linux: `~/.local/share/lumen/` — database, journals, attachments, models, Claude log.

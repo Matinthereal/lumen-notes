@@ -42,6 +42,7 @@ qt_add_library(lumen_core STATIC
     src/ui/notebooktool.h          src/ui/notebooktool.cpp
     src/ui/thumbnails.h            src/ui/thumbnails.cpp
     src/ui/holdtips.h              src/ui/holdtips.cpp
+    src/update/updater.h           src/update/updater.cpp
 )
 target_include_directories(lumen_core PUBLIC src)
 
@@ -229,6 +230,8 @@ qt_add_qml_module(lumen
         qml/HoldTip.qml
         qml/ProgressChip.qml
         qml/ServicesSection.qml
+        qml/UpdateBanner.qml
+        qml/WhatsNewSheet.qml
     SOURCES
         src/input/penprobeitem.h src/input/penprobeitem.cpp
         src/input/keyinjector.h src/input/keyinjector.cpp

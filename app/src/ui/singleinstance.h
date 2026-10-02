@@ -23,6 +23,8 @@ public:
     // file beside the socket, so a socket left by a crash is replaced by exactly one of them.
     bool listen();
     QString serverName() const { return m_name; }
+    // Stop being it, ahead of a restart: the Lumen started next must not hand over to this one.
+    void close() { m_server.close(); }
 
     // The files a command line hands over (Exec=lumen %U): local files that exist, as URLs.
     // Flags, and the values of the flags that take one, are not files.

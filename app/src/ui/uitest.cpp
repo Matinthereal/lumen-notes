@@ -41,6 +41,8 @@
 #include "canvas/inkcanvas.h"
 #include "input/tabletsample.h"
 #include "papers/papersservice.h"
+#include "storage/paths.h"
+#include "update/updater.h"
 
 namespace {
 
@@ -2256,6 +2258,133 @@ int uitest::run(QQuickWindow *win, QObject *root)
         qInstallMessageHandler(g_previous);
         return r.failures;
     }
+    // ---- 12k. A newer release: the banner says so and blocks nothing, What's new shows the notes,
+    // Later puts it away, a skipped version stays away, and Settings can ask and can stop the asking.
+    // The release is a file written here: this never asks the network.
+    const auto updateChecks = [&] {
+        QQmlEngine *engine = qmlEngine(root);
+        QObject *lib = engine ? engine->rootContext()->contextProperty(QStringLiteral("library")).value<QObject *>() : nullptr;
+        auto *updater = engine ? qobject_cast<Updater *>(engine->rootContext()->contextProperty(QStringLiteral("updater")).value<QObject *>()) : nullptr;
+        if (!lib || !updater) { r.check("the updater is there", false); return; }
+        const auto setting = [&](const QString &key) {
+            QString out;
+            QMetaObject::invokeMethod(lib, "setting", Q_RETURN_ARG(QString, out), Q_ARG(QString, key), Q_ARG(QString, QString()));
+            return out;
+        };
+        const auto bannerUp = [&] { QQuickItem *t = findOne(win, QStringLiteral("updateBannerText")); return t && t->parentItem()->parentItem()->isVisible(); };
+        const auto sheetUp = [&] { QQuickItem *n = findOne(win, QStringLiteral("whatsNewNotes")); return n && n->isVisible(); };
+        const auto ask = [&] { updater->check(); waitFor([&] { return updater->stage().isEmpty(); }, 3000); spin(150); };
+        const auto press = [&](const char *name) {
+            QQuickItem *b = findOne(win, QLatin1String(name));
+            if (!b || !b->isVisible()) return false;
+            tap(win, b);
+            spin(250);
+            return true;
+        };
+
+        r.check("no banner while no newer release is known", !bannerUp());
+        updater->check();
+        r.check("a test run asks nobody about updates", updater->stage().isEmpty() && updater->status().contains(QLatin1String("test run")), updater->status());
+
+        const QString feed = paths::dataDir() + QStringLiteral("/uitest-release.json");
+        QFile f(feed);
+        f.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        f.write(R"({"tag_name": "v99.0.0", "html_url": "https://example.invalid/release", "assets": [],
+                    "body": "## New in this release\n- **Something** worth having\n- And a fix"})");
+        f.close();
+        updater->setFeed(QUrl::fromLocalFile(feed));
+        ask();
+        r.check("a newer release raises the banner", bannerUp() && updater->offered(), updater->status());
+        QQuickItem *said = findOne(win, QStringLiteral("updateBannerText"));
+        r.check("and it names the version", said && said->property("text").toString() == QLatin1String("Lumen 99.0.0 is available"),
+                said ? said->property("text").toString() : QString());
+        for (const char *name : {"updateNotes", "updateLater", "updateGo"}) {
+            QQuickItem *b = findOne(win, QLatin1String(name));
+            r.check("a banner button is finger-sized", b && b->isVisible() && b->height() >= 44 && b->width() >= 44,
+                    QStringLiteral("%1 %2x%3").arg(QLatin1String(name)).arg(b ? b->width() : 0).arg(b ? b->height() : 0));
+        }
+        shot(win, QStringLiteral("update-banner"));
+
+        r.check("What's new opens the notes", press("updateNotes") && sheetUp());
+        QQuickItem *notes = findOne(win, QStringLiteral("whatsNewNotes"));
+        r.check("and they are the release's own", notes && notes->property("text").toString().contains(QLatin1String("worth having")));
+        shot(win, QStringLiteral("update-notes"));
+        r.check("Later closes the notes and the banner", press("whatsNewLater") && !sheetUp() && !bannerUp() && !updater->offered());
+        r.check("without skipping anything", setting(QStringLiteral("update.skipped")).isEmpty(), setting(QStringLiteral("update.skipped")));
+
+        ask();
+        r.check("asking again brings the banner back", bannerUp());
+        r.check("Later on the banner puts it away", press("updateLater") && !bannerUp());
+
+        ask();
+        press("updateNotes");
+        r.check("Skip this version puts it away", press("updateSkip") && !sheetUp() && !bannerUp());
+        r.check("and remembers which", setting(QStringLiteral("update.skipped")) == QLatin1String("99.0.0"), setting(QStringLiteral("update.skipped")));
+        QQuickItem *toastText = findOne(win, QStringLiteral("toastText"));
+        r.check("with a toast that can undo it", toastText && toastText->isVisible() && toastText->property("text").toString().contains(QLatin1String("99.0.0")));
+        r.check("Undo offers the version again", press("toastUndo") && bannerUp() && setting(QStringLiteral("update.skipped")).isEmpty());
+        updater->skip();
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("update.lastCheck")), Q_ARG(QString, QStringLiteral("0")));
+        updater->checkOnLaunch();
+        waitFor([&] { return updater->stage().isEmpty(); }, 3000);
+        spin(150);
+        r.check("a skipped version is not offered at the next launch", updater->available() && !bannerUp());
+
+        // Settings › Updates: asking by hand says what it found, and the daily check has a switch.
+        root->setProperty("settingsVisible", true);
+        spin(300);
+        const auto reveal = [&](QQuickItem *item) {
+            for (QQuickItem *up = item->parentItem(); up; up = up->parentItem()) {
+                if (!up->inherits("QQuickFlickable")) continue;
+                QQuickItem *content = up->property("contentItem").value<QQuickItem *>();
+                const qreal want = item->mapToItem(content, QPointF(0, 0)).y() - up->height() / 2;
+                up->setProperty("contentY", std::clamp<qreal>(want, 0, std::max<qreal>(0, up->property("contentHeight").toReal() - up->height())));
+                spin(80);
+                break;
+            }
+        };
+        QQuickItem *checkButton = findOne(win, QStringLiteral("checkUpdates"));
+        QQuickItem *status = findOne(win, QStringLiteral("updateStatus"));
+        QQuickItem *autoSwitch = findOne(win, QStringLiteral("autoUpdateSwitch"));
+        r.check("Settings has its Updates part", checkButton && status && autoSwitch);
+        if (checkButton && status && autoSwitch) {
+            reveal(checkButton);
+            r.check("Check for updates is finger-sized", checkButton->height() >= 44);
+            tap(win, checkButton);
+            waitFor([&] { return updater->stage().isEmpty(); }, 3000);
+            spin(150);
+            r.check("Check for updates says what it found", status->property("text").toString() == QLatin1String("Lumen 99.0.0 is available."),
+                    status->property("text").toString());
+            r.check("and offers even a skipped version, since it was asked", bannerUp());
+            shot(win, QStringLiteral("update-settings"));
+            r.check("the daily check is on unless turned off", autoSwitch->property("checked").toBool() && updater->automatic());
+            tap(win, autoSwitch);
+            spin(150);
+            r.check("the switch turns it off", !updater->automatic() && setting(QStringLiteral("update.auto")) == QLatin1String("0"));
+            QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("update.lastCheck")), Q_ARG(QString, QStringLiteral("0")));
+            updater->later();
+            updater->checkOnLaunch();
+            r.check("and then a launch asks nobody", updater->stage().isEmpty() && !bannerUp());
+            tap(win, autoSwitch);
+            spin(150);
+            r.check("and back on", updater->automatic() && autoSwitch->property("checked").toBool());
+        }
+        root->setProperty("settingsVisible", false);
+        // Leave the rest of the run as it was: no banner, no feed, nothing skipped.
+        updater->later();
+        updater->setFeed(QUrl());
+        QMetaObject::invokeMethod(lib, "setSetting", Q_ARG(QString, QStringLiteral("update.skipped")), Q_ARG(QString, QString()));
+        QFile::remove(feed);
+        spin(200);
+    };
+    if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("updates")) {
+        updateChecks();
+        r.check("no QML errors during the run", g_qmlComplaints.isEmpty(),
+                g_qmlComplaints.isEmpty() ? QString() : g_qmlComplaints.join(QStringLiteral(" | ")).left(600));
+        qInstallMessageHandler(g_previous);
+        qInfo("UITEST %s (%d failure%s)", r.failures ? "FAILED" : "OK", r.failures, r.failures == 1 ? "" : "s");
+        return r.failures;
+    }
     // LUMEN_UITEST_ONLY=holdtips | work runs just those, for working on them without the 7-minute sweep.
     if (qEnvironmentVariable("LUMEN_UITEST_ONLY") == QLatin1String("work")) {
         progressChecks();
@@ -3061,6 +3190,9 @@ int uitest::run(QQuickWindow *win, QObject *root)
 
     // ---- 12j. (above)
     polishChecks();
+
+    // ---- 12k. (above)
+    updateChecks();
 
     // ---- 13. Tap every control there is, in both postures.
     {

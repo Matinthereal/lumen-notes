@@ -1391,6 +1391,21 @@ Window {
             toastBar.show("notebook “" + name + "” deleted", function() { library.restore("notebook", notebookId) })
         }
     }
+    // ---- A newer release (update/updater.h). The banner floats over whatever is open, clear of
+    // the audio bar and on the side away from the rail.
+    UpdateBanner {
+        z: 35
+        visible: updater.offered && !root.onboardingVisible && !root.probeMode && !root.presenting
+        width: Math.min(implicitWidth, safe.width - 32)
+        x: root.leftHanded ? safe.x + 16 : safe.x + safe.width - width - 16
+        y: safe.y + safe.height - height - Ui.target - 34
+        onNotesRequested: whatsNew.open()
+    }
+    WhatsNewSheet {
+        id: whatsNew
+        onSkipped: (version) => toastBar.show("Lumen " + version + " will not be offered again", function() { updater.unskip() })
+    }
+    Connections { target: updater; function onOpenUrl(url) { Qt.openUrlExternally(url) } }
     HoldTip { parent: Overlay.overlay }
     Onboarding {
         visible: root.onboardingVisible; anchors.fill: safe; z: 40

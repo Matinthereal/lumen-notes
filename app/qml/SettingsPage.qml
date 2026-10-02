@@ -176,6 +176,17 @@ Rectangle {
                 RowL { Lbl { text: "" } LButton { text: "Back up now"; onClicked: { backupRunner.run() } } Text { id: backupStatus; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(12) } }
                 Item { id: backupRunner; function run() { backupStatus.text = "running…"; backupNow.start() } Timer { id: backupNow; interval: 10; onTriggered: { const r = backupTool.runNow(); backupStatus.text = r } } }
 
+                Section { text: "Updates" }
+                RowL { Lbl { text: "This is" } Text { text: "Lumen " + updater.currentVersion; color: pal.text; font.pixelSize: Ui.px(13) }
+                       LButton { objectName: "checkUpdates"; text: "Check for updates"; implicitHeight: Ui.target; font.pixelSize: Ui.px(12)
+                                 enabled: updater.stage !== "checking" && updater.stage !== "downloading"; onClicked: updater.check() }
+                       Text { objectName: "updateStatus"; text: updater.status; color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(12); wrapMode: Text.Wrap; Layout.fillWidth: true } }
+                RowL { Lbl { text: "Look for a newer Lumen by itself" }
+                       LSwitch { id: autoUpdate; objectName: "autoUpdateSwitch"; checked: updater.automatic; onToggled: updater.automatic = checked
+                                 Connections { target: updater; function onAutomaticChanged() { autoUpdate.checked = updater.automatic } } }
+                       Text { text: "Once a day, at launch, Lumen asks GitHub which release is the newest. Nothing about you or your notes is sent."
+                              color: Qt.alpha(pal.windowText, Ui.mutedAlpha); font.pixelSize: Ui.px(12); wrapMode: Text.Wrap; Layout.fillWidth: true } }
+
                 Section { visible: helpers; text: "Claude" }
                 RowL { visible: helpers; Lbl { text: "Status" } Text { text: claude.available ? claude.version : (claude.reason || "checking…"); color: pal.text; font.pixelSize: Ui.px(13) } LButton { text: "Re-check"; font.pixelSize: Ui.px(11); onClicked: claude.refreshStatus() } }
                 RowL { visible: helpers; Lbl { text: "Online (web tools)" } LSwitch { id: onlineSwitch; checked: claude.online; onToggled: claude.online = checked

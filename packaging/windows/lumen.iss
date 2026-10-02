@@ -44,3 +44,13 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent unchecked
+; Lumen's own updater (app/src/update/updater.cpp) runs this installer with /SILENT /RELAUNCH=1:
+; no wizard to click through, and Lumen comes back when the files are in place, as the person who
+; started it rather than with the installer's elevated rights.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent runasoriginaluser; Check: RelaunchAsked
+
+[Code]
+function RelaunchAsked(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;

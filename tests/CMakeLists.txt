@@ -51,6 +51,14 @@ target_link_libraries(tst_papers PRIVATE lumen_core Qt6::Test)
 add_test(NAME papers COMMAND tst_papers)
 set_tests_properties(papers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 
+# The updater: release parsing, the choice of file per platform, and the AppImage swap end to end
+# against file:// URLs. No network and no helper, so it runs on CI.
+qt_add_executable(tst_update tst_update.cpp)
+target_link_libraries(tst_update PRIVATE lumen_core Qt6::Test)
+target_compile_definitions(tst_update PRIVATE LUMEN_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+add_test(NAME update COMMAND tst_update)
+set_tests_properties(update PROPERTIES TIMEOUT 120)
+
 # One window per library on a desktop: a second launch hands its files over (main.cpp).
 if(LUMEN_HELPERS)
     qt_add_executable(tst_singleinstance tst_singleinstance.cpp)

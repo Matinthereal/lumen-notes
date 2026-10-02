@@ -43,6 +43,7 @@
 #include "ui/singleinstance.h"
 #endif
 #include "ui/theme.h"
+#include "update/updater.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/library.h"
@@ -52,6 +53,7 @@
 #include <QLoggingCategory>
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
 #include <cstdio>
 #ifdef Q_OS_UNIX
 #include <csignal>
@@ -185,6 +187,13 @@ int main(int argc, char *argv[])
                              && !args.contains(QStringLiteral("--uitest")) && !args.contains(QStringLiteral("--smoke"));
     TabletMode tabletMode(liveSession);
     BackupTool backupTool(library);
+    // Asking GitHub for the newest release is the one request Lumen makes unasked. A test,
+    // screenshot or headless run never makes it; LUMEN_UPDATE_URL gives those a file to read
+    // instead, except --uitest, whose update checks write their own.
+    Updater updater(library);
+    const bool unattended = !liveSession || args.contains(QStringLiteral("--screenshot")) || args.contains(QStringLiteral("--probe"));
+    if (args.contains(QStringLiteral("--uitest")) || (unattended && qEnvironmentVariableIsEmpty("LUMEN_UPDATE_URL")))
+        updater.setFeed(QUrl());
     NotebookTool notebookTool(db, library);
     Thumbnails thumbnails(db);
     QObject::connect(&pageStore, &PageStore::saved, &thumbnails, &Thumbnails::refresh);
@@ -227,6 +236,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("holdTips"), &holdTips);
     engine.rootContext()->setContextProperty(QStringLiteral("platform"), &platform);
     engine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+    engine.rootContext()->setContextProperty(QStringLiteral("updater"), &updater);
     // Phones and tablets have no Python helpers, so their features are hidden rather than failing;
     // LUMEN_MOBILE_UI=1 shows that interface on a desktop, for testing it here.
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
@@ -337,6 +347,20 @@ int main(int argc, char *argv[])
         QTimer::singleShot(30000, &app, runIfDue);   // also catch a backup overdue at launch, once things settle
     }
 #endif
+
+    // Once the window is up and settled; with no feed (above) this asks nothing.
+    QTimer::singleShot(1500, &updater, &Updater::checkOnLaunch);
+    // The updated AppImage, or the Windows installer: start it and leave.
+    QObject::connect(&updater, &Updater::restartRequested, &app, [&](const QString &program, const QStringList &arguments) {
+#ifdef LUMEN_SINGLE_INSTANCE
+        instance.close();       // or the Lumen started here would hand over to this one and exit
+#endif
+        if (QProcess::startDetached(program, arguments)) { QCoreApplication::quit(); return; }
+        qWarning("update: cannot start %s", qPrintable(program));
+#ifdef LUMEN_SINGLE_INSTANCE
+        instance.listen();
+#endif
+    });
 
     if (args.contains(QStringLiteral("--smoke")))
         QTimer::singleShot(2500, &app, &QCoreApplication::quit);
