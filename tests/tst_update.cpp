@@ -125,6 +125,12 @@ private slots:
         QCOMPARE(update::assetFor(r, Install::WindowsSetup)->name, QStringLiteral("Lumen-Setup-0.3.0.exe"));
         QCOMPARE(update::assetFor(r, Install::AndroidApk)->name, QStringLiteral("Lumen-0.3.0-android.apk"));
         QVERIFY(!update::assetFor(r, Install::ReleasePage));
+        // One .apk for each processor, and never the other's: without its own, the release page.
+        QVERIFY(!update::assetFor(r, Install::AndroidApk, QStringLiteral("x86_64")));
+        update::Release both = r;
+        both.assets.append(update::Asset{QStringLiteral("Lumen-0.3.0-android-x86_64.apk"), QUrl("https://example.invalid/x"), 1, {}});
+        QCOMPARE(update::assetFor(both, Install::AndroidApk, QStringLiteral("x86_64"))->name, QStringLiteral("Lumen-0.3.0-android-x86_64.apk"));
+        QCOMPARE(update::assetFor(both, Install::AndroidApk, QStringLiteral("arm64"))->name, QStringLiteral("Lumen-0.3.0-android.apk"));
         // v0.2.0 carried only an unsigned .apk, which no tablet will install.
         update::Release unsignedOnly;
         unsignedOnly.version = "0.2.0";

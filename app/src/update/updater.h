@@ -45,6 +45,7 @@ enum class Install {
 struct Host {
     QString version;         // the running one
     QString os;              // android | ios | windows | linux | other
+    QString cpu;             // what this build was made for: arm64, x86_64, …
     QString appImage;        // $APPIMAGE, when Lumen runs from it (ownAppImage)
     QUrl feed;               // empty: never ask (test runs)
     QString downloadDir;     // where the Windows installer is put
@@ -63,7 +64,9 @@ QString ownAppImage(const QString &appImage, const QString &appDir, const QStrin
 bool isNewer(const QString &tag, const QString &running);
 Install installFor(const Host &host);
 // The file that install needs, or nothing when the release does not carry it.
-std::optional<Asset> assetFor(const Release &release, Install install);
+// An Android release carries one .apk for each processor: an ARM one run through an x86 machine's
+// translator (Waydroid, a Chromebook) stops answering, so that machine is never handed it.
+std::optional<Asset> assetFor(const Release &release, Install install, const QString &cpu = {});
 bool checkDue(qint64 lastCheckSecs, qint64 nowSecs);        // the automatic check: once a day
 QByteArray sha256Of(const QString &path);                   // hex; empty when the file cannot be read
 // What a check asked for by hand says when it fails. httpStatus is 0 when GitHub was never reached.

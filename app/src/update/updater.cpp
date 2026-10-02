@@ -22,6 +22,7 @@ Host Host::detect()
 {
     Host host;
     host.version = QStringLiteral(LUMEN_VERSION);
+    host.cpu = QSysInfo::buildCpuArchitecture();
 #if defined(Q_OS_ANDROID)
     host.os = QStringLiteral("android");
 #elif defined(Q_OS_IOS)
@@ -109,13 +110,14 @@ Install installFor(const Host &host)
     return Install::ReleasePage;
 }
 
-std::optional<Asset> assetFor(const Release &release, Install install)
+std::optional<Asset> assetFor(const Release &release, Install install, const QString &cpu)
 {
+    const QLatin1String apk(cpu == QLatin1String("x86_64") ? "-android-x86_64.apk" : "-android.apk");
     for (const Asset &a : release.assets) {
         const bool fits = install == Install::AppImage ? a.name == QLatin1String("Lumen-x86_64.AppImage")
                         : install == Install::WindowsSetup ? a.name.startsWith(QLatin1String("Lumen-Setup-")) && a.name.endsWith(QLatin1String(".exe"))
                         // Only the signed one: "…-android-unsigned.apk" cannot be installed.
-                        : install == Install::AndroidApk ? a.name.startsWith(QLatin1String("Lumen-")) && a.name.endsWith(QLatin1String("-android.apk"))
+                        : install == Install::AndroidApk ? a.name.startsWith(QLatin1String("Lumen-")) && a.name.endsWith(apk)
                         : false;
         if (fits) return a;
     }
@@ -273,7 +275,7 @@ void Updater::openReleasePage()
 void Updater::install()
 {
     if (!available() || m_reply || m_stage == QLatin1String("ready")) return;
-    const std::optional<update::Asset> asset = update::assetFor(m_release, m_install);
+    const std::optional<update::Asset> asset = update::assetFor(m_release, m_install, m_host.cpu);
     if (!asset) { emit openUrl(m_release.page); return; }
     if (m_install == update::Install::AndroidApk) { emit openUrl(asset->url); return; }
     // What Lumen installs by itself must be the file GitHub published, bit for bit.
