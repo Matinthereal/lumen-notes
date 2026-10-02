@@ -25,6 +25,20 @@ public:
     // the right way up for a phone photo whose camera said it was turned.
     Q_INVOKABLE qint64 place(qint64 pageId, const QUrl &file, double cx, double cy, double maxW, double maxH);
     Q_INVOKABLE qint64 placeClipboard(qint64 pageId, double cx, double cy, double maxW, double maxH);
+    // Whatever on the clipboard can become a picture: one copied in Lumen (it keeps its trim, turn
+    // and size), a picture copied in a browser or taken by a screenshot tool, or picture files
+    // copied in a file manager. Returns the ids placed, fanned out from (cx, cy).
+    Q_INVOKABLE QVariantList pasteClipboard(qint64 pageId, double cx, double cy, double maxW, double maxH);
+    // The picture as the page shows it — turned and trimmed, at the file's own resolution — for
+    // any other program, and for Lumen itself the note of which stored file it is.
+    Q_INVOKABLE bool copy(qint64 id);
+    Q_INVOKABLE qint64 duplicate(qint64 id, double dx = 24, double dy = 24);
+    // A picture that arrived as bytes: dragged out of a browser, or just fetched.
+    Q_INVOKABLE qint64 placeData(qint64 pageId, const QByteArray &bytes, double cx, double cy, double maxW, double maxH);
+    // A picture dragged in as a link. Fetched in the background, up to kFetchLimit bytes; fetched()
+    // says where it landed and failed() why it did not. data: links are read on the spot.
+    Q_INVOKABLE void fetch(qint64 pageId, const QUrl &url, double cx, double cy, double maxW, double maxH);
+    static constexpr qint64 kFetchLimit = 40 * 1024 * 1024;
     Q_INVOKABLE qint64 restore(const QVariantMap &picture);      // a removed picture back as it was, trim and turn too
     static QSize uprightSize(const QString &path);                // pixels as shown, after the camera's own turn
     Q_INVOKABLE bool clipboardHasImage() const;
@@ -42,11 +56,16 @@ public:
 signals:
     void changed(qint64 pageId);
     void failed(const QString &message);
+    void fetched(qint64 pageId, qint64 id);
 
 private:
     qint64 insertStored(qint64 pageId, const QString &sha, const QString &mime, QSize pixels, double x, double y, double maxWidth);
     qint64 store(qint64 pageId, const QString &sha, double x, double y, double w, double h);
     QString storeFile(const QString &path, QSize *pixels);
     QString storeClipboard(QSize *pixels);
+    QString storeBytes(const QByteArray &bytes, QSize *pixels);
+    QString storeMime(const class QMimeData *mime, QSize *pixels);
+    qint64 placeStored(qint64 pageId, const QString &sha, QSize pixels, double cx, double cy, double maxW, double maxH);
     Database &m_db;
+    class QNetworkAccessManager *m_network = nullptr;
 };

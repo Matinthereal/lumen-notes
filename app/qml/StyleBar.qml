@@ -178,7 +178,7 @@ Rectangle {
             onClicked: {
                 if (bar.subject === "shape") bar.shapeLayer.duplicateSelected()
                 else if (bar.subject === "ink") { bar.board.copySelection(); bar.board.paste() }
-                else bar.toast("Pictures are duplicated by adding them again")
+                else bar.imageLayer.duplicateSelected()
             }
         }
         BarAction {

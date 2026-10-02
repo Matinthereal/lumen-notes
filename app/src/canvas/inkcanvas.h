@@ -11,6 +11,7 @@
 #include <QTransform>
 #include <QVector>
 #include <QImage>
+#include "media/picturepixels.h"
 #include <QtQml/qqmlregistration.h>
 #include <atomic>
 #include "ink/inkdocument.h"
@@ -153,6 +154,9 @@ public:
     Q_INVOKABLE QPointF toScreen(QPointF page) const { return page * m_zoom + m_pan; }
     Q_INVOKABLE QPointF viewCentrePage() const { return toPage(QPointF(width() / 2, height() / 2)); }
     Q_INVOKABLE void setImages(const QVariantList &images);
+    // What a picture is being drawn from, for the tests: its own size, and the size and place of
+    // the texture cut for the current view (zero until the view has settled and it has arrived).
+    Q_INVOKABLE QVariantMap pictureTexture(qint64 id) const;
     // The floating toolbar and the audio bar cover the page; fitting has to allow for them or the
     // top and bottom of every page — where the date and the question number go — sit under chrome.
     // Their own signal, not viewChanged: fitPage() emits viewChanged, and a re-fit on that would
@@ -227,7 +231,12 @@ private:
     void setInking(bool v);
     void abandonGesture();
     void applyBackground(const QImage &img, qreal renderedScale, int gen);
-    void applyImage(qint64 id, const QImage &img);
+    struct PageImage;
+    void applyImage(qint64 id, const QImage &img, QSize pixels, bool opaque);
+    void applySharp(qint64 id, const picturepixels::Sharp &sharp, const QImage &img, const QRectF &pageRect, qreal zoom);
+    void pictureViewMoved();
+    void sharpenPictures();
+    static void dropSharp(PageImage &img);
     bool scratchOutErases();
     bool pointerBelongsToChrome(QPointF windowPos) const;   // one rule for pen, finger and mouse
     void checkHoldStill();
@@ -385,10 +394,25 @@ private:
         bool needsTexture = false;
         class QSGTexture *texture = nullptr;
         class QSGSimpleTextureNode *node = nullptr;
+        QSize pixels;            // the turned, trimmed picture's own size, known once it has been read
+        bool opaque = true;
+        // The second texture, cut for the screen as it is now (picturepixels.h). It lies over the
+        // base one, which stays underneath for whatever a pan brings into view.
+        picturepixels::Sharp sharpWanted;   // asked for, or showing
+        QImage sharpPending;
+        QRectF sharpRect;                   // where it goes, in page units
+        QSize sharpPixels;                  // what is showing: empty when only the base texture is
+        qreal sharpZoom = 0;
+        bool sharpWhole = false;
+        bool sharpDrop = false;             // the render thread is to take it down
+        class QSGTexture *sharpTexture = nullptr;
+        class QSGSimpleTextureNode *sharpNode = nullptr;
     };
     QVector<PageImage> m_images;
     QSGNode *m_imagesNode = nullptr;
     bool m_imagesDirty = false;
+    QVector<class QSGTexture *> m_orphanTextures;   // deleted on the render thread, which made them
+    QTimer m_sharpSettle;                           // the view has stopped moving: cut the sharp textures
     qreal m_backgroundScale = 0;
     int m_backgroundGeneration = 0;
     QVector<Word> m_words;

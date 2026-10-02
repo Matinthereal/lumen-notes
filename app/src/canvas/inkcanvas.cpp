@@ -46,6 +46,10 @@ InkCanvas::InkCanvas(QQuickItem *parent) : QQuickItem(parent), m_undo(&m_doc)
         update();
     });
     m_clock.start();
+    m_sharpSettle.setSingleShot(true);
+    m_sharpSettle.setInterval(160);
+    connect(&m_sharpSettle, &QTimer::timeout, this, &InkCanvas::sharpenPictures);
+    connect(this, &InkCanvas::viewChanged, this, &InkCanvas::pictureViewMoved);
 
     connect(&m_doc, &InkDocument::strokeAdded, this, &InkCanvas::onStrokeAdded);
     connect(&m_doc, &InkDocument::strokeRemoved, this, &InkCanvas::onStrokeRemoved);
@@ -1132,6 +1136,7 @@ void InkCanvas::hoverMoveEvent(QHoverEvent *event)
 void InkCanvas::geometryChange(const QRectF &n, const QRectF &o)
 {
     QQuickItem::geometryChange(n, o);
+    if (!m_images.isEmpty()) m_sharpSettle.start();     // the screen's pixels are somewhere else under the page now
     m_viewDirty = true;
     if ((m_fitPending || m_fitted) && n.width() > 0 && n.height() > 0 && n.size() != o.size()) fitPage();
     update();
@@ -1146,6 +1151,7 @@ void InkCanvas::itemChange(ItemChange change, const ItemChangeData &value)
             m_lastSwapUs.store(m_clock.nsecsElapsed() / 1000);
         }, Qt::DirectConnection);
     }
+    if (change == ItemDevicePixelRatioHasChanged) m_sharpSettle.start();
 }
 
 // ---------------------------------------------------------------- PDF background and text
@@ -1187,62 +1193,159 @@ void InkCanvas::setImages(const QVariantList &images)
         // different crop or turn is different pixels, so that one is decoded again.
         for (PageImage &old : m_images) {
             if (old.id != img.id || old.path != img.path || old.crop != img.crop || old.rotation != img.rotation) continue;
-            img.texture = old.texture; img.node = old.node; old.texture = nullptr; old.node = nullptr;
+            const QRectF rect = img.rect;
+            img = old;
+            img.rect = rect;
+            old.texture = nullptr; old.node = nullptr; old.sharpTexture = nullptr; old.sharpNode = nullptr;
+            // The sharp texture was cut for where the picture was and the size it had.
+            if (rect != old.rect) dropSharp(img);
             break;
         }
         next.append(img);
     }
     for (PageImage &gone : m_images) {          // whatever was not claimed above is no longer on the page
         if (gone.node) m_orphanNodes.append(gone.node);
-        delete gone.texture;
+        if (gone.sharpNode) m_orphanNodes.append(gone.sharpNode);
+        if (gone.texture) m_orphanTextures.append(gone.texture);
+        if (gone.sharpTexture) m_orphanTextures.append(gone.sharpTexture);
     }
     m_images = next;
     m_imagesDirty = true;
     QPointer<InkCanvas> self(this);
     for (const PageImage &img : m_images) {
-        if (img.texture || img.path.isEmpty()) continue;
+        if (img.texture || !img.pending.isNull() || img.path.isEmpty()) continue;
         const qint64 id = img.id;
         const QString path = img.path;
         const QRectF crop = img.crop;
         const int rotation = img.rotation;
         QThreadPool::globalInstance()->start([self, id, path, crop, rotation] {
-            QImageReader reader(path);
-            reader.setAutoTransform(true);
-            QImage loaded = reader.read();
-            if (loaded.isNull() || !self) return;
-            // Turn first, then take the crop out of the turned picture — the order the crop rect
-            // was measured in. The file itself is never written.
-            if (rotation % 360 != 0) loaded = loaded.transformed(QTransform().rotate(rotation), Qt::SmoothTransformation);
-            if (crop != QRectF(0, 0, 1, 1)) {
-                const QRect box(qRound(crop.x() * loaded.width()), qRound(crop.y() * loaded.height()),
-                                std::max(1, qRound(crop.width() * loaded.width())), std::max(1, qRound(crop.height() * loaded.height())));
-                loaded = loaded.copy(box.intersected(loaded.rect()));
-            }
-            if (loaded.isNull()) return;
-            // A 12-megapixel photo is 48 MB of texture and far more than the page can show even
-            // zoomed right in; 2560 px along the long side is sharp at any zoom the app allows.
-            constexpr int kLongest = 2560;
-            if (std::max(loaded.width(), loaded.height()) > kLongest)
-                loaded = loaded.scaled(kLongest, kLongest, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            loaded = loaded.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            const QImage source = picturepixels::load(path, rotation, crop);
+            if (source.isNull() || !self) return;
+            // A 12-megapixel photo is 48 MB of texture; this one is the picture at up to 2560 px,
+            // for while the view is moving. What is on screen once it stops is cut separately.
+            const QImage loaded = picturepixels::base(source);
+            const QSize pixels = source.size();
+            const bool opaque = !source.hasAlphaChannel();
             InkCanvas *target = self.data();
             if (!target) return;
-            QMetaObject::invokeMethod(target, [self, id, loaded] { if (self) self->applyImage(id, loaded); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(target, [self, id, loaded, pixels, opaque] { if (self) self->applyImage(id, loaded, pixels, opaque); }, Qt::QueuedConnection);
         });
     }
+    m_sharpSettle.start();
     update();
 }
 
-void InkCanvas::applyImage(qint64 id, const QImage &img)
+void InkCanvas::applyImage(qint64 id, const QImage &img, QSize pixels, bool opaque)
 {
     for (PageImage &p : m_images) {
         if (p.id != id) continue;
         p.pending = img;
         p.needsTexture = true;
+        p.pixels = pixels;
+        p.opaque = opaque;
+        m_imagesDirty = true;
+        m_sharpSettle.start();
+        update();
+        return;
+    }
+}
+
+void InkCanvas::dropSharp(PageImage &img)
+{
+    img.sharpWanted = {};
+    img.sharpPending = QImage();
+    img.sharpPixels = QSize();
+    img.sharpZoom = 0;
+    img.sharpWhole = false;
+    img.sharpDrop = true;
+}
+
+// Every pan and zoom lands here. A sharp texture cut for another zoom is the wrong size now, and
+// stretched it looks worse than the base texture does, so it goes at once; after a pan it is still
+// right where it is, and stays until the new one arrives.
+void InkCanvas::pictureViewMoved()
+{
+    for (PageImage &img : m_images) {
+        if (!img.sharpWanted.valid() && img.sharpPixels.isEmpty()) continue;
+        const bool onlyPanned = qFuzzyCompare(img.sharpZoom, m_zoom);
+        // A picture with see-through parts shows one texture at a time (two would blend into each
+        // other), so its sharp one must cover it whole or not be there.
+        if (onlyPanned && (img.opaque || img.sharpWhole)) continue;
+        dropSharp(img);
+        m_imagesDirty = true;
+    }
+    if (!m_images.isEmpty()) m_sharpSettle.start();
+}
+
+void InkCanvas::sharpenPictures()
+{
+    if (m_images.isEmpty() || width() <= 0 || height() <= 0) return;
+    const qreal dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+    const QPointF origin = mapToScene(QPointF(0, 0));
+    const QRect view = QRectF(origin * dpr, QSizeF(width(), height()) * dpr).toAlignedRect();
+    QPointer<InkCanvas> self(this);
+    for (PageImage &img : m_images) {
+        if (img.pixels.isEmpty()) continue;         // not read yet: applyImage() comes back here
+        const QRectF device((origin + m_pan + img.rect.topLeft() * m_zoom) * dpr, img.rect.size() * m_zoom * dpr);
+        picturepixels::Sharp sharp = picturepixels::plan(img.pixels, device, view);
+        if (sharp.valid() && !img.opaque && !sharp.whole) sharp = {};
+        if (sharp == img.sharpWanted) continue;     // showing already, or on its way
+        if (!sharp.valid()) {
+            if (img.sharpWanted.valid() || !img.sharpPixels.isEmpty()) { dropSharp(img); m_imagesDirty = true; update(); }
+            continue;
+        }
+        img.sharpWanted = sharp;
+        const qreal zoom = m_zoom;
+        const QRectF pageRect((sharp.device.topLeft() / dpr - origin - m_pan) / zoom, sharp.device.size() / dpr / zoom);
+        // Panned with the whole picture still in view: the cut it has is the right size, and only
+        // needs moving onto the pixels it now lies over. No need to read the file again.
+        if (sharp.whole && img.sharpWhole && sharp.pixels == img.sharpPixels && qFuzzyCompare(img.sharpZoom, zoom)) {
+            img.sharpRect = pageRect;
+            m_imagesDirty = true;
+            update();
+            continue;
+        }
+        const qint64 id = img.id;
+        const QString path = img.path;
+        const QRectF crop = img.crop;
+        const int rotation = img.rotation;
+        QThreadPool::globalInstance()->start([self, id, path, crop, rotation, sharp, pageRect, zoom] {
+            const QImage cut = picturepixels::render(picturepixels::load(path, rotation, crop), sharp);
+            InkCanvas *target = self.data();
+            if (cut.isNull() || !target) return;
+            QMetaObject::invokeMethod(target, [self, id, sharp, cut, pageRect, zoom] { if (self) self->applySharp(id, sharp, cut, pageRect, zoom); }, Qt::QueuedConnection);
+        });
+    }
+}
+
+void InkCanvas::applySharp(qint64 id, const picturepixels::Sharp &sharp, const QImage &img, const QRectF &pageRect, qreal zoom)
+{
+    for (PageImage &p : m_images) {
+        if (p.id != id) continue;
+        if (!(p.sharpWanted == sharp)) return;      // the view moved on while this was being cut
+        p.sharpPending = img;
+        p.sharpRect = pageRect;
+        p.sharpPixels = img.size();
+        p.sharpZoom = zoom;
+        p.sharpWhole = sharp.whole;
+        p.sharpDrop = false;
         m_imagesDirty = true;
         update();
         return;
     }
+}
+
+QVariantMap InkCanvas::pictureTexture(qint64 id) const
+{
+    for (const PageImage &p : m_images) {
+        if (p.id != id) continue;
+        return {{QStringLiteral("sourceWidth"), p.pixels.width()}, {QStringLiteral("sourceHeight"), p.pixels.height()},
+                {QStringLiteral("sharpWidth"), std::max(0, p.sharpPixels.width())}, {QStringLiteral("sharpHeight"), std::max(0, p.sharpPixels.height())},
+                {QStringLiteral("sharpRect"), p.sharpPixels.isEmpty() ? QRectF() : p.sharpRect},
+                {QStringLiteral("sharpSource"), p.sharpPixels.isEmpty() ? QRectF() : p.sharpWanted.source},
+                {QStringLiteral("whole"), p.sharpWhole}, {QStringLiteral("opaque"), p.opaque}};
+    }
+    return {};
 }
 
 void InkCanvas::applyBackground(const QImage &img, qreal renderedScale, int gen)

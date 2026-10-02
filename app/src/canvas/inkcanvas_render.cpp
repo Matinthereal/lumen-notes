@@ -364,6 +364,8 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
 
     for (QSGNode *n : m_orphanNodes) { if (n->parent()) n->parent()->removeChildNode(n); delete n; }
     m_orphanNodes.clear();
+    qDeleteAll(m_orphanTextures);
+    m_orphanTextures.clear();
 
     // PDF background: a page-sized textured quad under the guides.
     if (m_backgroundDirty) {
@@ -406,7 +408,33 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
                 img.node->setTexture(img.texture);
                 m_imagesNode->appendChildNode(img.node);
             }
-            if (img.node->rect() != img.rect) { img.node->setRect(img.rect); img.node->markDirty(QSGNode::DirtyGeometry); }
+            // The texture cut for this view goes straight over the base one: no mipmaps, because it
+            // is already the size it is shown at.
+            if (img.sharpDrop) {
+                if (img.sharpNode) { m_imagesNode->removeChildNode(img.sharpNode); delete img.sharpNode; img.sharpNode = nullptr; }
+                delete img.sharpTexture; img.sharpTexture = nullptr;
+                img.sharpDrop = false;
+            }
+            if (!img.sharpPending.isNull() && window()) {
+                delete img.sharpTexture;
+                img.sharpTexture = window()->createTextureFromImage(img.sharpPending, img.opaque ? QQuickWindow::TextureIsOpaque : QQuickWindow::CreateTextureOptions());
+                img.sharpPending = QImage();
+                if (img.sharpTexture && !img.sharpNode) {
+                    img.sharpNode = new QSGSimpleTextureNode;
+                    img.sharpNode->setFiltering(QSGTexture::Linear);
+                    img.sharpNode->setOwnsTexture(false);
+                    img.sharpNode->setTexture(img.sharpTexture);
+                    m_imagesNode->insertChildNodeAfter(img.sharpNode, img.node);
+                } else if (img.sharpTexture) {
+                    img.sharpNode->setTexture(img.sharpTexture);
+                    img.sharpNode->markDirty(QSGNode::DirtyMaterial);
+                }
+            }
+            if (img.sharpNode && img.sharpNode->rect() != img.sharpRect) { img.sharpNode->setRect(img.sharpRect); img.sharpNode->markDirty(QSGNode::DirtyGeometry); }
+            // Under a sharp texture that covers a see-through picture whole, the base one would
+            // show through it and darken every soft edge: it is folded to nothing while that lasts.
+            const QRectF baseRect = img.sharpNode && img.sharpWhole && !img.opaque ? QRectF(img.rect.topLeft(), QSizeF(0, 0)) : img.rect;
+            if (img.node->rect() != baseRect) { img.node->setRect(baseRect); img.node->markDirty(QSGNode::DirtyGeometry); }
         }
         m_imagesDirty = false;
     }

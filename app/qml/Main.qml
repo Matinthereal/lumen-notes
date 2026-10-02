@@ -546,20 +546,23 @@ Window {
                 pageId: root.pageTyped ? root.currentPageId : 0
                 presenting: root.presenting
                 onPageLinkActivated: (url) => root.followLink(url)
+                onToast: (m) => toastBar.show(m, null)
                 infoHeight: pageInfo.height + 4
             }
-            // Pictures dragged in from the file manager land where they are dropped.
+            // Pictures dragged in — files from a file manager, a picture out of a browser — land
+            // where they are dropped. A typed page has nowhere to put one, and says so; anything
+            // that is not a picture is left for the text editor underneath to take.
             DropArea {
                 id: pictureDrop
                 anchors.fill: parent
-                enabled: root.currentPageId > 0 && !root.pageTyped && !root.presenting
-                function pictures(urls) { return Array.from(urls).filter(u => /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(u.toString())) }
-                onEntered: (drag) => { drag.accepted = drag.hasUrls && pictures(drag.urls).length > 0 }
+                enabled: root.currentPageId > 0 && !root.presenting
+                onEntered: (drag) => {
+                    drag.accepted = root.pageTyped ? imageLayer.carriesPictureData(drag)
+                                                   : (drag.hasUrls || drag.hasHtml || imageLayer.carriesPictureData(drag))
+                }
                 onDropped: (drop) => {
-                    const urls = pictures(drop.urls)
-                    if (!urls.length) return
-                    imageLayer.insertAt(urls, canvas.toPage(Qt.point(drop.x, drop.y)))
-                    drop.acceptProposedAction()
+                    if (root.pageTyped) { toastBar.show("Pictures go on handwritten pages — this one is typed", null); return }
+                    if (imageLayer.takeDrop(drop, canvas.toPage(Qt.point(drop.x, drop.y)))) drop.acceptProposedAction()
                 }
                 Rectangle {
                     anchors { fill: parent; margins: 12 }
@@ -567,7 +570,7 @@ Window {
                     radius: Ui.radiusLg
                     color: Qt.alpha(pal.highlight, 0.08)
                     border.color: pal.highlight; border.width: 2
-                    Text { anchors.centerIn: parent; text: "Drop to add to this page"; color: pal.highlight; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold }
+                    Text { anchors.centerIn: parent; text: root.pageTyped ? "Pictures go on handwritten pages" : "Drop to add to this page"; color: pal.highlight; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold }
                 }
             }
             Connections { target: canvas; function onTapped(page) { stickies.addAt(page); canvas.tool = "pen" } }
@@ -706,6 +709,7 @@ Window {
                 onPresentRequested: root.startPresenting()
                 onExportPageRequested: root.exportPdf("page")
                 onPictureRequested: pictureDialog.open()
+                onPicturePasteRequested: imageLayer.pasteOrSay()
                 onToast: (m) => toastBar.show(m, null)
                 onLatexRequested: if (canvas.hasSelection) ocr.latexFromImage(canvas.renderSelectionToPng())
                 onShapeKindChosen: (kind) => { shapeLayer.kind = kind; canvas.tool = "shape"; toastBar.show("Drag to draw a " + kind, null) }
@@ -1126,7 +1130,8 @@ Window {
                 onCropAsked: imageLayer.startCrop()
                 onRotateAsked: { imageLayer.rotateSelected(); info = imageLayer.selectedInfo() }
                 onResetAsked: imageLayer.resetSelected()
-                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : toastBar.show("Add the picture again to duplicate it", null)
+                onDuplicateAsked: subject === "shape" ? shapeLayer.duplicateSelected() : imageLayer.duplicateSelected()
+                onCopyAsked: imageLayer.copySelected()
                 onDeleteAsked: subject === "shape" ? shapeLayer.removeSelected() : imageLayer.removeSelected()
             }
             StyleBar {
@@ -1494,8 +1499,9 @@ Window {
         onActivated: root.closeTopmost()
     }
     Shortcut { enabled: root.inkKeys; sequences: ["Delete", "Backspace"]; onActivated: canvas.deleteSelection() }
-    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+C"; onActivated: canvas.hasTextSelection ? canvas.copyText() : canvas.copySelection() }
-    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+X"; onActivated: canvas.cutSelection() }
+    // The picture in hand goes to the clipboard as a picture; otherwise it is the ink or the PDF text.
+    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+C"; onActivated: { if (!(imageLayer.inHand && imageLayer.copySelected())) canvas.hasTextSelection ? canvas.copyText() : canvas.copySelection() } }
+    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+X"; onActivated: { if (!(imageLayer.inHand && imageLayer.cutSelected())) canvas.cutSelection() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }

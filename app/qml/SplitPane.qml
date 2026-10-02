@@ -155,6 +155,7 @@ Rectangle {
             board: splitCanvas
             pageId: pane.typed ? 0 : pane.pageId
             onToast: (m) => pane.toast(m)
+            onToastAction: (m) => pane.toast(m)
         }
         ShapeLayer {
             anchors.fill: parent
