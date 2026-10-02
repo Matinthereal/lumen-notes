@@ -152,33 +152,40 @@ QVector<Span> spans(double from, double length, int count, int limit)
 // Area averaging: every new pixel is the mean of the old pixels it covers, by how much of each it
 // covers. This is what keeps a one-pixel line a line, where the graphics card's mipmaps make it a
 // grey smear. `img` is RGB32 or premultiplied ARGB32, so the four bytes average independently.
+//
+// One old row at a time is squeezed sideways and added to the new row it falls in, so the working
+// memory is two rows of the result however tall the picture is: a long scrolling screenshot must
+// not cost a phone a couple of hundred megabytes each time the view settles.
 QImage shrink(const QImage &img, const QRectF &window, QSize size)
 {
     const QVector<Span> across = spans(window.x(), window.width(), size.width(), img.width());
     const QVector<Span> down = spans(window.y(), window.height(), size.height(), img.height());
-    const int top = down.first().first, bottom = down.last().first + int(down.last().weights.size());
-    QVector<float> rows(size_t(bottom - top) * size.width() * 4);
-    for (int y = top; y < bottom; ++y) {
-        const uchar *line = img.constScanLine(y);
-        float *out = rows.data() + size_t(y - top) * size.width() * 4;
-        for (int x = 0; x < size.width(); ++x, out += 4) {
-            const Span &s = across[x];
-            const uchar *px = line + s.first * 4;
-            float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
-            for (float w : s.weights) { c0 += w * px[0]; c1 += w * px[1]; c2 += w * px[2]; c3 += w * px[3]; px += 4; }
-            out[0] = c0; out[1] = c1; out[2] = c2; out[3] = c3;
-        }
-    }
+    const int values = size.width() * 4;
+    QVector<float> squeezed(values), sum(values);
+    int squeezedRow = -1;       // neighbouring new rows share the old row their edge runs through
     QImage result(size, img.format());
     for (int y = 0; y < size.height(); ++y) {
         const Span &s = down[y];
-        uchar *out = result.scanLine(y);
-        for (int x = 0; x < size.width() * 4; ++x) {
-            const float *col = rows.constData() + size_t(s.first - top) * size.width() * 4 + x;
-            float c = 0;
-            for (float w : s.weights) { c += w * *col; col += size_t(size.width()) * 4; }
-            out[x] = uchar(std::clamp(c + 0.5f, 0.0f, 255.0f));
+        sum.fill(0);
+        int row = s.first;
+        for (float weight : s.weights) {
+            if (row != squeezedRow) {
+                const uchar *line = img.constScanLine(row);
+                float *out = squeezed.data();
+                for (int x = 0; x < size.width(); ++x, out += 4) {
+                    const Span &a = across[x];
+                    const uchar *px = line + a.first * 4;
+                    float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+                    for (float w : a.weights) { c0 += w * px[0]; c1 += w * px[1]; c2 += w * px[2]; c3 += w * px[3]; px += 4; }
+                    out[0] = c0; out[1] = c1; out[2] = c2; out[3] = c3;
+                }
+                squeezedRow = row;
+            }
+            for (int i = 0; i < values; ++i) sum[i] += weight * squeezed[i];
+            ++row;
         }
+        uchar *out = result.scanLine(y);
+        for (int i = 0; i < values; ++i) out[i] = uchar(std::clamp(sum[i] + 0.5f, 0.0f, 255.0f));
     }
     return result;
 }

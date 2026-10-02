@@ -106,7 +106,7 @@ Popup {
                 property string label: ""
                 property bool danger: false
                 signal clicked()
-                implicitWidth: t.implicitWidth + 22; implicitHeight: Ui.target - 10
+                implicitWidth: t.implicitWidth + 22; implicitHeight: Ui.target
                 radius: Ui.radiusSm
                 color: press.pressed ? Qt.alpha(danger ? Ui.danger : pal.text, Ui.pressAlpha) : "transparent"
                 border.color: danger ? Qt.alpha(Ui.danger, 0.6) : Qt.alpha(pal.text, Ui.borderAlpha); border.width: 1

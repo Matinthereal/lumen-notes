@@ -37,6 +37,13 @@ class TstImages : public QObject {
         return out;
     }
     QVariantMap only() const { const QVariantList l = m_images->list(m_page); return l.size() == 1 ? m_images->image(l.first().toMap().value("id").toLongLong()) : QVariantMap(); }
+    // What another program would paste: the PNG, which a copy makes in the background.
+    static QImage copiedPicture() {
+        QImage img;
+        [&] { QTRY_VERIFY_WITH_TIMEOUT(QGuiApplication::clipboard()->mimeData()->hasFormat("image/png"), 15000); }();
+        img.loadFromData(QGuiApplication::clipboard()->mimeData()->data("image/png"), "PNG");
+        return img;
+    }
     void clearPage(qint64 page) { for (const QVariant &v : m_images->list(page)) m_images->remove(v.toMap().value("id").toLongLong()); }
 
 private slots:
@@ -129,15 +136,20 @@ private slots:
         QCOMPARE(m_images->image(id).value("w").toDouble(), 400.0);      // shown small…
 
         QVERIFY(m_images->copy(id));
+        // Untouched: the file's own bytes, there at once, and Lumen can already paste it.
+        QCOMPARE(QGuiApplication::clipboard()->mimeData()->data("image/jpeg"), bytesOf(file));
+        QVERIFY(m_images->clipboardHasImage());
+        QCOMPARE(copiedPicture().size(), QSize(2000, 1500));              // …copied whole
         const QMimeData *mime = QGuiApplication::clipboard()->mimeData();
-        QCOMPARE(QGuiApplication::clipboard()->image().size(), QSize(2000, 1500));   // …copied whole
-        QCOMPARE(mime->data("image/jpeg"), bytesOf(file));                // untouched: the file's own bytes
+        QCOMPARE(mime->data("image/jpeg"), bytesOf(file));                // and still there beside the PNG
+        // Never as bare pixels: Qt would encode those in the window's thread whenever a program asked.
+        QVERIFY(!mime->hasImage());
 
         m_images->setCrop(id, 0.25, 0, 0.5, 1, 100, 100, 200, 300);
         m_images->rotate(id, 1);
         QVERIFY(m_images->copy(id));
+        QCOMPARE(copiedPicture().size(), QSize(1500, 1000));              // a quarter turn of the middle half
         mime = QGuiApplication::clipboard()->mimeData();
-        QCOMPARE(QGuiApplication::clipboard()->image().size(), QSize(1500, 1000));   // a quarter turn of the middle half
         QVERIFY(!mime->hasFormat("image/jpeg"));                          // the file is no longer what is shown
 
         const QVariantMap was = m_images->image(id);
@@ -164,8 +176,9 @@ private slots:
 
         QSignalSpy fetched(m_images.get(), &Images::fetched);
         QSignalSpy failed(m_images.get(), &Images::failed);
-        m_images->fetch(m_otherPage, QUrl("data:image/png;base64," + QString::fromLatin1(png.toBase64())), 200, 200, 500, 500);
+        m_images->fetch(m_otherPage, QUrl("data:image/png;base64," + QString::fromLatin1(png.toBase64())), 200, 200, 500, 500, this);
         QCOMPARE(fetched.size(), 1);
+        QCOMPARE(fetched.first().at(2).value<QObject *>(), this);         // whoever asked is told, and only they announce it
         QCOMPARE(bytesOf(m_images->image(fetched.first().at(1).toLongLong()).value("path").toString()), png);
 
         QCOMPARE(m_images->placeData(m_page, "<html>not a picture</html>", 300, 300, 500, 500), 0);
@@ -173,6 +186,83 @@ private slots:
         m_images->fetch(m_page, QUrl("ftp://example.invalid/a.png"), 200, 200, 500, 500);
         QCOMPARE(failed.size(), 2);
         QCOMPARE(m_images->list(m_page).size(), 1);
+    }
+    // Bytes that came with no file name are stored under their own kind's ending, and one stored as
+    // .bin by an earlier version is still found where it is.
+    void bytesAreStoredUnderTheirOwnEnding() {
+        const QByteArray bmp = encoded(detailed(90, 60), "BMP");
+        const qint64 id = m_images->placeData(m_page, bmp, 300, 300, 500, 500);
+        QVERIFY(id > 0);
+        const QString path = m_images->image(id).value("path").toString();
+        QVERIFY2(path.endsWith(".bmp"), qPrintable(path));
+        QCOMPARE(bytesOf(path), bmp);
+        Database::Query name(m_db, "SELECT name FROM attachment WHERE sha256=?");
+        name.bind(1, m_images->image(id).value("attachment").toString());
+        QVERIFY(name.step());
+        QCOMPARE(name.text(0), QStringLiteral("picture.bmp"));
+
+        const QString old = path.chopped(3) + "bin";
+        QVERIFY(QFile::rename(path, old));
+        QCOMPARE(m_images->image(id).value("path").toString(), old);
+    }
+    // A picture is a picture by what is in the file, whatever it is called.
+    void aPictureIsKnownByItsContent() {
+        const QString bare = m_dir.path() + "/download", words = m_dir.path() + "/words.png";
+        QVERIFY(detailed(120, 80).save(bare, "PNG"));
+        { QFile f(words); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("words"); }
+        QVERIFY(m_images->isPictureFile(QUrl::fromLocalFile(bare)));
+        QVERIFY(!m_images->isPictureFile(QUrl::fromLocalFile(words)));
+        QVERIFY(!m_images->isPictureFile(QUrl("https://example.invalid/a.png")));
+    }
+    // A typed page asks this before it pastes: pictures and nothing it could use as text.
+    void onlyPicturesOnTheClipboard() {
+        const QString a = m_dir.path() + "/only.png", c = m_dir.path() + "/only.txt";
+        QVERIFY(detailed(120, 80).save(a, "PNG"));
+        { QFile f(c); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("words"); }
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        QVERIFY(!m_images->clipboardIsOnlyPictures());
+        clipboard->setImage(detailed(64, 64));
+        QVERIFY(m_images->clipboardIsOnlyPictures());
+        auto *mime = new QMimeData;
+        mime->setUrls({QUrl::fromLocalFile(a)});
+        mime->setText(a);                                                 // file managers add the address as text
+        clipboard->setMimeData(mime);
+        QVERIFY(m_images->clipboardIsOnlyPictures());
+        mime = new QMimeData;
+        mime->setUrls({QUrl::fromLocalFile(a), QUrl::fromLocalFile(c)});
+        clipboard->setMimeData(mime);
+        QVERIFY(!m_images->clipboardIsOnlyPictures());
+        mime = new QMimeData;                                             // a picture copied with its caption
+        mime->setImageData(detailed(64, 64));
+        mime->setText("a caption");
+        clipboard->setMimeData(mime);
+        QVERIFY(!m_images->clipboardIsOnlyPictures());
+    }
+    // Each pasted file is read through and copied while the window waits, so one paste takes a
+    // bounded number and says how many pictures it left.
+    void aPasteOfManyFilesTakesSomeAndCountsTheRest() {
+        QList<QUrl> files;
+        for (int i = 0; i < Images::kAtOnce + 3; ++i) {
+            const QString path = m_dir.path() + QStringLiteral("/many-%1.png").arg(i);
+            QImage img(40, 30, QImage::Format_RGB32);
+            img.fill(qRgb(i * 9, 80, 120));
+            QVERIFY(img.save(path, "PNG"));
+            files.append(QUrl::fromLocalFile(path));
+        }
+        auto *mime = new QMimeData;
+        mime->setUrls(files);
+        QGuiApplication::clipboard()->setMimeData(mime);
+        QCOMPARE(m_images->pasteClipboard(m_page, 300, 300, 500, 500).size(), int(Images::kAtOnce));
+        QCOMPARE(m_images->leftOut(), 3);
+        QGuiApplication::clipboard()->setImage(detailed(64, 64));
+        QCOMPARE(m_images->pasteClipboard(m_page, 300, 300, 500, 500).size(), 1);
+        QCOMPARE(m_images->leftOut(), 0);
+    }
+    // The clipboard changing is how the page knows a picture is newer than the ink it copied.
+    void theClipboardChangingIsAnnounced() {
+        QSignalSpy changed(m_images.get(), &Images::clipboardChanged);
+        QGuiApplication::clipboard()->setImage(detailed(64, 64));
+        QTRY_VERIFY(changed.size() >= 1);
     }
 };
 QTEST_MAIN(TstImages)

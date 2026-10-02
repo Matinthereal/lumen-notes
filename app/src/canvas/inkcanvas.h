@@ -154,8 +154,9 @@ public:
     Q_INVOKABLE QPointF toScreen(QPointF page) const { return page * m_zoom + m_pan; }
     Q_INVOKABLE QPointF viewCentrePage() const { return toPage(QPointF(width() / 2, height() / 2)); }
     Q_INVOKABLE void setImages(const QVariantList &images);
-    // What a picture is being drawn from, for the tests: its own size, and the size and place of
-    // the texture cut for the current view (zero until the view has settled and it has arrived).
+    // What a picture is being drawn from, for the tests: its own size, the size and place of the
+    // texture cut for the current view (zero until the view has settled and it has arrived), and
+    // under drawn* what the last frame really put in the scene, which is all the eye gets.
     Q_INVOKABLE QVariantMap pictureTexture(qint64 id) const;
     // The floating toolbar and the audio bar cover the page; fitting has to allow for them or the
     // top and bottom of every page — where the date and the question number go — sit under chrome.
@@ -180,6 +181,7 @@ signals:
     void pagePressed();          // a press the canvas itself owns: any object selection is over
     void undoChanged();
     void selectionChanged();
+    void selectionCopied();      // ink went to the canvas's own clipboard: the newest copy is not the system's
     void inkingChanged();
     void documentChanged();
     void statsChanged();
@@ -196,6 +198,7 @@ protected:
     void hoverMoveEvent(QHoverEvent *event) override;
     void geometryChange(const QRectF &n, const QRectF &o) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;
+    void releaseResources() override;
 
 private:
     enum class Tool { Pen, Highlighter, Eraser, Lasso, Text, TextBlock, Shape };
@@ -407,9 +410,11 @@ private:
         bool sharpDrop = false;             // the render thread is to take it down
         class QSGTexture *sharpTexture = nullptr;
         class QSGSimpleTextureNode *sharpNode = nullptr;
+        QSize drawnSharpPixels;             // as the frame left them, for pictureTexture()
+        QRectF drawnSharpRect, drawnBaseRect;
     };
     QVector<PageImage> m_images;
-    QSGNode *m_imagesNode = nullptr;
+    class QSGTransformNode *m_imagesNode = nullptr;
     bool m_imagesDirty = false;
     QVector<class QSGTexture *> m_orphanTextures;   // deleted on the render thread, which made them
     QTimer m_sharpSettle;                           // the view has stopped moving: cut the sharp textures

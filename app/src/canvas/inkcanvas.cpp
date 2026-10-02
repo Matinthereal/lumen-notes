@@ -79,7 +79,8 @@ InkCanvas::InkCanvas(QQuickItem *parent) : QQuickItem(parent), m_undo(&m_doc)
     connect(m_holdTimer, &QTimer::timeout, this, &InkCanvas::checkHoldStill);
 }
 
-InkCanvas::~InkCanvas() = default;
+// A destructor cannot rely on QQuickItem calling the override, so the textures are handed over here.
+InkCanvas::~InkCanvas() { if (window()) releaseResources(); }
 
 QString InkCanvas::penStyle() const
 {
@@ -912,6 +913,7 @@ void InkCanvas::copySelection()
     m_clipboard.clear();
     for (quint64 id : m_selection)
         if (const Stroke *s = m_doc.stroke(id)) { Stroke c = *s; c.id = 0; m_clipboard.append(c); }
+    if (!m_clipboard.isEmpty()) emit selectionCopied();
 }
 
 void InkCanvas::cutSelection() { copySelection(); deleteSelection(); }
@@ -1277,6 +1279,15 @@ void InkCanvas::pictureViewMoved()
     if (!m_images.isEmpty()) m_sharpSettle.start();
 }
 
+// Each cut holds a decoded picture while it works (48 MB for a phone photo), and a page of photos
+// asks for one each every time the view settles. Two at a time keeps that bounded on a tablet, and
+// leaves the shared pool to everything else.
+static QThreadPool *sharpenPool()
+{
+    static QThreadPool *pool = [] { auto *p = new QThreadPool(qApp); p->setMaxThreadCount(2); return p; }();
+    return pool;
+}
+
 void InkCanvas::sharpenPictures()
 {
     if (m_images.isEmpty() || width() <= 0 || height() <= 0) return;
@@ -1309,7 +1320,7 @@ void InkCanvas::sharpenPictures()
         const QString path = img.path;
         const QRectF crop = img.crop;
         const int rotation = img.rotation;
-        QThreadPool::globalInstance()->start([self, id, path, crop, rotation, sharp, pageRect, zoom] {
+        sharpenPool()->start([self, id, path, crop, rotation, sharp, pageRect, zoom] {
             const QImage cut = picturepixels::render(picturepixels::load(path, rotation, crop), sharp);
             InkCanvas *target = self.data();
             if (cut.isNull() || !target) return;
@@ -1343,7 +1354,10 @@ QVariantMap InkCanvas::pictureTexture(qint64 id) const
                 {QStringLiteral("sharpWidth"), std::max(0, p.sharpPixels.width())}, {QStringLiteral("sharpHeight"), std::max(0, p.sharpPixels.height())},
                 {QStringLiteral("sharpRect"), p.sharpPixels.isEmpty() ? QRectF() : p.sharpRect},
                 {QStringLiteral("sharpSource"), p.sharpPixels.isEmpty() ? QRectF() : p.sharpWanted.source},
-                {QStringLiteral("whole"), p.sharpWhole}, {QStringLiteral("opaque"), p.opaque}};
+                {QStringLiteral("whole"), p.sharpWhole}, {QStringLiteral("opaque"), p.opaque},
+                {QStringLiteral("drawnSharpWidth"), std::max(0, p.drawnSharpPixels.width())},
+                {QStringLiteral("drawnSharpHeight"), std::max(0, p.drawnSharpPixels.height())},
+                {QStringLiteral("drawnSharpRect"), p.drawnSharpRect}, {QStringLiteral("drawnBaseRect"), p.drawnBaseRect}};
     }
     return {};
 }

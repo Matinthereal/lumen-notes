@@ -26,6 +26,7 @@
 #include <QJSValue>
 #include <QQmlProperty>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QTimer>
 #include <QDir>
 #include <QFile>
@@ -43,6 +44,7 @@
 #include <functional>
 
 #include "canvas/inkcanvas.h"
+#include "media/picturepixels.h"
 #include "input/tabletsample.h"
 #include "papers/papersservice.h"
 
@@ -892,6 +894,7 @@ void paperBackdrop(QQuickWindow *win, QObject *root)
     auto *sheet = qobject_cast<QQuickItem *>(c.create());
     if (!sheet) return;
     sheet->setParentItem(canvas);
+    sheet->setZ(-1);        // under what the canvas itself draws: the pictures lie on the paper
     const QPointF tl = canvas->toScreen(QPointF(0, 0));
     const QPointF br = canvas->toScreen(QPointF(canvas->pageSize().width(), canvas->pageSize().height()));
     sheet->setPosition(tl);
@@ -1193,6 +1196,11 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
         spin(150);
     };
     const auto bytesOf = [](const QString &path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray(); };
+    // What another program would paste after a copy: the PNG, which is made in the background.
+    const auto copied = [&] {
+        waitFor([&] { return clipboard->mimeData()->hasFormat(QStringLiteral("image/png")); }, 15000);
+        return QImage::fromData(clipboard->mimeData()->data(QStringLiteral("image/png")), "PNG");
+    };
     const auto toast = [&] { QQuickItem *t = findOne(win, QStringLiteral("toastText")); return t && t->isVisible() ? t->property("text").toString() : QString(); };
     const auto toastSays = [&](const QString &text) { return toast() == text || (text == QLatin1String("Undo") && itemWithText(win->contentItem(), text)); };
     // Dropped the way the window system delivers it: enter, move, drop, at a point on the page.
@@ -1270,6 +1278,47 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
     spin(400);
     r.check("with nothing to paste it says so", list().isEmpty() && toastSays(QStringLiteral("There is no picture on the clipboard — copy one first")));
 
+    // ---- The same menu in the tablet interface, by finger: both rows whole, inside the sheet, and
+    // big enough to hit; Paste pastes.
+    QObject *tabletMode = nullptr;
+    if (QQmlEngine *engine = qmlEngine(root)) tabletMode = engine->rootContext()->contextProperty(QStringLiteral("tabletMode")).value<QObject *>();
+    if (tabletMode && canFinger() && !contextFlag(root, QStringLiteral("mobile"))) {
+        const QString panelBefore = root->property("leftPanel").toString();
+        tabletMode->setProperty("tablet", true);
+        spin(500);
+        clipboard->setImage(screenshot);
+        pictureButton = findOne(win, QStringLiteral("pictureButton"));
+        r.check("the tablet interface has the picture button too", pictureButton && pictureButton->isVisible());
+        if (pictureButton) fingerTap(win, pictureButton, 80);
+        spin(350);
+        QQuickItem *content = findOne(win, QStringLiteral("actionSheetContent"));
+        bool rowsFit = sheetOpen(win) && content;
+        int rows = 0;
+        QString misfit;
+        for (QQuickItem *row : findAll(win, QStringLiteral("actionSheetItem"))) {
+            if (!rowsFit || !row->isVisible()) continue;
+            ++rows;
+            QQuickItem *label = nullptr;
+            for (QQuickItem *l : findAll(win, QStringLiteral("actionSheetLabel"))) if (l->parentItem() && l->parentItem()->parentItem() == row) label = l;
+            const QRectF box = row->mapRectToScene(QRectF(0, 0, row->width(), row->height()));
+            const QRectF sheetBox = content->mapRectToScene(QRectF(0, 0, content->width(), content->height()));
+            const bool ok = row->height() >= 44 && sheetBox.adjusted(-1, -1, 1, 1).contains(box)
+                         && QRectF(0, 0, win->width(), win->height()).contains(box) && label && label->implicitWidth() <= label->width() + 0.5;
+            if (!ok) misfit = label ? label->property("text").toString() : QStringLiteral("a row with no label");
+            rowsFit = rowsFit && ok;
+        }
+        r.check("there its two rows are whole, inside the sheet and fingertip-sized", rowsFit && rows == 2, QStringLiteral("%1 row(s) %2").arg(rows).arg(misfit));
+        shot(win, QStringLiteral("notes-picture-menu-tablet"));
+        if (QQuickItem *row = sheetAction(win, QStringLiteral("Paste"))) fingerTap(win, row, 80);
+        spin(500);
+        r.check("and a finger on Paste pastes", list().size() == 1, QStringLiteral("%1 picture(s)").arg(list().size()));
+        clear();
+        tabletMode->setProperty("tablet", false);
+        root->setProperty("leftPanel", panelBefore);
+        spin(400);
+        pictureButton = findOne(win, QStringLiteral("pictureButton"));
+    }
+
     // ---- Files copied in a file manager: the clipboard holds their addresses.
     { auto *mime = new QMimeData;
       mime->setUrls({QUrl::fromLocalFile(photoFile), QUrl::fromLocalFile(textFile)});
@@ -1281,23 +1330,52 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
     pic = newest();
     r.check("as the file's own bytes", bytesOf(pic.value(QStringLiteral("path")).toString()) == bytesOf(photoFile));
 
-    // ---- The canvas draws it from a texture cut for the screen, not only the all-zoom one.
+    // ---- The canvas draws it from a texture cut for the screen, not only the all-zoom one. These
+    // read what the last frame put in the scene (drawn…), not what the canvas meant to put there.
     const qint64 photoId = pic.value(QStringLiteral("id")).toLongLong();
     const qreal dpr = win->effectiveDevicePixelRatio();
     const int onScreen = qRound(pic.value(QStringLiteral("w")).toDouble() * canvas->zoom() * dpr);
+    const auto drawn = [&](const char *key) { return canvas->pictureTexture(photoId).value(QLatin1String(key)); };
     r.check("a picture is drawn from a texture with one texel per screen pixel",
-            waitFor([&] { return qAbs(canvas->pictureTexture(photoId).value(QStringLiteral("sharpWidth")).toInt() - onScreen) <= 1; }, 6000),
-            QStringLiteral("texture %1 wide for %2 px on screen").arg(canvas->pictureTexture(photoId).value(QStringLiteral("sharpWidth")).toInt()).arg(onScreen));
-    r.check("made from the file's own pixels", canvas->pictureTexture(photoId).value(QStringLiteral("sourceWidth")).toInt() == 2000);
+            waitFor([&] { return qAbs(drawn("drawnSharpWidth").toInt() - onScreen) <= 1; }, 6000),
+            QStringLiteral("texture %1 wide for %2 px on screen").arg(drawn("drawnSharpWidth").toInt()).arg(onScreen));
+    r.check("made from the file's own pixels", drawn("sourceWidth").toInt() == 2000);
+    // And the window shows exactly that: the file's pixels averaged onto the screen's, where the
+    // picture is. Read back from the software renderer, which is what a run without a screen has;
+    // on a graphics card the same texture goes through the card's filter, which no test here sees.
+    if (win->rendererInterface()->graphicsApi() == QSGRendererInterface::Software) {
+        picturepixels::Sharp cut;
+        cut.source = drawn("sharpSource").toRectF();
+        cut.pixels = QSize(drawn("drawnSharpWidth").toInt(), drawn("drawnSharpHeight").toInt());
+        const QImage expected = picturepixels::render(picturepixels::load(pic.value(QStringLiteral("path")).toString(), 0, QRectF(0, 0, 1, 1)), cut)
+                                    .convertToFormat(QImage::Format_RGB32);
+        const QPoint at = (canvas->mapToScene(canvas->toScreen(drawn("drawnSharpRect").toRectF().topLeft())) * dpr).toPoint();
+        const QImage seen = win->grabWindow().convertToFormat(QImage::Format_RGB32);
+        shot(win, QStringLiteral("notes-picture-sharp"));
+        // The frame, its grips and the sticky note an earlier check left lie over part of it. Drawn
+        // from any other texture, or a pixel out of place, next to nothing would match.
+        int looked = 0, same = 0;
+        for (int y = 0; y < expected.height(); y += 3)
+            for (int x = 0; x < expected.width(); x += 3) {
+                if (!seen.rect().contains(at + QPoint(x, y))) continue;
+                const QRgb want = expected.pixel(x, y), got = seen.pixel(at + QPoint(x, y));
+                ++looked;
+                if (qAbs(qRed(want) - qRed(got)) <= 2 && qAbs(qGreen(want) - qGreen(got)) <= 2 && qAbs(qBlue(want) - qBlue(got)) <= 2) ++same;
+            }
+        r.check("and the window shows that texture pixel for pixel, where the picture is", looked > 1000 && same > looked / 2,
+                QStringLiteral("%1 of %2 sampled pixels match").arg(same).arg(looked));
+    }
     // Zoomed to four times the size, the texture follows: still one texel per pixel of what is in view.
     const qreal zoomBefore = canvas->zoom();
     const QPointF panBefore = canvas->pan();
     canvas->zoomAt(4.0, canvas->toScreen(QPointF(pic.value(QStringLiteral("x")).toDouble() + 10, pic.value(QStringLiteral("y")).toDouble() + 10)));
-    r.check("zooming drops the texture cut for the old zoom at once", canvas->pictureTexture(photoId).value(QStringLiteral("sharpWidth")).toInt() == 0);
+    r.check("zooming drops the texture cut for the old zoom at once", drawn("sharpWidth").toInt() == 0);
+    spin(60);
+    r.check("and the next frame has taken it out of the scene", drawn("drawnSharpWidth").toInt() == 0 && drawn("drawnSharpRect").toRectF().isEmpty()
+            && !drawn("drawnBaseRect").toRectF().isEmpty());
     const auto texelsPerPixel = [&] {
-        const QVariantMap t = canvas->pictureTexture(photoId);
-        const double shown = t.value(QStringLiteral("sharpRect")).toRectF().width() * canvas->zoom() * dpr;
-        return shown > 0 ? t.value(QStringLiteral("sharpWidth")).toDouble() / shown : 0.0;
+        const double shown = drawn("drawnSharpRect").toRectF().width() * canvas->zoom() * dpr;
+        return shown > 0 ? drawn("drawnSharpWidth").toDouble() / shown : 0.0;
     };
     r.check("and cuts a new one for the new zoom once the view settles", waitFor([&] { return qAbs(texelsPerPixel() - 1.0) < 0.01; }, 6000),
             QStringLiteral("%1 texels per pixel").arg(texelsPerPixel()));
@@ -1317,7 +1395,7 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
     if (copyBtn) tap(win, copyBtn);
     spin(300);
     r.check("Copy puts the picture on the clipboard at the file's resolution, as trimmed",
-            clipboard->image().size() == QSize(1000, 1500), QStringLiteral("%1 x %2").arg(clipboard->image().width()).arg(clipboard->image().height()));
+            copied().size() == QSize(1000, 1500), QStringLiteral("%1 x %2").arg(copied().width()).arg(copied().height()));
     chord(win, Qt::Key_V, Qt::ControlModifier);
     spin(400);
     QVariantMap pasted = newest();
@@ -1333,20 +1411,62 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
     clipboard->clear();
     chord(win, Qt::Key_C, Qt::ControlModifier);
     spin(300);
-    r.check("Ctrl+C copies the picture in hand", clipboard->image().size() == QSize(2000, 1500));
+    r.check("Ctrl+C copies the picture in hand", copied().size() == QSize(2000, 1500));
     r.check("an untouched photo is offered as its own JPEG bytes", clipboard->mimeData()->data(QStringLiteral("image/jpeg")) == bytesOf(photoFile));
     clipboard->clear();
     chord(win, Qt::Key_X, Qt::ControlModifier);
     spin(300);
-    r.check("Ctrl+X cuts it: off the page and onto the clipboard", list().size() == 1 && !clipboard->image().isNull());
+    r.check("Ctrl+X cuts it: off the page and onto the clipboard", list().size() == 1 && !copied().isNull());
     if (QQuickItem *undo = itemWithText(win->contentItem(), QStringLiteral("Undo"))) tap(win, undo);
     spin(300);
     r.check("and Undo puts it back", list().size() == 2);
 
-    // ---- Duplicate, from the style bar: a second one beside the first.
-    layer->setProperty("selectedId", photoId);
+    // ---- Ink copied after a picture: Ctrl+V pastes the ink, though the picture is still on the
+    // system clipboard (ink never goes there). A newer picture takes its turn again.
+    {
+        const int strokesBefore = canvas->strokeCount();
+        canvas->setTool(QStringLiteral("pen"));
+        const QPointF from = canvas->mapToScene(canvas->toScreen(QPointF(120, 120)));
+        const auto sample = [&](TabletSample::Kind kind, QPointF at) {
+            TabletSample t;
+            t.kind = kind; t.windowPos = at;
+            t.pressure = kind == TabletSample::Kind::Release ? 0.0f : 0.6f;
+            t.buttons = kind == TabletSample::Kind::Release ? Qt::NoButton : Qt::LeftButton;
+            t.button = Qt::LeftButton;
+            t.timestampMs = quint32(g_stamp += 16);
+            canvas->tabletSample(t);
+        };
+        sample(TabletSample::Kind::Press, from);
+        for (int i = 1; i <= 10; ++i) sample(TabletSample::Kind::Move, from + QPointF(6.0 * i, (i % 2) * 8.0));
+        sample(TabletSample::Kind::Release, from + QPointF(60, 0));
+        spin(200);
+        canvas->selectAll();
+        spin(150);
+        const int strokes = canvas->strokeCount();
+        chord(win, Qt::Key_C, Qt::ControlModifier);
+        chord(win, Qt::Key_V, Qt::ControlModifier);
+        spin(300);
+        r.check("ink copied after a picture is what Ctrl+V pastes", strokes > 0 && canvas->strokeCount() == strokes * 2 && list().size() == 2,
+                QStringLiteral("%1 → %2 stroke(s), %3 picture(s)").arg(strokes).arg(canvas->strokeCount()).arg(list().size()));
+        clipboard->setImage(screenshot);
+        chord(win, Qt::Key_V, Qt::ControlModifier);
+        spin(400);
+        r.check("and a picture copied after the ink is pasted in its turn", canvas->strokeCount() == strokes * 2 && list().size() == 3,
+                QStringLiteral("%1 stroke(s), %2 picture(s)").arg(canvas->strokeCount()).arg(list().size()));
+        if (list().size() == 3) QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, list().last().toMap().value(QStringLiteral("id")).toLongLong()));
+        canvas->selectNone();
+        canvas->undo();         // the pasted ink, then the stroke drawn for this
+        canvas->undo();
+        spin(200);
+        r.check("leaving the page's ink as it was", canvas->strokeCount() == strokesBefore,
+                QStringLiteral("%1 → %2 stroke(s)").arg(strokesBefore).arg(canvas->strokeCount()));
+    }
+
+    // ---- Duplicate: a second one beside the first. The button for it is in the picture's options,
+    // and is tapped in the picture checks; this is what it calls.
     canvas->setTool(QStringLiteral("lasso"));
-    spin(200);
+    layer->setProperty("selectedId", photoId);
+    spin(300);
     QMetaObject::invokeMethod(layer, "duplicateSelected");
     spin(300);
     QVariantMap twin = newest();
@@ -1354,12 +1474,47 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
             && twin.value(QStringLiteral("attachment")) == pic.value(QStringLiteral("attachment"))
             && qAbs(twin.value(QStringLiteral("cropW")).toDouble() - 0.5) < 1e-9
             && layer->property("selectedId").toLongLong() == twin.value(QStringLiteral("id")).toLongLong());
+
+    // ---- A narrow page (a phone, a slim window): the bar under a trimmed picture drops what the
+    // options also have, so that Done and Delete stay on screen.
+    {
+        const QSize sizeBefore = win->size();
+        const QString panelBefore = root->property("leftPanel").toString();
+        root->setProperty("leftPanel", QString());
+        win->resize(430, sizeBefore.height());
+        spin(500);
+        QQuickItem *done = findOne(win, QStringLiteral("picDone")), *copy = findOne(win, QStringLiteral("picCopy"));
+        QQuickItem *bar = done && done->parentItem() ? done->parentItem()->parentItem() : nullptr;
+        const bool inside = bar && bar->isVisible() && bar->x() >= 0 && bar->x() + bar->width() <= layer->width() + 0.5;
+        r.check("on a narrow page the picture's bar stays inside it", inside && done->isVisible() && copy && !copy->isVisible(),
+                bar ? QStringLiteral("bar %1..%2 in a layer %3 wide").arg(bar->x()).arg(bar->x() + bar->width()).arg(layer->width()) : QStringLiteral("no bar"));
+        shot(win, QStringLiteral("notes-picture-bar-narrow"));
+        win->resize(sizeBefore);
+        root->setProperty("leftPanel", panelBefore);
+        spin(500);
+    }
     clear();
 
     // ---- Drops. A file that is not a picture is turned away in words.
     { QMimeData mime; mime.setUrls({QUrl::fromLocalFile(textFile)});
       dropAt(&mime, QPointF(300, 400)); }
     r.check("a dropped file that is not a picture is refused politely", list().isEmpty() && toastSays(QStringLiteral("Only pictures can be dropped on a page")));
+    // Told apart by what is in the file: words called .png are not a picture, a photo with no
+    // ending is one. Dropped together with a real one, the toast says what was left behind.
+    const QString wordsPng = tmp.filePath(QStringLiteral("lumen-uitest-words.png")), bareFile = tmp.filePath(QStringLiteral("lumen-uitest-download"));
+    QFile::remove(wordsPng); QFile::remove(bareFile);
+    QFile::copy(textFile, wordsPng);
+    QFile::copy(photoFile, bareFile);
+    { QMimeData mime; mime.setUrls({QUrl::fromLocalFile(wordsPng)});
+      dropAt(&mime, QPointF(300, 400)); }
+    r.check("so is a file of words that only calls itself .png", list().isEmpty() && toastSays(QStringLiteral("Only pictures can be dropped on a page")), toast());
+    { QMimeData mime; mime.setUrls({QUrl::fromLocalFile(photoFile), QUrl::fromLocalFile(textFile), QUrl::fromLocalFile(bareFile)});
+      dropAt(&mime, QPointF(300, 400)); }
+    r.check("pictures dropped with another file land, a nameless download among them, and the toast counts what was left",
+            list().size() == 2 && toastSays(QStringLiteral("2 pictures added — 1 file was not a picture")),
+            QStringLiteral("%1 picture(s), toast: %2").arg(list().size()).arg(toast()));
+    clear();
+    QFile::remove(wordsPng); QFile::remove(bareFile);
     // The picture's own bytes, as some browsers drag them.
     { QMimeData mime; mime.setData(QStringLiteral("image/png"), screenshotPng);
       dropAt(&mime, QPointF(300, 400)); }
@@ -1375,7 +1530,14 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
         QTcpSocket *socket = server.nextPendingConnection();
         QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket, &screenshotPng] {
             const QByteArray request = socket->readAll();
-            if (request.startsWith("GET /shot.png")) {
+            if (request.startsWith("GET /slow.png")) {
+                // Long enough for the page to be turned before it lands.
+                QTimer::singleShot(700, socket, [socket, &screenshotPng] {
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nConnection: close\r\nContent-Length: " + QByteArray::number(screenshotPng.size()) + "\r\n\r\n" + screenshotPng);
+                    socket->disconnectFromHost();
+                });
+                return;
+            } else if (request.startsWith("GET /shot.png")) {
                 socket->write("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nConnection: close\r\nContent-Length: " + QByteArray::number(screenshotPng.size()) + "\r\n\r\n" + screenshotPng);
             } else if (request.startsWith("GET /huge.png")) {
                 // Says it is bigger than Lumen will fetch, and starts sending.
@@ -1400,6 +1562,29 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
         r.check("selected, with Undo on its toast", !list().isEmpty() && layer->property("selectedId").toLongLong() == newest().value(QStringLiteral("id")).toLongLong()
                 && toastSays(QStringLiteral("Picture added")) && toastSays(QStringLiteral("Undo")));
         clear();
+        // Sites write the picture's address without "http:" as often as with it.
+        { QMimeData mime;
+          mime.setUrls({QUrl(base + QStringLiteral("/page.html"))});
+          mime.setHtml(QStringLiteral("<img src=\"//127.0.0.1:%1/shot.png\">").arg(server.serverPort()));
+          dropAt(&mime, QPointF(420, 500)); }
+        r.check("a picture whose address starts at // is fetched too", waitFor([&] { return list().size() == 1; }, 8000), toast());
+        clear();
+        // The page turned while the picture was on its way: it lands on the page it was dropped
+        // on, and the toast still says so and still takes it back.
+        if (typedPageId > 0) {
+            { QMimeData mime; mime.setUrls({QUrl(base + QStringLiteral("/slow.png"))});
+              dropAt(&mime, QPointF(420, 500)); }
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, typedPageId));
+            r.check("a picture that arrives after the page was turned is still announced",
+                    waitFor([&] { return toastSays(QStringLiteral("Picture added to the page you dropped it on")); }, 8000) && list().size() == 1,
+                    QStringLiteral("%1 picture(s), toast: %2").arg(list().size()).arg(toast()));
+            if (QQuickItem *undo = itemWithText(win->contentItem(), QStringLiteral("Undo"))) tap(win, undo);
+            spin(300);
+            r.check("and its Undo takes it off the page it went to", list().isEmpty(), QStringLiteral("%1 picture(s)").arg(list().size()));
+            QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId));
+            spin(300);
+            clear();
+        }
         { QMimeData mime; mime.setUrls({QUrl(base + QStringLiteral("/page.html"))});
           dropAt(&mime, QPointF(420, 500)); }
         r.check("a link that is a web page, not a picture, says so", waitFor([&] { return toastSays(QStringLiteral("that link is a web page, not a picture")); }, 8000) && list().isEmpty());
@@ -1442,6 +1627,15 @@ void pictureClipboardChecks(QQuickWindow *win, QObject *root, Report &r, qint64 
         spin(300);
         QMetaObject::invokeMethod(images, "list", Q_RETURN_ARG(QVariantList, typedPictures), Q_ARG(qint64, typedPageId));
         r.check("and so is one pasted there", typedPictures.isEmpty() && toastSays(QStringLiteral("Pictures go on handwritten pages — this one is typed")));
+        // Picture files copied in a file manager: their addresses must not be pasted as words.
+        QQuickItem *editor = findOne(win, QStringLiteral("typedEditor"));
+        const QString textBefore = editor ? editor->property("text").toString() : QString();
+        if (QQuickItem *t = findOne(win, QStringLiteral("toastText"))) t->setProperty("text", QString());
+        { auto *mime = new QMimeData; mime->setUrls({QUrl::fromLocalFile(photoFile)}); clipboard->setMimeData(mime); }
+        chord(win, Qt::Key_V, Qt::ControlModifier);
+        spin(300);
+        r.check("picture files copied in a file manager are refused there too, not pasted as their address",
+                editor && editor->property("text").toString() == textBefore && toastSays(QStringLiteral("Pictures go on handwritten pages — this one is typed")), toast());
         QMetaObject::invokeMethod(root, "openPage", Q_ARG(QVariant, pageId));
         spin(300);
     }
@@ -2402,8 +2596,46 @@ int uitest::run(QQuickWindow *win, QObject *root)
         QQuickItem *trim = itemWithText(win->contentItem(), QStringLiteral("Trim…"));
         r.check("a picture's options offer Trim", trim != nullptr);
         QQuickItem *options = findOne(win, QStringLiteral("objectMenuContent"));
-        r.check("and Copy and Duplicate", options && itemWithText(options, QStringLiteral("Copy")) && itemWithText(options, QStringLiteral("Duplicate")));
+        QQuickItem *copy = options ? itemWithText(options, QStringLiteral("Copy")) : nullptr;
+        r.check("and Copy and Duplicate", copy && itemWithText(options, QStringLiteral("Duplicate")));
+        r.check("in fingertip-sized buttons", copy && copy->parentItem() && copy->parentItem()->height() >= 44
+                && trim && trim->parentItem() && trim->parentItem()->height() >= 44);
         ::shot(win, QStringLiteral("picture-options"));
+        // Both do what they say when tapped, not only when called.
+        const auto pictures = [&] {
+            int n = 0;
+            QMetaObject::invokeMethod(images, "count", Q_RETURN_ARG(int, n), Q_ARG(qint64, currentPage()));
+            return n;
+        };
+        const auto reopen = [&] {
+            tap(win, canvas, Qt::LeftButton, middle);
+            tap(win, canvas, Qt::LeftButton, middle);
+            tap(win, canvas, Qt::LeftButton, middle);
+            spin(300);
+            options = findOne(win, QStringLiteral("objectMenuContent"));
+        };
+        QGuiApplication::clipboard()->clear();
+        if (copy) tap(win, copy);
+        spin(300);
+        r.check("the options' Copy puts the picture on the clipboard",
+                QImage::fromData(QGuiApplication::clipboard()->mimeData()->data(QStringLiteral("image/png")), "PNG").size() == QSize(200, 100));
+        QGuiApplication::clipboard()->clear();
+        reopen();
+        const int picturesBefore = pictures();
+        if (QQuickItem *duplicate = options ? itemWithText(options, QStringLiteral("Duplicate")) : nullptr) tap(win, duplicate);
+        spin(300);
+        r.check("and the options' Duplicate makes a second picture", pictures() == picturesBefore + 1,
+                QStringLiteral("%1 → %2").arg(picturesBefore).arg(pictures()));
+        {   // the copy goes again, and the first one is taken back in hand
+            QVariantList all;
+            QMetaObject::invokeMethod(images, "list", Q_RETURN_ARG(QVariantList, all), Q_ARG(qint64, currentPage()));
+            for (const QVariant &v : all)
+                if (v.toMap().value(QStringLiteral("id")).toLongLong() != id) QMetaObject::invokeMethod(images, "remove", Q_ARG(qint64, v.toMap().value(QStringLiteral("id")).toLongLong()));
+            pressEscape(win);
+            spin(200);
+        }
+        reopen();
+        trim = itemWithText(win->contentItem(), QStringLiteral("Trim…"));
         if (!trim) return;
         tap(win, trim);
         spin(250);

@@ -10,6 +10,7 @@
 #include <QSGTexture>
 #include <QSGTextureMaterial>
 #include <QQuickWindow>
+#include <QRunnable>
 #include <QSGTransformNode>
 #include <QSGVertexColorMaterial>
 #include <cmath>
@@ -278,20 +279,56 @@ void InkCanvas::buildPageNode(QSGNode *)
     buildDots(m_dotsNode);
 }
 
+// ---------------------------------------------------------------- leaving the window
+
+namespace {
+class DeleteTextures : public QRunnable {
+public:
+    explicit DeleteTextures(const QVector<QSGTexture *> &textures) : m_textures(textures) {}
+    void run() override { qDeleteAll(m_textures); }
+private:
+    QVector<QSGTexture *> m_textures;
+};
+}
+
+// The scene graph deletes the nodes when the canvas leaves its window (the split view closing), but
+// the nodes do not own the picture textures: those were simply never deleted. They go to the render
+// thread, which made them. Put back in a window, the next setImages() reads the pictures again.
+void InkCanvas::releaseResources()
+{
+    QVector<QSGTexture *> textures = m_orphanTextures;
+    m_orphanTextures.clear();
+    for (PageImage &img : m_images) {
+        if (img.texture) textures.append(img.texture);
+        if (img.sharpTexture) textures.append(img.sharpTexture);
+        img.texture = img.sharpTexture = nullptr;
+        img.node = img.sharpNode = nullptr;
+        dropSharp(img);
+        img.sharpDrop = false;
+    }
+    if (!textures.isEmpty() && window())
+        window()->scheduleRenderJob(new DeleteTextures(textures), QQuickWindow::BeforeSynchronizingStage);
+    QQuickItem::releaseResources();
+}
+
 // ---------------------------------------------------------------- the frame
 
 QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
 {
     QSGNode *root = old;
     if (!root) {
-        root = new QSGNode;
+        // Two transform nodes here transform nothing (this one and the pictures' own). The software
+        // renderer, which every offscreen test and screenshot runs on, remembers where things are
+        // only at transform, clip and opacity nodes: under plain ones it drew a panned page from
+        // the window's corner and a picture added later at the corner itself.
+        root = new QSGTransformNode;
         m_viewNode = new QSGTransformNode;
         root->appendChildNode(m_viewNode);
         m_pageNode = new QSGNode;
         m_viewNode->appendChildNode(m_pageNode);
         m_paperRect = makeStripNode(false);
         m_pageNode->appendChildNode(m_paperRect);
-        m_imagesNode = new QSGNode;                    // pictures sit above the paper and under the ink
+        m_imagesNode = new QSGTransformNode;           // pictures sit above the paper and under the ink
         m_pageNode->appendChildNode(m_imagesNode);
         m_backgroundNode = new QSGSimpleTextureNode;   // attached to the tree only while it has a texture
         m_backgroundNode->setFiltering(QSGTexture::Linear);
@@ -435,6 +472,9 @@ QSGNode *InkCanvas::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
             // show through it and darken every soft edge: it is folded to nothing while that lasts.
             const QRectF baseRect = img.sharpNode && img.sharpWhole && !img.opaque ? QRectF(img.rect.topLeft(), QSizeF(0, 0)) : img.rect;
             if (img.node->rect() != baseRect) { img.node->setRect(baseRect); img.node->markDirty(QSGNode::DirtyGeometry); }
+            img.drawnBaseRect = img.node->rect();
+            img.drawnSharpPixels = img.sharpNode && img.sharpTexture ? img.sharpTexture->textureSize() : QSize();
+            img.drawnSharpRect = img.sharpNode ? img.sharpNode->rect() : QRectF();
         }
         m_imagesDirty = false;
     }

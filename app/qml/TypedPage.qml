@@ -279,8 +279,9 @@ Item {
                             if (e.key === Qt.Key_Escape) { linkPicker.close(); e.accepted = true; return }
                         }
                         const ctrl = e.modifiers & Qt.ControlModifier, shift = e.modifiers & Qt.ShiftModifier, alt = e.modifiers & Qt.AltModifier
-                        // A picture and nothing else on the clipboard: the editor would paste nothing and say nothing.
-                        if (ctrl && !shift && e.key === Qt.Key_V && !area.canPaste && images.clipboardHasImage()) {
+                        // Pictures and nothing else on the clipboard: the editor would paste nothing and say
+                        // nothing, or paste a copied file's address as if it had been typed.
+                        if (ctrl && !shift && e.key === Qt.Key_V && images.clipboardIsOnlyPictures()) {
                             typed.toast("Pictures go on handwritten pages — this one is typed"); e.accepted = true; return
                         }
                         if (ctrl && alt && e.key >= Qt.Key_0 && e.key <= Qt.Key_3) { fmt.setHeading(e.key - Qt.Key_0); e.accepted = true; return }

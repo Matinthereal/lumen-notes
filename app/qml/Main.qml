@@ -556,9 +556,14 @@ Window {
                 id: pictureDrop
                 anchors.fill: parent
                 enabled: root.currentPageId > 0 && !root.presenting
+                // What is over the page looks like a picture: the invitation is only made to those.
+                // Anything else with files or a page's HTML in it is still taken, so the drop can
+                // be answered in words instead of bouncing back with no reason given.
+                property bool inviting: true
                 onEntered: (drag) => {
+                    inviting = root.pageTyped ? false : imageLayer.carriesPicture(drag)
                     drag.accepted = root.pageTyped ? imageLayer.carriesPictureData(drag)
-                                                   : (drag.hasUrls || drag.hasHtml || imageLayer.carriesPictureData(drag))
+                                                   : (inviting || drag.hasUrls || drag.hasHtml)
                 }
                 onDropped: (drop) => {
                     if (root.pageTyped) { toastBar.show("Pictures go on handwritten pages — this one is typed", null); return }
@@ -570,7 +575,8 @@ Window {
                     radius: Ui.radiusLg
                     color: Qt.alpha(pal.highlight, 0.08)
                     border.color: pal.highlight; border.width: 2
-                    Text { anchors.centerIn: parent; text: root.pageTyped ? "Pictures go on handwritten pages" : "Drop to add to this page"; color: pal.highlight; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold }
+                    Text { anchors.centerIn: parent; text: root.pageTyped ? "Pictures go on handwritten pages" : pictureDrop.inviting ? "Drop to add to this page" : "Only pictures can be dropped on a page"
+                           color: pal.highlight; font.pixelSize: Ui.text + 2; font.weight: Font.DemiBold }
                 }
             }
             Connections { target: canvas; function onTapped(page) { stickies.addAt(page); canvas.tool = "pen" } }
@@ -1502,7 +1508,12 @@ Window {
     // The picture in hand goes to the clipboard as a picture; otherwise it is the ink or the PDF text.
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+C"; onActivated: { if (!(imageLayer.inHand && imageLayer.copySelected())) canvas.hasTextSelection ? canvas.copyText() : canvas.copySelection() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+X"; onActivated: { if (!(imageLayer.inHand && imageLayer.cutSelected())) canvas.cutSelection() } }
-    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (!imageLayer.pasteClipboard()) canvas.paste() } }
+    // Ink is copied to the canvas's own clipboard and never reaches the system's, so a picture
+    // copied earlier is still sitting there: Ctrl+V pastes whichever was copied last.
+    property bool inkCopiedLast: false
+    Connections { target: canvas; function onSelectionCopied() { root.inkCopiedLast = true } }
+    Connections { target: images; function onClipboardChanged() { root.inkCopiedLast = false } }
+    Shortcut { enabled: root.inkKeys; sequence: "Ctrl+V"; onActivated: { if (root.inkCopiedLast || !imageLayer.pasteClipboard()) canvas.paste() } }
     Shortcut { enabled: root.inkKeys; sequence: "Ctrl+Shift+G"; onActivated: pictureDialog.open() }
     Shortcut { enabled: !root.overlayUp; sequence: "Ctrl+P"; onActivated: if (root.currentPageId) root.browserVisible = true }
     Shortcut { enabled: !root.overlayUp || root.libraryVisible; sequence: "Ctrl+O"; onActivated: root.libraryVisible = !root.libraryVisible }

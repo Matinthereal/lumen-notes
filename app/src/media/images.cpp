@@ -19,7 +19,9 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QTemporaryFile>
+#include <QThreadPool>
 #include <algorithm>
 
 namespace {
@@ -43,13 +45,18 @@ bool isPicture(QByteArray bytes)
     return buffer.open(QIODevice::ReadOnly) && !QImageReader::imageFormat(&buffer).isEmpty();
 }
 
-bool isPictureFile(const QUrl &url)
+bool pictureFile(const QUrl &url)
 {
     return url.isLocalFile() && !QImageReader::imageFormat(url.toLocalFile()).isEmpty();
 }
 }
 
-Images::Images(Database &db, QObject *parent) : QObject(parent), m_db(db) {}
+Images::Images(Database &db, QObject *parent) : QObject(parent), m_db(db)
+{
+    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &Images::clipboardChanged);
+}
+
+bool Images::isPictureFile(const QUrl &file) const { return pictureFile(file); }
 
 QVariantList Images::list(qint64 pageId) const
 {
@@ -163,6 +170,7 @@ qint64 Images::placeClipboard(qint64 pageId, double cx, double cy, double maxW, 
 QVariantList Images::pasteClipboard(qint64 pageId, double cx, double cy, double maxW, double maxH)
 {
     const QMimeData *mime = QGuiApplication::clipboard()->mimeData();
+    m_leftOut = 0;
     if (!pageId || !mime) return {};
     // Lumen's own copy: the same stored file again, as it was trimmed and turned.
     if (mime->hasFormat(kOwnFormat)) {
@@ -185,7 +193,8 @@ QVariantList Images::pasteClipboard(qint64 pageId, double cx, double cy, double 
     }
     QVariantList placed;
     for (const QUrl &url : mime->urls()) {
-        if (!isPictureFile(url)) continue;
+        if (!pictureFile(url)) continue;
+        if (placed.size() >= kAtOnce) { ++m_leftOut; continue; }
         // More than one at once: each a little below and right of the one before, like a fan of cards.
         const double step = 28.0 * placed.size();
         if (const qint64 id = place(pageId, url, cx + step, cy + step, maxW, maxH)) placed.append(id);
@@ -201,23 +210,47 @@ bool Images::copy(qint64 id)
     const QRectF crop(pic.value(QStringLiteral("cropX")).toDouble(), pic.value(QStringLiteral("cropY")).toDouble(),
                       pic.value(QStringLiteral("cropW")).toDouble(), pic.value(QStringLiteral("cropH")).toDouble());
     const int rotation = pic.value(QStringLiteral("rotation")).toInt();
-    const QImage shown = picturepixels::load(path, rotation, crop);
-    if (shown.isNull()) { emit failed(QStringLiteral("could not read the picture to copy it")); return false; }
-    auto *mime = new QMimeData;
-    mime->setImageData(shown);
+    if (!QImageReader(path).canRead()) { emit failed(QStringLiteral("could not read the picture to copy it")); return false; }
     // Untouched, the stored file is the best copy there is: a program that asks for that format
     // gets the photo's own bytes, not a second encoding of it.
+    QString type;
+    QByteArray fileBytes;
     if (rotation == 0 && crop == QRectF(0, 0, 1, 1)) {
-        const QString type = QMimeDatabase().mimeTypeForFile(path, QMimeDatabase::MatchContent).name();
+        type = QMimeDatabase().mimeTypeForFile(path, QMimeDatabase::MatchContent).name();
         QFile file(path);
         if (std::find(std::begin(kEncoded), std::end(kEncoded), type) != std::end(kEncoded) && file.open(QIODevice::ReadOnly))
-            mime->setData(type, file.readAll());
+            fileBytes = file.readAll();
     }
-    QJsonObject own;
+    QJsonObject note;
     for (const char *key : {"attachment", "cropX", "cropY", "cropW", "cropH", "rotation", "w", "h"})
-        own.insert(QLatin1String(key), QJsonValue::fromVariant(pic.value(QLatin1String(key))));
-    mime->setData(kOwnFormat, QJsonDocument(own).toJson(QJsonDocument::Compact));
-    QGuiApplication::clipboard()->setMimeData(mime);
+        note.insert(QLatin1String(key), QJsonValue::fromVariant(pic.value(QLatin1String(key))));
+    const QByteArray own = QJsonDocument(note).toJson(QJsonDocument::Compact);
+    const auto put = [own, type, fileBytes](const QByteArray &png) {
+        auto *mime = new QMimeData;
+        if (!png.isEmpty()) mime->setData(QStringLiteral("image/png"), png);
+        if (!fileBytes.isEmpty()) mime->setData(type, fileBytes);
+        mime->setData(kOwnFormat, own);
+        QGuiApplication::clipboard()->setMimeData(mime);
+    };
+    // Lumen can paste it from this moment. Other programs want a PNG, and making one of a phone
+    // photo takes a second or two: handed to Qt as pixels, it would be made in the window's own
+    // thread each time a program (or the desktop's clipboard history) asked. So it is made once, in
+    // the background, and joins the clipboard when it is ready, if this copy is still what is there.
+    put({});
+    if (type == QLatin1String("image/png") && !fileBytes.isEmpty()) return true;
+    QPointer<Images> self(this);
+    QThreadPool::globalInstance()->start([self, path, rotation, crop, own, put] {
+        QByteArray png;
+        QBuffer out(&png);
+        const QImage shown = picturepixels::load(path, rotation, crop);
+        if (shown.isNull() || !out.open(QIODevice::WriteOnly) || !shown.save(&out, "PNG")) return;
+        Images *target = self.data();
+        if (!target) return;
+        QMetaObject::invokeMethod(target, [own, put, png] {
+            const QMimeData *now = QGuiApplication::clipboard()->mimeData();
+            if (now && now->data(kOwnFormat) == own) put(png);
+        }, Qt::QueuedConnection);
+    });
     return true;
 }
 
@@ -238,16 +271,16 @@ qint64 Images::placeData(qint64 pageId, const QByteArray &bytes, double cx, doub
     return placeStored(pageId, sha, pixels, cx, cy, maxW, maxH);
 }
 
-void Images::fetch(qint64 pageId, const QUrl &url, double cx, double cy, double maxW, double maxH)
+void Images::fetch(qint64 pageId, const QUrl &url, double cx, double cy, double maxW, double maxH, QObject *asker)
 {
     if (!pageId) return;
     if (url.scheme() == QLatin1String("data")) {
         // data:image/png;base64,…  — the picture is the link.
         const QByteArray body = url.toString(QUrl::FullyEncoded).toLatin1().mid(5);
-        const int comma = body.indexOf(',');
+        const qsizetype comma = body.indexOf(',');
         const QByteArray payload = QByteArray::fromPercentEncoding(body.mid(comma + 1));
-        const qint64 id = placeData(pageId, body.left(std::max(0, comma)).endsWith(";base64") ? QByteArray::fromBase64(payload) : payload, cx, cy, maxW, maxH);
-        if (id) emit fetched(pageId, id);
+        const qint64 id = placeData(pageId, body.left(std::max<qsizetype>(0, comma)).endsWith(";base64") ? QByteArray::fromBase64(payload) : payload, cx, cy, maxW, maxH);
+        if (id) emit fetched(pageId, id, asker);
         return;
     }
     if (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")) {
@@ -269,13 +302,14 @@ void Images::fetch(qint64 pageId, const QUrl &url, double cx, double cy, double 
     };
     connect(reply, &QNetworkReply::metaDataChanged, reply, [reply, stopIfTooBig] { stopIfTooBig(reply->header(QNetworkRequest::ContentLengthHeader).toLongLong()); });
     connect(reply, &QNetworkReply::downloadProgress, reply, [stopIfTooBig](qint64 received, qint64 total) { stopIfTooBig(std::max(received, total)); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, pageId, cx, cy, maxW, maxH] {
+    const QPointer<QObject> askedBy(asker);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, pageId, cx, cy, maxW, maxH, askedBy] {
         reply->deleteLater();
         if (reply->property("tooBig").toBool()) { emit failed(QStringLiteral("that picture is too big to fetch (over 40 MB)")); return; }
         if (reply->error() != QNetworkReply::NoError) { emit failed(QStringLiteral("could not fetch that picture: %1").arg(reply->errorString())); return; }
         const QByteArray bytes = reply->readAll();
         if (!isPicture(bytes)) { emit failed(QStringLiteral("that link is a web page, not a picture")); return; }
-        if (const qint64 id = placeData(pageId, bytes, cx, cy, maxW, maxH)) emit fetched(pageId, id);
+        if (const qint64 id = placeData(pageId, bytes, cx, cy, maxW, maxH)) emit fetched(pageId, id, askedBy);
     });
 }
 
@@ -304,7 +338,20 @@ bool Images::clipboardHasImage() const
     if (!mime) return false;
     if (mime->hasFormat(kOwnFormat) || hasPicture(mime)) return true;
     const QList<QUrl> urls = mime->urls();
-    return std::any_of(urls.begin(), urls.end(), isPictureFile);
+    return std::any_of(urls.begin(), urls.end(), pictureFile);
+}
+
+bool Images::clipboardIsOnlyPictures() const
+{
+    const QClipboard *cb = QGuiApplication::clipboard();
+    const QMimeData *mime = cb ? cb->mimeData() : nullptr;
+    if (!mime) return false;
+    if (mime->hasFormat(kOwnFormat)) return true;
+    // Files copied in a file manager come with their addresses as text, which is not text anyone
+    // meant to type.
+    const QList<QUrl> urls = mime->urls();
+    if (!urls.isEmpty()) return std::all_of(urls.begin(), urls.end(), pictureFile);
+    return hasPicture(mime) && !mime->hasFormat(QStringLiteral("text/plain"));
 }
 
 QString Images::storeBytes(const QByteArray &bytes, QSize *pixels)
@@ -316,7 +363,8 @@ QString Images::storeBytes(const QByteArray &bytes, QSize *pixels)
     *pixels = uprightSize(tmp.fileName());
     if (pixels->isEmpty()) { emit failed(QStringLiteral("that is not a picture I can read")); return {}; }
     QString err;
-    const QString sha = attachments::store(m_db, tmp.fileName(), QMimeDatabase().mimeTypeForData(bytes).name(), &err);
+    const QString type = QMimeDatabase().mimeTypeForData(bytes).name();
+    const QString sha = attachments::store(m_db, tmp.fileName(), type, &err, QStringLiteral("picture.") + attachments::extFor(type));
     if (sha.isEmpty()) emit failed(err.isEmpty() ? QStringLiteral("could not save the picture") : err);
     return sha;
 }
